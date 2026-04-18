@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#7B6FA0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="Veeda"/>
+  <meta name="description" content="Seu dia, do seu jeito."/>
+  <title>Veeda</title>
+  <link rel="manifest" href="manifest.json"/>
+  <!-- PWA icon fallback -->
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F7F5FC;color:#3A3350;}
+    input,textarea,select,button{font-family:inherit;font-size:14px;outline:none;}
+    input,textarea,select{border:1px solid #DDD8EE;border-radius:8px;padding:9px 12px;color:#3A3350;width:100%;background:#fff;}
+    button{cursor:pointer;}
+    textarea{resize:vertical;}
+    #root{max-width:480px;margin:0 auto;min-height:100vh;}
+    @keyframes vPulse{0%{transform:scale(1);opacity:.6}70%{transform:scale(2.4);opacity:0}100%{transform:scale(1);opacity:0}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="text/babel">
+const{useState,useEffect,useRef}=React;
+const STORAGE_KEY="veeda_data";
+const C={purple:"#7B6FA0",purpleLight:"#EDE9F6",purpleMid:"#B8AEDD",blue:"#5B7FA6",blueLight:"#E6EEF8",blueMid:"#A8C0DA",cardBorder:"#DDD8EE",bg:"#F7F5FC",text:"#3A3350",textMid:"#7A7090",textLight:"#ADA8C0",white:"#FFFFFF",green:"#1D9E75"};
+const DAY_COLORS=[{label:"Lavanda",bg:"#F7F5FC",dot:"#B8AEDD"},{label:"Pêssego",bg:"#FDF5F0",dot:"#E8B89A"},{label:"Menta",bg:"#F0FAF5",dot:"#8FD1B0"},{label:"Céu",bg:"#F0F6FD",dot:"#9ABEDD"},{label:"Rosa",bg:"#FDF0F5",dot:"#DDA8C0"},{label:"Baunilha",bg:"#FDFAF0",dot:"#D4C48A"},{label:"Cinza",bg:"#F5F5F7",dot:"#ACACBC"}];
+const FEELINGS=[{emoji:"😊",label:"Feliz"},{emoji:"😌",label:"Tranquilo"},{emoji:"🥰",label:"Grato"},{emoji:"😔",label:"Triste"},{emoji:"😤",label:"Frustrado"},{emoji:"😴",label:"Cansado"},{emoji:"🤩",label:"Animado"},{emoji:"😶",label:"Neutro"}];
+const AVATAR_EMOJIS=["🌿","🌸","🌊","🌙","⭐","🦋","🍀","🎵","🌻","🦉","🐾","🌈","🦊","🐬","🌺","🎯","🧩","🪴","🦚","🌵"];
+const encryptData=async(data,password)=>{const enc=new TextEncoder();const km=await crypto.subtle.importKey("raw",enc.encode(password),"PBKDF2",false,["deriveKey"]);const salt=crypto.getRandomValues(new Uint8Array(16));const key=await crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:100000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["encrypt"]);const iv=crypto.getRandomValues(new Uint8Array(12));const enc2=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(data)));return btoa(JSON.stringify({salt:Array.from(salt),iv:Array.from(iv),data:Array.from(new Uint8Array(enc2))}));};
+const decryptData=async(ciphertext,password)=>{const{salt,iv,data}=JSON.parse(atob(ciphertext));const km=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveKey"]);const key=await crypto.subtle.deriveKey({name:"PBKDF2",salt:new Uint8Array(salt),iterations:100000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["decrypt"]);const dec=await crypto.subtle.decrypt({name:"AES-GCM",iv:new Uint8Array(iv)},key,new Uint8Array(data));return JSON.parse(new TextDecoder().decode(dec));};
+const getVideoEmbed=url=>{const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);if(yt)return`https://www.youtube.com/embed/${yt[1]}`;const v=url.match(/vimeo\.com\/(\d+)/);if(v)return`https://player.vimeo.com/video/${v[1]}`;return null;};
+const isVideoLink=url=>!!getVideoEmbed(url);
+const typeIcons={texto:"✏️",foto:"📷",link:"🔗",musica:"🎵",video:"🎬",videolink:"🔗"};
+const typeColor=t=>({texto:C.purple,foto:C.blue,link:C.blue,musica:C.purple,video:C.blue,videolink:C.blue}[t]||C.purple);
+const typeBg=t=>({texto:C.purpleLight,foto:C.blueLight,link:C.blueLight,musica:C.purpleLight,video:C.blueLight,videolink:C.blueLight}[t]||C.purpleLight);
+const fmt=ts=>new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const offsetDay=(d,n)=>{const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
+const fmtLabel=d=>{const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
+const fmtFull=d=>{const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};
+const defaultState=()=>({profile:null,moments:{},received:[],contacts:[],groupName:"Família & Amigos",dayColors:{},dayFeelings:{}});
+
+const PulsingDot=({onClick,color})=>{const c=color||C.purple,cm=color?color+"99":C.purpleMid;return(<div style={{position:"relative",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={onClick}><div style={{position:"absolute",width:22,height:22,borderRadius:"50%",background:cm,animation:"vPulse 2s ease-out infinite"}}/><div style={{position:"absolute",width:22,height:22,borderRadius:"50%",background:cm,animation:"vPulse 2s ease-out infinite",animationDelay:"0.7s"}}/><div style={{position:"relative",width:16,height:16,borderRadius:"50%",background:c,border:`3px solid ${C.white}`,zIndex:1}}/></div>);};
+
+const Modal=({onClose,children,title})=>(<div style={{position:"fixed",inset:0,background:"rgba(40,30,60,0.45)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}><div style={{background:C.white,borderRadius:"18px 18px 0 0",padding:"20px 16px 36px",width:"100%",maxWidth:480,margin:"0 auto",boxSizing:"border-box",maxHeight:"85vh",overflowY:"auto"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><p style={{margin:0,fontSize:15,fontWeight:500,color:C.text}}>{title}</p><button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:C.textLight}}>×</button></div>{children}</div></div>);
+
+const AvatarBubble=({emoji,color,size=38})=>(<div style={{width:size,height:size,borderRadius:"50%",background:color||C.purpleLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*0.5,border:`1.5px solid ${C.cardBorder}`,flexShrink:0}}>{emoji}</div>);
+
+function Veeda(){
+  const[state,setState]=useState(null);
+  const[view,setView]=useState("hoje");
+  const[dayOffset,setDayOffset]=useState(0);
+  const[addType,setAddType]=useState("texto");
+  const[addContent,setAddContent]=useState("");
+  const[addCaption,setAddCaption]=useState("");
+  const[addMediaData,setAddMediaData]=useState(null);
+  const[showModal,setShowModal]=useState(false);
+  const[showEditDay,setShowEditDay]=useState(false);
+  const[showFeeling,setShowFeeling]=useState(false);
+  const[showAvatar,setShowAvatar]=useState(false);
+  const[showInvite,setShowInvite]=useState(false);
+  const[showGroupName,setShowGroupName]=useState(false);
+  const[profileName,setProfileName]=useState("");
+  const[profileEmoji,setProfileEmoji]=useState("🌿");
+  const[exportKey,setExportKey]=useState("");
+  const[exportMsg,setExportMsg]=useState("");
+  const[selectedExportDay,setSelectedExportDay]=useState(todayStr());
+  const[exportMoments,setExportMoments]=useState(null);
+  const[importKey,setImportKey]=useState("");
+  const[importFile,setImportFile]=useState(null);
+  const[importMsg,setImportMsg]=useState("");
+  const[viewReceived,setViewReceived]=useState(null);
+  const[now,setNow]=useState(new Date());
+  const[inviteCode,setInviteCode]=useState("");
+  const[inviteName,setInviteName]=useState("");
+  const[newGroupName,setNewGroupName]=useState("");
+  const fileRef=useRef(),videoFileRef=useRef(),touchStartX=useRef(null);
+
+  useEffect(()=>{try{const r=localStorage.getItem(STORAGE_KEY);setState(r?JSON.parse(r):defaultState());}catch{setState(defaultState());}const t=setInterval(()=>setNow(new Date()),30000);return()=>clearInterval(t);},[]);
+  const save=s=>{setState(s);localStorage.setItem(STORAGE_KEY,JSON.stringify(s));};
+  const resetModal=()=>{setAddContent("");setAddCaption("");setAddMediaData(null);setShowModal(false);};
+  const readFile=(file,cb)=>{const r=new FileReader();r.onload=ev=>cb(ev.target.result);r.readAsDataURL(file);};
+
+  if(!state)return <div style={{padding:32,color:C.textMid}}>Carregando...</div>;
+
+  if(!state.profile)return(
+    <div style={{maxWidth:380,margin:"0 auto",padding:"3rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
+      <div style={{textAlign:"center",marginBottom:36}}><div style={{fontSize:52,marginBottom:10}}>🌿</div><h1 style={{fontSize:28,fontWeight:500,margin:"0 0 6px",color:C.text}}>Veeda</h1><p style={{fontSize:14,color:C.textMid}}>Seu dia, do seu jeito.</p></div>
+      <div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"1.5rem"}}>
+        <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Como quer ser chamado?</label>
+        <input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Seu nome" style={{marginBottom:20}}/>
+        <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:8}}>Avatar:</label>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>{AVATAR_EMOJIS.slice(0,12).map(e=>(<button key={e} onClick={()=>setProfileEmoji(e)} style={{fontSize:20,background:profileEmoji===e?C.purpleLight:"#F5F3FB",border:`1.5px solid ${profileEmoji===e?C.purple:C.cardBorder}`,borderRadius:10,width:42,height:42}}>{e}</button>))}</div>
+        <button onClick={()=>{if(profileName.trim())save({...state,profile:{name:profileName.trim(),emoji:profileEmoji,avatarColor:C.purpleLight}});}} style={{width:"100%",padding:"11px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500,fontSize:15}}>Entrar no Veeda</button>
+      </div>
+    </div>
+  );
+
+  const curDay=offsetDay(todayStr(),-dayOffset);
+  const isToday=dayOffset===0;
+  const dayMoments=(state.moments[curDay]||[]).slice().sort((a,b)=>a.ts-b.ts);
+  const allDays=Object.keys(state.moments).filter(d=>(state.moments[d]||[]).length>0).sort((a,b)=>b.localeCompare(a));
+  const nowKey=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+  const curDayColor=DAY_COLORS.find(c=>c.label===(state.dayColors||{})[curDay])||DAY_COLORS[0];
+  const curFeeling=(state.dayFeelings||{})[curDay];
+  const groupName=state.groupName||"Família & Amigos";
+
+  const addMoment=()=>{const isMedia=addType==="foto"||addType==="video";if(isMedia&&!addMediaData)return;if(!isMedia&&!addContent.trim())return;let type=addType,content=isMedia?addMediaData:addContent.trim();if(type==="link"&&isVideoLink(content))type="videolink";const m={id:Date.now(),ts:Date.now(),type,content,caption:addCaption.trim()};save({...state,moments:{...state.moments,[todayStr()]:[...(state.moments[todayStr()]||[]),m]}});resetModal();};
+  const deleteMoment=(day,id)=>save({...state,moments:{...state.moments,[day]:(state.moments[day]||[]).filter(m=>m.id!==id)}});
+  const toggleExportMoment=id=>setExportMoments(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+
+  const renderContent=(m,full=false)=>{
+    if(m.type==="foto")return<img src={m.content} alt={m.caption||"foto"} style={{width:"100%",borderRadius:8,display:"block"}}/>;
+    if(m.type==="video")return<video src={m.content} controls style={{width:"100%",borderRadius:8,display:"block",maxHeight:full?320:160}}/>;
+    if(m.type==="videolink"){const e=getVideoEmbed(m.content);return e?<div style={{position:"relative",paddingBottom:"56.25%",height:0,borderRadius:8,overflow:"hidden"}}><iframe src={e} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}} allowFullScreen title="v"/></div>:<a href={m.content} target="_blank" rel="noopener noreferrer" style={{color:C.blue,fontSize:13,wordBreak:"break-all"}}>{m.content}</a>;}
+    if(m.type==="link")return<a href={m.content} target="_blank" rel="noopener noreferrer" style={{color:C.blue,fontSize:13,wordBreak:"break-all"}}>{m.content}</a>;
+    if(m.type==="musica")return<p style={{margin:0,fontSize:14,color:C.text}}>🎵 {m.content}</p>;
+    return<p style={{margin:0,fontSize:14,color:C.text,lineHeight:1.65}}>{m.content}</p>;
+  };
+
+  const MiniCard=({m})=>(<div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:10,padding:"8px 10px",maxWidth:155,marginBottom:4}}><div style={{display:"flex",alignItems:"center",gap:5,marginBottom:5}}><span style={{width:20,height:20,borderRadius:"50%",background:typeBg(m.type),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>{typeIcons[m.type]||"🔗"}</span><span style={{fontSize:11,color:C.textLight}}>{fmt(m.ts)}</span></div>{(m.type==="foto"||m.type==="video")?renderContent(m,false):<p style={{margin:0,fontSize:12,color:C.text,lineHeight:1.4,overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{m.content}</p>}</div>);
+
+  const FullCard=({m,onDelete,selectable,selected,onToggle})=>(<div style={{background:C.white,border:`1.5px solid ${selected?C.purple:C.cardBorder}`,borderRadius:12,padding:"12px 14px",marginBottom:10,position:"relative"}} onClick={selectable?onToggle:undefined}>{selectable&&<div style={{position:"absolute",top:10,right:10,width:20,height:20,borderRadius:"50%",border:`2px solid ${selected?C.purple:C.cardBorder}`,background:selected?C.purple:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:C.white}}>{selected?"✓":""}</div>}<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:26,height:26,borderRadius:"50%",background:typeBg(m.type),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>{typeIcons[m.type]||"🔗"}</span><span style={{fontSize:12,color:C.textLight}}>{fmt(m.ts)}</span>{onDelete&&<button onClick={e=>{e.stopPropagation();onDelete();}} style={{marginLeft:"auto",fontSize:12,color:C.textLight,background:"none",border:"none"}}>remover</button>}</div>{renderContent(m,true)}{m.caption&&<p style={{margin:"8px 0 0",fontSize:12,color:C.textMid}}>{m.caption}</p>}</div>);
+
+  const swipeHandlers={onTouchStart:e=>{touchStartX.current=e.touches[0].clientX;},onTouchEnd:e=>{if(touchStartX.current===null)return;const dx=touchStartX.current-e.changedTouches[0].clientX;if(Math.abs(dx)>50){if(dx>0)setDayOffset(o=>o+1);else setDayOffset(o=>Math.max(0,o-1));}touchStartX.current=null;}};
+
+  const buildSlots=()=>{const byTime={};dayMoments.forEach(m=>{const k=fmt(m.ts);if(!byTime[k])byTime[k]=[];byTime[k].push(m);});const times=new Set(Object.keys(byTime));if(isToday)times.add(nowKey);return Array.from(times).sort().map(time=>({time,moments:byTime[time]||[],isNow:isToday&&time===nowKey}));};
+  const slots=buildSlots();
+
+  return(
+    <div style={{background:curDayColor.bg,minHeight:"100vh",transition:"background 0.4s"}}>
+      <div style={{background:C.white,borderBottom:`1px solid ${C.cardBorder}`,padding:"12px 16px 10px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>🌿</span><span style={{fontSize:18,fontWeight:500,color:C.text}}>Veeda</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>setShowAvatar(true)}><AvatarBubble emoji={state.profile.emoji} color={state.profile.avatarColor||C.purpleLight} size={34}/><span style={{fontSize:13,color:C.textMid}}>{state.profile.name}</span></div>
+      </div>
+      <div style={{background:C.white,borderBottom:`1px solid ${C.cardBorder}`,display:"flex",padding:"0 8px",overflowX:"auto"}}>
+        {[["hoje","Hoje"],["grupo",groupName],["compartilhar","Compartilhar"],["recebidos","Recebidos"]].map(([v,label])=>(<button key={v} onClick={()=>setView(v)} style={{padding:"10px 14px",fontSize:13,fontWeight:view===v?500:400,background:"none",border:"none",borderBottom:`2px solid ${view===v?C.purple:"transparent"}`,color:view===v?C.purple:C.textMid,whiteSpace:"nowrap"}}>{label}</button>))}
+      </div>
+
+      <div style={{paddingBottom:80}}>
+        {view==="hoje"&&(
+          <div {...swipeHandlers}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 8px 2px"}}>
+              <button onClick={()=>setDayOffset(o=>o+1)} style={{background:"none",border:"none",fontSize:22,color:C.textMid,padding:"4px 10px"}}>‹</button>
+              <div style={{textAlign:"center"}}><p style={{margin:0,fontSize:15,fontWeight:500,color:C.text,textTransform:"capitalize"}}>{fmtLabel(curDay)}</p><p style={{margin:"2px 0 0",fontSize:12,color:C.textLight}}>{fmtFull(curDay).split(",").slice(1).join(",").trim()}</p></div>
+              <button onClick={()=>setDayOffset(o=>Math.max(0,o-1))} style={{background:"none",border:"none",fontSize:22,color:dayOffset===0?"transparent":C.textMid,padding:"4px 10px",pointerEvents:dayOffset===0?"none":"auto"}}>›</button>
+            </div>
+            <div style={{display:"flex",gap:8,padding:"8px 16px",justifyContent:"center",flexWrap:"wrap"}}>
+              <button onClick={()=>setShowEditDay(true)} style={{fontSize:12,padding:"4px 12px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:20,color:C.textMid}}>🎨 cor do dia</button>
+              <button onClick={()=>setShowFeeling(true)} style={{fontSize:12,padding:"4px 12px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:20,color:C.textMid}}>{curFeeling?`${curFeeling.emoji} ${curFeeling.label}`:"😊 sentimento"}</button>
+              {isToday&&<button onClick={()=>setShowModal(true)} style={{fontSize:12,padding:"4px 12px",background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:20,color:C.purple,fontWeight:500}}>+ registrar</button>}
+            </div>
+            {isToday&&<p style={{textAlign:"center",fontSize:11,color:C.textLight,margin:"0 0 6px"}}>← deslize para dias anteriores</p>}
+            <div style={{position:"relative",padding:"16px 0 40px"}}>
+              {slots.length>0&&<div style={{position:"absolute",left:"50%",top:0,bottom:0,width:3,borderRadius:3,background:`linear-gradient(to bottom,${curDayColor.dot}44,${curDayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`,transform:"translateX(-50%)",zIndex:0}}/>}
+              {slots.length===0&&<div style={{textAlign:"center",padding:"4rem 2rem"}}><p style={{fontSize:14,color:C.textLight}}>{isToday?"Nenhum momento ainda.":"Nenhum momento neste dia."}</p></div>}
+              {slots.map((slot,i)=>{const isLeft=i%2===0;return(<div key={slot.time} style={{position:"relative",display:"flex",alignItems:"flex-start",marginBottom:28,zIndex:1}}>
+                <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-end",paddingRight:20,paddingLeft:12}}>{isLeft&&(slot.isNow?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`1.5px solid ${curDayColor.dot}`,borderRadius:20,padding:"9px 16px",fontSize:13,color:C.purple,fontWeight:500,lineHeight:1.4,textAlign:"center"}}>registrar<br/>acontecimento</button>:slot.moments.map(m=><MiniCard key={m.id} m={m}/>))}</div>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0,position:"relative",zIndex:2}}>{slot.isNow?<PulsingDot onClick={()=>setShowModal(true)} color={curDayColor.dot}/>:<div style={{width:14,height:14,borderRadius:"50%",background:typeColor(slot.moments[0]?.type),border:`2.5px solid ${C.white}`,outline:`2px solid ${typeBg(slot.moments[0]?.type)}`}}/>}<span style={{fontSize:10,color:C.textLight,marginTop:4,whiteSpace:"nowrap"}}>{slot.time}</span></div>
+                <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-start",paddingLeft:20,paddingRight:12}}>{!isLeft&&(slot.isNow?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`1.5px solid ${curDayColor.dot}`,borderRadius:20,padding:"9px 16px",fontSize:13,color:C.purple,fontWeight:500,lineHeight:1.4,textAlign:"center"}}>registrar<br/>acontecimento</button>:slot.moments.map(m=><MiniCard key={m.id} m={m}/>))}</div>
+              </div>);})}
+            </div>
+            {dayMoments.length>0&&(
+              <div style={{padding:"0 16px 16px"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <p style={{margin:0,fontSize:13,fontWeight:500,color:C.textMid}}>Momentos do dia</p>
+                  {isToday&&!exportMoments&&<button onClick={()=>setExportMoments(dayMoments.map(m=>m.id))} style={{fontSize:12,color:C.purple,background:"none",border:"none"}}>selecionar para compartilhar</button>}
+                </div>
+                {exportMoments?(
+                  <div>
+                    <p style={{fontSize:12,color:C.textMid,margin:"0 0 10px"}}>Toque para incluir/excluir do compartilhamento:</p>
+                    {dayMoments.map(m=><FullCard key={m.id} m={m} selectable selected={exportMoments.includes(m.id)} onToggle={()=>toggleExportMoment(m.id)}/>)}
+                    <div style={{display:"flex",gap:8,marginTop:4}}>
+                      <button onClick={()=>setExportMoments(null)} style={{flex:1,padding:"9px 0",background:"#F5F3FB",border:`1px solid ${C.cardBorder}`,borderRadius:8,color:C.textMid}}>Cancelar</button>
+                      <button onClick={()=>setView("compartilhar")} style={{flex:1,padding:"9px 0",background:C.purple,border:"none",borderRadius:8,color:C.white,fontWeight:500}}>Exportar selecionados</button>
+                    </div>
+                  </div>
+                ):(dayMoments.map(m=><FullCard key={m.id} m={m} onDelete={()=>deleteMoment(curDay,m.id)}/>))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view==="grupo"&&(
+          <div style={{padding:"20px 16px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}><p style={{margin:0,fontSize:16,fontWeight:500,color:C.text}}>{groupName}</p><button onClick={()=>{setNewGroupName(groupName);setShowGroupName(true);}} style={{fontSize:12,color:C.purple,background:"none",border:"none"}}>renomear</button></div>
+            <button onClick={()=>setShowInvite(true)} style={{width:"100%",padding:"11px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500,fontSize:14,marginBottom:20}}>+ Convidar pessoa</button>
+            {(!state.contacts||state.contacts.length===0)?(<div style={{textAlign:"center",padding:"2rem 0"}}><p style={{fontSize:14,color:C.textLight}}>Nenhum contato ainda.<br/>Convide alguém para começar!</p></div>):(
+              <div><p style={{fontSize:13,color:C.textMid,margin:"0 0 10px"}}>{state.contacts.length} pessoa{state.contacts.length!==1?"s":""} no grupo</p>
+              {state.contacts.map((c,i)=>(<div key={i} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:"12px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:12}}><AvatarBubble emoji={c.emoji||"🌿"} color={c.color||C.purpleLight} size={38}/><div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:500,color:C.text}}>{c.name}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>Código: <span style={{fontFamily:"monospace",color:C.purple}}>{c.code}</span></p></div><button onClick={()=>{const nc=[...state.contacts];nc.splice(i,1);save({...state,contacts:nc});}} style={{fontSize:12,color:C.textLight,background:"none",border:"none"}}>remover</button></div>))}</div>
+            )}
+            <div style={{background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:10,padding:"12px 14px",marginTop:8}}><p style={{fontSize:13,color:C.purple}}>💡 Compartilhe o código com a pessoa. Ela insere no Veeda dela para entrar no grupo.</p></div>
+          </div>
+        )}
+
+        {view==="compartilhar"&&(
+          <div style={{padding:"20px 16px"}}>
+            <p style={{fontSize:14,color:C.textMid,lineHeight:1.6}}>Exporte um dia como arquivo <strong style={{color:C.text}}>.veeda</strong> criptografado.</p>
+            <div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:"1.25rem",marginBottom:14}}>
+              <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Dia para exportar</label>
+              <select value={selectedExportDay} onChange={e=>setSelectedExportDay(e.target.value)} style={{marginBottom:16}}>{allDays.map(d=><option key={d} value={d}>{fmtFull(d)}</option>)}</select>
+              <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Chave de criptografia</label>
+              <input value={exportKey} onChange={e=>setExportKey(e.target.value)} placeholder="Ex: sol-lua-7" style={{marginBottom:16}}/>
+              <button onClick={async()=>{const allM=state.moments[selectedExportDay]||[];const toExport=exportMoments?allM.filter(m=>exportMoments.includes(m.id)):allM;if(!toExport.length){setExportMsg("Nenhum momento.");return;}if(!exportKey.trim()){setExportMsg("Digite uma chave.");return;}try{const enc=await encryptData({date:selectedExportDay,author:state.profile.name,emoji:state.profile.emoji,avatarColor:state.profile.avatarColor,moments:toExport,feeling:(state.dayFeelings||{})[selectedExportDay]},exportKey.trim());const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([enc],{type:"text/plain"}));a.download=`veeda-${selectedExportDay}.veeda`;a.click();setExportMsg("Exportado!");setExportMoments(null);}catch{setExportMsg("Erro ao exportar.");}}} style={{width:"100%",padding:"11px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500}}>Exportar .veeda</button>
+              {exportMsg&&<p style={{fontSize:13,color:C.green,marginTop:10}}>{exportMsg}</p>}
+            </div>
+            <div style={{background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:10,padding:"12px 14px"}}><p style={{fontSize:13,color:C.purple}}>🔒 Envie a chave por canal separado.</p></div>
+          </div>
+        )}
+
+        {view==="recebidos"&&!viewReceived&&(
+          <div style={{padding:"20px 16px"}}>
+            <div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:"1.25rem",marginBottom:20}}>
+              <p style={{fontSize:14,fontWeight:500,color:C.text,marginBottom:14}}>Importar um dia recebido</p>
+              <input ref={fileRef} type="file" accept=".veeda" style={{display:"none"}} onChange={e=>setImportFile(e.target.files[0])}/>
+              <button onClick={()=>fileRef.current.click()} style={{width:"100%",marginBottom:10,padding:"9px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:8}}>{importFile?`📄 ${importFile.name}`:"Selecionar arquivo .veeda"}</button>
+              <input value={importKey} onChange={e=>setImportKey(e.target.value)} placeholder="Chave fornecida pelo remetente" style={{marginBottom:12}}/>
+              <button onClick={async()=>{if(!importFile||!importKey.trim()){setImportMsg("Selecione o arquivo e informe a chave.");return;}try{const payload=await decryptData(await importFile.text(),importKey.trim());if(state.received.find(r=>r.date===payload.date&&r.author===payload.author)){setImportMsg("Já importado.");return;}save({...state,received:[...state.received,{...payload,importedAt:Date.now()}]});setImportMsg(`Dia de ${payload.author} importado!`);setImportFile(null);setImportKey("");}catch{setImportMsg("Chave incorreta ou arquivo inválido.");}}} style={{width:"100%",padding:"11px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500}}>Importar</button>
+              {importMsg&&<p style={{fontSize:13,color:C.green,marginTop:10}}>{importMsg}</p>}
+            </div>
+            {state.received.length===0?<p style={{fontSize:14,color:C.textLight,textAlign:"center",marginTop:32}}>Nenhum dia recebido ainda.</p>:state.received.slice().sort((a,b)=>b.importedAt-a.importedAt).map((r,i)=>(<div key={i} onClick={()=>setViewReceived(r)} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:"12px 14px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}><AvatarBubble emoji={r.emoji||"🌿"} color={r.avatarColor||C.purpleLight} size={38}/><div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:500,color:C.text}}>{r.author}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length!==1?"s":""}{r.feeling?` · ${r.feeling.emoji}`:""}</p></div><span style={{color:C.textLight,fontSize:18}}>›</span></div>))}
+          </div>
+        )}
+        {view==="recebidos"&&viewReceived&&(
+          <div style={{padding:"20px 16px"}}>
+            <button onClick={()=>setViewReceived(null)} style={{fontSize:13,color:C.textMid,background:"none",border:"none",marginBottom:16,display:"flex",alignItems:"center",gap:4}}>‹ Voltar</button>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}><AvatarBubble emoji={viewReceived.emoji||"🌿"} color={viewReceived.avatarColor||C.purpleLight} size={42}/><div><p style={{margin:0,fontSize:16,fontWeight:500,color:C.text}}>{viewReceived.author}</p><p style={{margin:0,fontSize:13,color:C.textMid}}>{fmtFull(viewReceived.date)}</p></div></div>
+            {viewReceived.feeling&&<div style={{display:"inline-flex",alignItems:"center",gap:6,background:C.purpleLight,borderRadius:20,padding:"5px 14px",marginBottom:16}}><span style={{fontSize:18}}>{viewReceived.feeling.emoji}</span><span style={{fontSize:13,color:C.purple}}>{viewReceived.feeling.label}</span></div>}
+            {viewReceived.moments.slice().sort((a,b)=>a.ts-b.ts).map(m=>(<div key={m.id} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:"12px 14px",marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:26,height:26,borderRadius:"50%",background:typeBg(m.type),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>{typeIcons[m.type]||"🔗"}</span><span style={{fontSize:12,color:C.textLight}}>{fmt(m.ts)}</span></div>{renderContent(m,true)}{m.caption&&<p style={{margin:"8px 0 0",fontSize:12,color:C.textMid}}>{m.caption}</p>}</div>))}
+          </div>
+        )}
+      </div>
+
+      {showModal&&(<Modal title="Registrar acontecimento" onClose={resetModal}>
+        <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>{[["texto","✏️","texto"],["foto","📷","foto"],["video","🎬","vídeo"],["link","🔗","link"],["musica","🎵","música"]].map(([t,icon,label])=>(<button key={t} onClick={()=>{setAddType(t);setAddMediaData(null);setAddContent("");}} style={{padding:"5px 12px",fontSize:13,background:addType===t?typeBg(t):"#F5F3FB",border:`1px solid ${addType===t?typeColor(t):C.cardBorder}`,borderRadius:20,color:addType===t?typeColor(t):C.textMid}}>{icon} {label}</button>))}</div>
+        {addType==="foto"&&(!addMediaData?(<div style={{display:"flex",gap:8,marginBottom:10}}><input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMediaData);}}/><input type="file" accept="image/*" style={{display:"none"}} id="gfoto" onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMediaData);}}/><button onClick={()=>fileRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:8}}>📷 Câmera</button><button onClick={()=>document.getElementById("gfoto").click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:8}}>🖼️ Galeria</button></div>):(<div style={{marginBottom:10,position:"relative"}}><img src={addMediaData} alt="" style={{width:"100%",borderRadius:8}}/><button onClick={()=>setAddMediaData(null)} style={{position:"absolute",top:6,right:6,background:"rgba(0,0,0,0.45)",border:"none",borderRadius:"50%",width:28,height:28,color:C.white,fontSize:14}}>×</button></div>))}
+        {addType==="video"&&(!addMediaData?(<div style={{display:"flex",gap:8,marginBottom:10}}><input ref={videoFileRef} type="file" accept="video/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMediaData);}}/><input type="file" accept="video/*" style={{display:"none"}} id="gvideo" onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMediaData);}}/><button onClick={()=>videoFileRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:8}}>🎥 Gravar</button><button onClick={()=>document.getElementById("gvideo").click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:8}}>📁 Galeria</button></div>):(<div style={{marginBottom:10,position:"relative"}}><video src={addMediaData} controls style={{width:"100%",borderRadius:8,maxHeight:240}}/><button onClick={()=>setAddMediaData(null)} style={{position:"absolute",top:6,right:6,background:"rgba(0,0,0,0.45)",border:"none",borderRadius:"50%",width:28,height:28,color:C.white,fontSize:14}}>×</button></div>))}
+        {(addType==="texto"||addType==="link"||addType==="musica")&&(<textarea value={addContent} onChange={e=>setAddContent(e.target.value)} placeholder={addType==="link"?"Cole o link...":addType==="musica"?"Música e artista...":"O que aconteceu?"} style={{marginBottom:10,minHeight:80}}/>)}
+        <input value={addCaption} onChange={e=>setAddCaption(e.target.value)} placeholder="Legenda (opcional)" style={{marginBottom:14}}/>
+        <button onClick={addMoment} style={{width:"100%",padding:"12px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500,fontSize:15}}>Adicionar</button>
+      </Modal>)}
+
+      {showEditDay&&(<Modal title="Cor do dia" onClose={()=>setShowEditDay(false)}><div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>{DAY_COLORS.map(c=>(<button key={c.label} onClick={()=>{save({...state,dayColors:{...(state.dayColors||{}),[curDay]:c.label}});setShowEditDay(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:"none",border:"none",padding:8}}><div style={{width:44,height:44,borderRadius:"50%",background:c.bg,border:`2.5px solid ${c.dot}`,outline:curDayColor.label===c.label?`2px solid ${C.purple}`:"none",outlineOffset:2}}/><span style={{fontSize:11,color:C.textMid}}>{c.label}</span></button>))}</div></Modal>)}
+
+      {showFeeling&&(<Modal title="Como foi esse dia?" onClose={()=>setShowFeeling(false)}><div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>{FEELINGS.map(f=>(<button key={f.label} onClick={()=>{save({...state,dayFeelings:{...(state.dayFeelings||{}),[curDay]:f}});setShowFeeling(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:curFeeling?.label===f.label?C.purpleLight:"#F5F3FB",border:`1.5px solid ${curFeeling?.label===f.label?C.purple:C.cardBorder}`,borderRadius:12,padding:"10px 14px",minWidth:64}}><span style={{fontSize:26}}>{f.emoji}</span><span style={{fontSize:11,color:C.textMid}}>{f.label}</span></button>))}</div></Modal>)}
+
+      {showAvatar&&(<Modal title="Personalizar perfil" onClose={()=>setShowAvatar(false)}>
+        <p style={{fontSize:13,color:C.textMid,marginBottom:10}}>Avatar</p>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>{AVATAR_EMOJIS.map(e=>(<button key={e} onClick={()=>save({...state,profile:{...state.profile,emoji:e}})} style={{fontSize:20,background:state.profile.emoji===e?C.purpleLight:"#F5F3FB",border:`1.5px solid ${state.profile.emoji===e?C.purple:C.cardBorder}`,borderRadius:10,width:42,height:42}}>{e}</button>))}</div>
+        <p style={{fontSize:13,color:C.textMid,marginBottom:10}}>Cor do avatar</p>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>{[C.purpleLight,C.blueLight,"#FDF5F0","#F0FAF5","#FDF0F5","#FDFAF0","#F5F5F7"].map(color=>(<button key={color} onClick={()=>save({...state,profile:{...state.profile,avatarColor:color}})} style={{width:36,height:36,borderRadius:"50%",background:color,border:`2px solid ${state.profile.avatarColor===color?C.purple:C.cardBorder}`}}/>))}</div>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:20}}><AvatarBubble emoji={state.profile.emoji} color={state.profile.avatarColor||C.purpleLight} size={56}/></div>
+        <button onClick={()=>setShowAvatar(false)} style={{width:"100%",padding:"11px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500}}>Salvar</button>
+      </Modal>)}
+
+      {showInvite&&(<Modal title="Convidar pessoa" onClose={()=>setShowInvite(false)}>
+        <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Crie um código e compartilhe com a pessoa. Ela insere no Veeda dela para entrar no grupo.</p>
+        <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome da pessoa</label>
+        <input value={inviteName} onChange={e=>setInviteName(e.target.value)} placeholder="Ex: Mamãe" style={{marginBottom:14}}/>
+        <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Código do convite</label>
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          <input value={inviteCode} onChange={e=>setInviteCode(e.target.value)} placeholder="Ex: sol-lua-7" style={{flex:1}}/>
+          <button onClick={()=>{const w=["sol","lua","rio","mar","flor","paz","luz","céu","vale","nuvem"];setInviteCode(`${w[Math.floor(Math.random()*w.length)]}-${Math.floor(100+Math.random()*900)}`);}} style={{padding:"0 12px",background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:8,color:C.purple,whiteSpace:"nowrap"}}>gerar</button>
+        </div>
+        <button onClick={()=>{if(!inviteName.trim()||!inviteCode.trim())return;save({...state,contacts:[...(state.contacts||[]),{name:inviteName.trim(),code:inviteCode.trim(),emoji:"🌿",addedAt:Date.now()}]});setInviteName("");setInviteCode("");setShowInvite(false);}} style={{width:"100%",padding:"11px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500}}>Adicionar ao grupo</button>
+      </Modal>)}
+
+      {showGroupName&&(<Modal title="Renomear grupo" onClose={()=>setShowGroupName(false)}>
+        <input value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="Nome do grupo" style={{marginBottom:14}}/>
+        <button onClick={()=>{if(newGroupName.trim()){save({...state,groupName:newGroupName.trim()});setShowGroupName(false);}}} style={{width:"100%",padding:"11px 0",background:C.purple,color:C.white,border:"none",borderRadius:10,fontWeight:500}}>Salvar</button>
+      </Modal>)}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
+
+// Service Worker para PWA
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>{
+    const sw=`
+      const CACHE="veeda-v1";
+      const FILES=["/","./index.html"];
+      self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES))));
+      self.addEventListener("fetch",e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));
+    `;
+    const blob=new Blob([sw],{type:"application/javascript"});
+    navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
