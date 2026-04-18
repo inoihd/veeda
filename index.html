@@ -242,8 +242,15 @@ function PulsingDot({onClick,color}){
 }
 
 function Btn({onClick,children,style={},disabled=false,variant="primary"}){
-  const base={width:"100%",padding:"13px 0",border:"none",borderRadius:12,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.1s,opacity 0.1s"};
-  const vars={primary:{background:C.purple,color:C.white},outline:{background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},ghost:{background:"none",border:"none",color:C.textMid,fontSize:13,padding:"8px 0"},danger:{background:C.red,color:C.white},green:{background:C.green,color:C.white}};
+  const base={width:"100%",padding:"14px 0",border:"none",borderRadius:50,fontFamily:PASSO,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.1s,opacity 0.1s"};
+  const vars={
+    primary:{background:C.purple,color:C.white},
+    outline:{background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},
+    secondary:{background:C.purpleMid,color:C.purpleSoft},
+    ghost:{background:"none",border:"none",color:C.textMid,fontSize:13,padding:"8px 0",fontFamily:SANS,borderRadius:8},
+    danger:{background:C.red,color:C.white},
+    green:{background:C.green,color:C.white},
+  };
   return <button onClick={onClick} disabled={disabled} style={{...base,...vars[variant],...style}}
     onMouseDown={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}}
     onMouseUp={e=>e.currentTarget.style.transform="scale(1)"}
@@ -599,22 +606,30 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
 
 // ─── SPLASH ──────────────────────────────────
 function SplashScreen({onLogin,onCreate,onGuide}){
-  const logo=getLogo(),logoRef=useRef(),[ localLogo,setLocalLogo]=useState(logo);
-  return <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${C.bg} 0%,#EAE6F8 100%)`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 32px 48px"}}>
-    <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%"}}>
-      {localLogo?<img src={localLogo} alt="Veeda" style={{width:120,height:120,objectFit:"contain",marginBottom:24,borderRadius:24}}/>:<div style={{width:100,height:100,borderRadius:28,background:`linear-gradient(135deg,${C.purple},${C.blue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:48,marginBottom:24,boxShadow:"0 8px 32px rgba(123,111,160,0.3)"}}>🌿</div>}
-      <h1 style={{fontSize:36,fontWeight:700,color:C.text,margin:"0 0 8px",letterSpacing:"-1px"}}>Veeda</h1>
-      <p style={{fontSize:16,color:C.textMid,margin:"0 0 6px",textAlign:"center",lineHeight:1.6}}>Seus dias, do seu jeito.</p>
-      <p style={{fontSize:13,color:C.textLight,margin:0,textAlign:"center",lineHeight:1.6,maxWidth:260}}>Registre seus momentos e compartilhe seus Dias de Veeda com quem você ama.</p>
-      <div style={{marginTop:24}}>
-        <input ref={logoRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{localStorage.setItem(LOGO_KEY,ev.target.result);setLocalLogo(ev.target.result);};r.readAsDataURL(f);}}/>
-        {!localLogo?<button onClick={()=>logoRef.current.click()} style={{background:"none",border:`1px dashed ${C.cardBorder}`,borderRadius:10,padding:"6px 14px",fontSize:12,color:C.textLight,cursor:"pointer"}}>+ Adicionar logotipo</button>:<button onClick={()=>{localStorage.removeItem(LOGO_KEY);setLocalLogo(null);}} style={{background:"none",border:"none",fontSize:11,color:C.textLight,cursor:"pointer"}}>Remover logo</button>}
-      </div>
+  const logo=getLogo(),logoRef=useRef(),[localLogo,setLocalLogo]=useState(logo);
+  return <div style={{minHeight:"100vh",background:`linear-gradient(180deg,${C.greenLight} 0%,${C.bgGradientEnd} 99%)`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 34px 48px"}}>
+    <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%",gap:16}}>
+      {/* Logo */}
+      <input ref={logoRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{localStorage.setItem(LOGO_KEY,ev.target.result);setLocalLogo(ev.target.result);};r.readAsDataURL(f);}}/>
+      {localLogo
+        ?<div onClick={()=>logoRef.current.click()} style={{cursor:"pointer"}}><img src={localLogo} alt="Veeda" style={{width:180,maxHeight:100,objectFit:"contain"}}/></div>
+        :<div onClick={()=>logoRef.current.click()} style={{cursor:"pointer",textAlign:"center"}}>
+          <p style={{fontFamily:PASSO,fontSize:52,fontWeight:700,color:C.purple,lineHeight:1,letterSpacing:"-2px"}}>Veeda</p>
+          <p style={{fontSize:11,color:C.textLight,marginTop:4}}>+ Adicionar logotipo</p>
+        </div>
+      }
+      {/* Tagline */}
+      <p style={{fontFamily:PASSO,fontSize:16,color:C.purple,textAlign:"center",margin:0}}>Viva primeiro, compartilhe depois.</p>
+      <p style={{fontFamily:SANS,fontSize:13,color:C.text,textAlign:"center",lineHeight:1.6,maxWidth:318,margin:0}}>Viva experiências, registre na hora e compartilhe com quem realmente importa.</p>
     </div>
-    <div style={{width:"100%",maxWidth:360}}>
-      <Btn onClick={onCreate} style={{marginBottom:12}}>Criar minha conta</Btn>
-      <Btn onClick={onLogin} variant="outline" style={{marginBottom:20}}>Já tenho uma conta</Btn>
-      <button onClick={onGuide} style={{width:"100%",background:"none",border:"none",color:C.textMid,fontSize:13,cursor:"pointer",padding:"8px 0"}}>📱 Como instalar o Veeda no celular</button>
+    {/* Actions */}
+    <div style={{width:"100%",maxWidth:322,display:"flex",flexDirection:"column",gap:21}}>
+      <Btn onClick={onCreate}>Criar a sua</Btn>
+      <Btn onClick={onLogin} variant="secondary">Já tenho uma</Btn>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+        <button onClick={onGuide} style={{background:"none",border:"none",color:C.textMid,fontSize:13,cursor:"pointer",fontFamily:SANS}}>📱 Como instalar o Veeda</button>
+        <span style={{fontSize:11,color:C.text,fontFamily:SANS}}>Veeda App by @inoihd</span>
+      </div>
     </div>
   </div>;
 }
@@ -635,15 +650,19 @@ function ScreenSelect({profiles,onSelect,onNew,onBack}){
 function ScreenPassword({profile,onSuccess,onBack,onForgot}){
   const [pw,setPw]=useState(""),[ err,setErr]=useState(""),[ loading,setLoading]=useState(false);
   const attempt=async()=>{if(!pw.trim())return;setLoading(true);setErr("");const hash=await hashPw(pw.trim());if(hash!==profile.passwordHash){setErr("Senha incorreta.");setPw("");setLoading(false);return;}onSuccess(pw.trim());};
-  return <div style={{maxWidth:400,margin:"0 auto",padding:"3rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
+  return <div style={{maxWidth:400,margin:"0 auto",padding:"3rem 21px",background:`linear-gradient(180deg,${C.greenLight} 0%,${C.bgGradientEnd} 99%)`,minHeight:"100vh",display:"flex",flexDirection:"column"}}>
     <Btn onClick={onBack} variant="ghost" style={{width:"auto",marginBottom:24}}>‹ Voltar</Btn>
-    <div style={{textAlign:"center",marginBottom:28}}><AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={80} ring/><p style={{margin:"14px 0 2px",fontSize:18,fontWeight:700,color:C.text}}>{profile.name}</p>{profile.email&&<p style={{margin:"0 0 4px",fontSize:13,color:C.textMid}}>{profile.email}</p>}<p style={{margin:0,fontSize:13,color:C.textLight}}>Digite sua senha para entrar</p></div>
-    <div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"20px"}}>
-      <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&attempt()} placeholder="Senha" autoFocus style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,marginBottom:err?6:14}}/>
-      {err&&<p style={{fontSize:13,color:C.red,margin:"0 0 14px",fontWeight:500}}>{err}</p>}
-      <Btn onClick={attempt} disabled={loading}>{loading?<><Spinner/>Verificando...</>:"Entrar"}</Btn>
-      <Btn onClick={onForgot} variant="ghost">Esqueci minha senha</Btn>
+    <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:13}}>
+      <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={80} ring/>
+      <p style={{margin:0,fontSize:18,fontWeight:700,color:C.text,fontFamily:SANS,textAlign:"center"}}>{profile.name}</p>
+      {profile.email&&<p style={{margin:0,fontSize:12,color:C.textLight,textAlign:"center"}}>{profile.email}</p>}
+      <p style={{margin:0,fontSize:16,color:C.textMid,fontFamily:PASSO,textAlign:"center"}}>Digite sua senha para entrar</p>
+      {/* Pill input */}
+      <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&attempt()} placeholder="Senha" autoFocus style={{border:`1px solid ${err?C.red:C.cardBorder}`,borderRadius:50,padding:"16px 20px",fontSize:16,width:"100%",boxSizing:"border-box",background:C.white,outline:"none"}}/>
+      {err&&<p style={{fontSize:13,color:C.red,margin:0,fontWeight:500}}>{err}</p>}
+      <p onClick={onForgot} style={{margin:0,fontSize:13,color:C.purple,cursor:"pointer",textAlign:"right",width:"100%"}}>Esqueci minha senha</p>
     </div>
+    <Btn onClick={attempt} disabled={loading} style={{marginTop:24}}>{loading?<><Spinner/>Verificando...</>:"Tomar conta da sua Veeda"}</Btn>
   </div>;
 }
 
@@ -854,7 +873,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
   const updateAv=updated=>{const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);if(idx>=0){ps[idx]={...ps[idx],emoji:updated.emoji,avatarColor:updated.avatarColor,avatarSrc:updated.avatarSrc};saveProfiles(ps);onUpdateProfile(updated);}};
 
-  return <div style={{maxWidth:480,margin:"0 auto",background:dayColor.bg,minHeight:"100vh",transition:"background 0.4s"}}>
+  return <div style={{maxWidth:480,margin:"0 auto",background:`linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradientEnd} 99%)`,minHeight:"100vh",transition:"background 0.4s",fontFamily:SANS}}>
     {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
     {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
 
@@ -977,11 +996,11 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     </div>
 
     {/* FABs */}
-    {view==="hoje"&&moments.length>0&&<div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 28px",background:`linear-gradient(to top,${dayColor.bg} 55%,transparent)`,pointerEvents:"none"}}>
-      <button onClick={()=>setShowShare(true)} style={{width:"100%",padding:"15px 0",background:C.purple,color:"#fff",border:"none",borderRadius:18,fontWeight:700,fontSize:15,cursor:"pointer",pointerEvents:"auto",boxShadow:"0 6px 24px rgba(123,111,160,0.38)"}}>🌿 Compartilhar meu Dia de Veeda</button>
+    {view==="hoje"&&moments.length>0&&<div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 34px 28px",background:`linear-gradient(to top,${dayColor.bg} 55%,transparent)`,pointerEvents:"none"}}>
+      <button onClick={()=>setShowShare(true)} style={{width:"100%",padding:"16px 0",background:C.purple,color:"#fff",border:"none",borderRadius:50,fontWeight:600,fontSize:15,cursor:"pointer",pointerEvents:"auto",boxShadow:"0 6px 24px rgba(144,0,255,0.30)",fontFamily:PASSO}}>Compartilhar meu Dia</button>
     </div>}
-    {view==="hoje"&&isToday&&moments.length===0&&<div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 28px",background:`linear-gradient(to top,${dayColor.bg} 55%,transparent)`,pointerEvents:"none"}}>
-      <button onClick={()=>setShowModal(true)} style={{width:"100%",padding:"15px 0",background:C.purple,color:"#fff",border:"none",borderRadius:18,fontWeight:700,fontSize:15,cursor:"pointer",pointerEvents:"auto",boxShadow:"0 6px 24px rgba(123,111,160,0.38)"}}>+ Registrar primeiro momento</button>
+    {view==="hoje"&&isToday&&moments.length===0&&<div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 34px 28px",background:`linear-gradient(to top,${dayColor.bg} 55%,transparent)`,pointerEvents:"none"}}>
+      <button onClick={()=>setShowModal(true)} style={{width:"100%",padding:"16px 0",background:C.purple,color:"#fff",border:"none",borderRadius:50,fontWeight:600,fontSize:15,cursor:"pointer",pointerEvents:"auto",boxShadow:"0 6px 24px rgba(144,0,255,0.30)",fontFamily:PASSO}}>+ Registrar primeiro momento</button>
     </div>}
 
     {/* ── Modals ── */}
