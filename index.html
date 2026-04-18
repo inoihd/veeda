@@ -18,9 +18,10 @@ textarea{resize:vertical;font-size:16px;}
 #root{max-width:480px;margin:0 auto;min-height:100vh;}
 @keyframes vPulse{0%{transform:scale(1);opacity:.6}70%{transform:scale(2.4);opacity:0}100%{transform:scale(1);opacity:0}}
 @keyframes slideUp{from{transform:translateY(60px);opacity:0}to{transform:translateY(0);opacity:1}}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes notifDrop{from{transform:translateY(-50px) translateX(-50%);opacity:0}to{transform:translateY(0) translateX(-50%);opacity:1}}
 @keyframes popIn{from{transform:scale(0.88);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes momentPop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
 </style>
 </head>
 <body>
@@ -30,43 +31,189 @@ textarea{resize:vertical;font-size:16px;}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback} = React;
-const PROFILES_KEY="veeda_profiles";
-const SESSION_KEY="veeda_session";
-const LOGO_KEY="veeda_logo";
-const C={purple:"#7B6FA0",purpleLight:"#EDE9F6",purpleMid:"#B8AEDD",blue:"#5B7FA6",blueLight:"#E6EEF8",blueMid:"#A8C0DA",cardBorder:"#DDD8EE",bg:"#F7F5FC",text:"#3A3350",textMid:"#7A7090",textLight:"#ADA8C0",white:"#FFFFFF",green:"#1D9E75",greenLight:"#E6F9F2",red:"#C0392B",amber:"#D4860A"};
-const DAY_COLORS=[{label:"Lavanda",bg:"#F7F5FC",dot:"#B8AEDD"},{label:"Pêssego",bg:"#FDF5F0",dot:"#E8B89A"},{label:"Menta",bg:"#F0FAF5",dot:"#8FD1B0"},{label:"Céu",bg:"#F0F6FD",dot:"#9ABEDD"},{label:"Rosa",bg:"#FDF0F5",dot:"#DDA8C0"},{label:"Baunilha",bg:"#FDFAF0",dot:"#D4C48A"},{label:"Cinza",bg:"#F5F5F7",dot:"#ACACBC"}];
-const FEELINGS=[{emoji:"😊",label:"Feliz"},{emoji:"😌",label:"Tranquilo"},{emoji:"🥰",label:"Grato"},{emoji:"😔",label:"Triste"},{emoji:"😤",label:"Frustrado"},{emoji:"😴",label:"Cansado"},{emoji:"🤩",label:"Animado"},{emoji:"😶",label:"Neutro"}];
-const AVATAR_EMOJIS=["🌿","🌸","🌊","🌙","⭐","🦋","🍀","🎵","🌻","🦉","🐾","🌈","🦊","🐬","🌺","🎯","🧩","🪴","🦚","🌵"];
-const AVATAR_COLORS=["#EDE9F6","#E6EEF8","#FDF5F0","#F0FAF5","#FDF0F5","#FDFAF0","#F5F5F7"];
-const EVENT_TYPES=[{id:"show",emoji:"🎵",label:"Show"},{id:"encontro",emoji:"🤝",label:"Encontro"},{id:"viagem",emoji:"✈️",label:"Viagem"},{id:"aniversario",emoji:"🎂",label:"Aniversário"},{id:"outro",emoji:"📅",label:"Outro"}];
 
-// ── Crypto ──
-const strToKey=async(pw,salt)=>{const km=await crypto.subtle.importKey("raw",new TextEncoder().encode(pw),"PBKDF2",false,["deriveKey"]);return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:150000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);};
-const encryptObj=async(obj,pw)=>{const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),key=await strToKey(pw,salt),buf=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(obj)));return btoa(JSON.stringify({salt:Array.from(salt),iv:Array.from(iv),data:Array.from(new Uint8Array(buf))}));};
-const decryptObj=async(ct,pw)=>{const{salt,iv,data}=JSON.parse(atob(ct)),key=await strToKey(pw,new Uint8Array(salt)),buf=await crypto.subtle.decrypt({name:"AES-GCM",iv:new Uint8Array(iv)},key,new Uint8Array(data));return JSON.parse(new TextDecoder().decode(buf));};
-const hashPw=async pw=>{const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode("veeda:"+pw));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");};
-const genCode=()=>{const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",rand=crypto.getRandomValues(new Uint8Array(16)),s=Array.from(rand).map(b=>chars[b%chars.length]).join("");return`${s.slice(0,4)}-${s.slice(4,8)}-${s.slice(8,12)}-${s.slice(12,16)}`;};
+// ─── CONSTANTS ───────────────────────────────
+const PROFILES_KEY = "veeda_profiles";
+const SESSION_KEY  = "veeda_session";
+const LOGO_KEY     = "veeda_logo";
+const GDRIVE_KEY   = "veeda_gdrive_token";
+const GOOGLE_CLIENT_ID = "377556817223-t88d5ejs7sopv5fftg96j0bq9gdpt18f.apps.googleusercontent.com";
+const GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+const GDRIVE_FILE  = "veeda-backup.enc";
 
-// ── Helpers ──
-const getVideoEmbed=url=>{const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);if(yt)return`https://www.youtube.com/embed/${yt[1]}`;const v=url.match(/vimeo\.com\/(\d+)/);if(v)return`https://player.vimeo.com/video/${v[1]}`;return null;};
-const isVideoLink=url=>!!getVideoEmbed(url);
-const typeIcons={texto:"✏️",foto:"📷",link:"🔗",musica:"🎵",video:"🎬",videolink:"🔗",evento:"📅"};
-const typeColor=t=>({texto:C.purple,foto:C.blue,link:C.blue,musica:C.purple,video:C.blue,videolink:C.blue,evento:C.amber}[t]||C.purple);
-const typeBg=t=>({texto:C.purpleLight,foto:C.blueLight,link:C.blueLight,musica:C.purpleLight,video:C.blueLight,videolink:C.blueLight,evento:"#FFF3DC"}[t]||C.purpleLight);
-const fmt=ts=>new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-const todayStr=()=>new Date().toISOString().slice(0,10);
-const offsetDay=(d,n)=>{const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
-const fmtLabel=d=>{const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
-const fmtFull=d=>{const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};
-const defaultData=()=>({moments:{},received:[],contacts:[],groupName:"Família & Amigos",dayColors:{},dayFeelings:{},reminders:[],sharedLog:{},events:[],lastBackupPrompt:null});
-const loadProfiles=()=>{try{return JSON.parse(localStorage.getItem(PROFILES_KEY)||"[]");}catch{return[];}};
-const saveProfiles=ps=>localStorage.setItem(PROFILES_KEY,JSON.stringify(ps));
-const saveSession=(id,pw)=>sessionStorage.setItem(SESSION_KEY,JSON.stringify({profileId:id,pw}));
-const loadSession=()=>{try{return JSON.parse(sessionStorage.getItem(SESSION_KEY)||"null");}catch{return null;}};
-const clearSession=()=>sessionStorage.removeItem(SESSION_KEY);
-const getLogo=()=>localStorage.getItem(LOGO_KEY)||null;
+const C = {
+  // ── Updated from Figma ──
+  purple:"#9000FF",purpleLight:"#EDE9F6",purpleMid:"#BB7DEB",
+  purpleSoft:"#F9F1FF",   // very light purple for secondary btn label
+  blue:"#5B7FA6",blueLight:"#E6EEF8",blueMid:"#A8C0DA",
+  amber:"#D4860A",amberLight:"#FFF3DC",
+  green:"#1D9E75",greenLight:"#EAFFF8",  // mint green background
+  red:"#C0392B",
+  cardBorder:"#CBC0D3",   // updated input border colour
+  bg:"#EAFFF8",           // mint green bg (from Figma)
+  bgGradientEnd:"#FEFEFC",
+  text:"#3A3350",textMid:"#715B81",textLight:"#ADA8C0",white:"#FFFFFF",
+  // accent colours kept for internal logic
+  purpleLogic:"#7B6FA0",
+};
 
-// ── Shared UI ──
+// ── Font: Passo (Google Fonts via CDN) for display text ──
+const PASSO = "'Passo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const SANS  = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+// ── inject Passo font ──
+if (!document.getElementById("passo-font")) {
+  const lnk = document.createElement("link");
+  lnk.id = "passo-font";
+  lnk.rel = "stylesheet";
+  lnk.href = "https://fonts.googleapis.com/css2?family=Passo:wght@400;600;700&display=swap";
+  document.head.appendChild(lnk);
+}
+
+const DAY_COLORS = [
+  {label:"Lavanda",bg:"#F7F5FC",dot:"#B8AEDD"},{label:"Pêssego",bg:"#FDF5F0",dot:"#E8B89A"},
+  {label:"Menta",bg:"#F0FAF5",dot:"#8FD1B0"},{label:"Céu",bg:"#F0F6FD",dot:"#9ABEDD"},
+  {label:"Rosa",bg:"#FDF0F5",dot:"#DDA8C0"},{label:"Baunilha",bg:"#FDFAF0",dot:"#D4C48A"},
+  {label:"Cinza",bg:"#F5F5F7",dot:"#ACACBC"},
+];
+const FEELINGS = [
+  {emoji:"😊",label:"Feliz"},{emoji:"😌",label:"Tranquilo"},{emoji:"🥰",label:"Grato"},
+  {emoji:"😔",label:"Triste"},{emoji:"😤",label:"Frustrado"},{emoji:"😴",label:"Cansado"},
+  {emoji:"🤩",label:"Animado"},{emoji:"😶",label:"Neutro"},
+];
+const AVATAR_EMOJIS = ["🌿","🌸","🌊","🌙","⭐","🦋","🍀","🎵","🌻","🦉","🐾","🌈","🦊","🐬","🌺","🎯","🧩","🪴","🦚","🌵"];
+const AVATAR_COLORS = ["#EDE9F6","#E6EEF8","#FDF5F0","#F0FAF5","#FDF0F5","#FDFAF0","#F5F5F7"];
+const EVENT_TYPES  = [
+  {id:"show",emoji:"🎵",label:"Show"},{id:"encontro",emoji:"🤝",label:"Encontro"},
+  {id:"viagem",emoji:"✈️",label:"Viagem"},{id:"aniversario",emoji:"🎂",label:"Aniversário"},
+  {id:"outro",emoji:"📅",label:"Outro"},
+];
+const DEFAULT_TAGS = [
+  {id:"viagem",emoji:"🏖️",label:"Viagem",bg:"#E6F0FD",color:"#5B7FA6"},
+  {id:"trabalho",emoji:"💼",label:"Trabalho",bg:"#EDE9F6",color:"#7B6FA0"},
+  {id:"gastronomia",emoji:"🍽️",label:"Gastronomia",bg:"#E8FBF0",color:"#1D9E75"},
+  {id:"cultura",emoji:"🎵",label:"Cultura",bg:"#FFF3DC",color:"#D4860A"},
+  {id:"familia",emoji:"❤️",label:"Família",bg:"#FDE8F0",color:"#C0396A"},
+  {id:"natureza",emoji:"🌿",label:"Natureza",bg:"#E8FBF0",color:"#1D9E75"},
+  {id:"saude",emoji:"🏃",label:"Saúde",bg:"#E6F0FD",color:"#5B7FA6"},
+  {id:"amigos",emoji:"🤝",label:"Amigos",bg:"#EDE9F6",color:"#7B6FA0"},
+];
+
+// Icon per type (SVG paths inside circle)
+const TYPE_ICONS = {
+  texto: "✏️", foto: "📷", video: "🎬", link: "🔗",
+  musica: "🎵", videolink: "🔗", evento: "📅",
+};
+const TYPE_COLORS = {
+  texto:{fill:C.purple,bg:C.purpleLight},
+  foto:{fill:C.blue,bg:C.blueLight},
+  video:{fill:C.blue,bg:C.blueLight},
+  link:{fill:C.blue,bg:C.blueLight},
+  musica:{fill:"#1D9E75",bg:"#E6F9F2"},
+  videolink:{fill:C.blue,bg:C.blueLight},
+  evento:{fill:C.amber,bg:C.amberLight},
+};
+
+// ─── CRYPTO ──────────────────────────────────
+const strToKey = async (pw,salt) => {
+  const km = await crypto.subtle.importKey("raw",new TextEncoder().encode(pw),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:150000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+};
+const encryptObj = async (obj,pw) => {
+  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await strToKey(pw,salt);
+  const buf=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(obj)));
+  return btoa(JSON.stringify({salt:Array.from(salt),iv:Array.from(iv),data:Array.from(new Uint8Array(buf))}));
+};
+const decryptObj = async (ct,pw) => {
+  const {salt,iv,data}=JSON.parse(atob(ct));
+  const key=await strToKey(pw,new Uint8Array(salt));
+  const buf=await crypto.subtle.decrypt({name:"AES-GCM",iv:new Uint8Array(iv)},key,new Uint8Array(data));
+  return JSON.parse(new TextDecoder().decode(buf));
+};
+const hashPw = async pw => {
+  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode("veeda:"+pw));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+};
+const genCode = () => {
+  const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",rand=crypto.getRandomValues(new Uint8Array(16));
+  const s=Array.from(rand).map(b=>chars[b%chars.length]).join("");
+  return `${s.slice(0,4)}-${s.slice(4,8)}-${s.slice(8,12)}-${s.slice(12,16)}`;
+};
+
+// ─── GOOGLE DRIVE ────────────────────────────
+const gdriveToken    = () => {try{return JSON.parse(localStorage.getItem(GDRIVE_KEY)||"null");}catch{return null;}};
+const gdriveSetToken = t  => localStorage.setItem(GDRIVE_KEY,JSON.stringify(t));
+const gdriveClear    = () => localStorage.removeItem(GDRIVE_KEY);
+const gdriveAuth = () => new Promise((resolve,reject)=>{
+  const params=new URLSearchParams({client_id:GOOGLE_CLIENT_ID,redirect_uri:window.location.origin+window.location.pathname,response_type:"token",scope:GDRIVE_SCOPE,state:Math.random().toString(36).slice(2)});
+  const popup=window.open(`https://accounts.google.com/o/oauth2/v2/auth?${params}`,"gdrive_auth","width=500,height=600");
+  const timer=setInterval(()=>{
+    try{if(!popup||popup.closed){clearInterval(timer);reject(new Error("Janela fechada."));return;}
+    const hash=popup.location.hash;
+    if(hash&&hash.includes("access_token")){clearInterval(timer);popup.close();
+    const p=new URLSearchParams(hash.slice(1));
+    const token={access_token:p.get("access_token"),expires_in:Number(p.get("expires_in")),ts:Date.now()};
+    gdriveSetToken(token);resolve(token.access_token);}}catch{}
+  },500);
+});
+const gdriveFindFile = async token => {
+  const res=await fetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${GDRIVE_FILE}'&fields=files(id)`,{headers:{Authorization:`Bearer ${token}`}});
+  const d=await res.json(); return d.files?.[0]?.id||null;
+};
+const gdriveUpload = async (content,token) => {
+  const existing=await gdriveFindFile(token);
+  const meta=JSON.stringify({name:GDRIVE_FILE,parents:["appDataFolder"]}),boundary="vb";
+  const body=`--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: text/plain\r\n\r\n${content}\r\n--${boundary}--`;
+  const url=existing?`https://www.googleapis.com/upload/drive/v3/files/${existing}?uploadType=multipart`:`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+  await fetch(url,{method:existing?"PATCH":"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":`multipart/related; boundary=${boundary}`},body});
+};
+const gdriveDownload = async token => {
+  const id=await gdriveFindFile(token); if(!id)return null;
+  const res=await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:`Bearer ${token}`}});
+  return res.ok?res.text():null;
+};
+
+// ─── MUSIC SEARCH ────────────────────────────
+const searchMusic = async query => {
+  // Use iTunes Search API (no key needed, CORS-friendly)
+  const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&limit=8`);
+  const d   = await res.json();
+  return (d.results||[]).map(r=>({
+    id: r.trackId,
+    title: r.trackName,
+    artist: r.artistName,
+    album: r.collectionName,
+    art: r.artworkUrl100,
+    preview: r.previewUrl,  // 30-sec AAC preview
+    appleMusicUrl: r.trackViewUrl,
+    spotifyQuery: `${r.trackName} ${r.artistName}`,
+  }));
+};
+
+// ─── HELPERS ─────────────────────────────────
+const getVideoEmbed = url => {
+  const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if(yt)return`https://www.youtube.com/embed/${yt[1]}`;
+  const v=url.match(/vimeo\.com\/(\d+)/);
+  if(v)return`https://player.vimeo.com/video/${v[1]}`;
+  return null;
+};
+const isVideoLink  = url => !!getVideoEmbed(url);
+const fmt          = ts  => new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+const todayStr     = ()  => new Date().toISOString().slice(0,10);
+const offsetDay    = (d,n) => {const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
+const fmtLabel     = d   => {const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
+const fmtFull      = d   => {const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};
+const defaultData  = ()  => ({moments:{},received:[],contacts:[],groupName:"Família & Amigos",dayColors:{},dayFeelings:{},reminders:[],sharedLog:{},events:[],lastBackupPrompt:null,customTags:[],suggestions:[]});
+const loadProfiles = ()  => {try{return JSON.parse(localStorage.getItem(PROFILES_KEY)||"[]");}catch{return[];}};
+const saveProfiles = ps  => localStorage.setItem(PROFILES_KEY,JSON.stringify(ps));
+const saveSession  = (id,pw) => sessionStorage.setItem(SESSION_KEY,JSON.stringify({profileId:id,pw}));
+const loadSession  = ()  => {try{return JSON.parse(sessionStorage.getItem(SESSION_KEY)||"null");}catch{return null;}};
+const clearSession = ()  => sessionStorage.removeItem(SESSION_KEY);
+const getLogo      = ()  => localStorage.getItem(LOGO_KEY)||null;
+
+// ─── SHARED UI ───────────────────────────────
 function AvatarBubble({src,emoji,color,size=38,ring=false}){
   return src
     ?<img src={src} alt="av" style={{width:size,height:size,borderRadius:"50%",objectFit:"cover",border:`${ring?"3px":"1.5px"} solid ${ring?C.purpleMid:C.cardBorder}`,flexShrink:0,display:"block"}}/>
@@ -76,33 +223,212 @@ function AvatarBubble({src,emoji,color,size=38,ring=false}){
 function Modal({onClose,title,children}){
   return <div style={{position:"fixed",inset:0,background:"rgba(40,30,60,0.48)",display:"flex",alignItems:"flex-end",zIndex:300}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
     <div style={{background:C.white,borderRadius:"20px 20px 0 0",padding:"20px 16px 40px",width:"100%",maxWidth:480,margin:"0 auto",boxSizing:"border-box",maxHeight:"92vh",overflowY:"auto",animation:"slideUp 0.28s ease"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      {title&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
         <p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{title}</p>
         <button onClick={onClose} style={{background:C.purpleLight,border:"none",borderRadius:"50%",width:28,height:28,color:C.purple,fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-      </div>
+      </div>}
       {children}
     </div>
   </div>;
 }
 
-function PulsingDot({onClick,color}){const c=color||C.purple,cm=color?color+"88":C.purpleMid;return <div style={{position:"relative",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={onClick}><div style={{position:"absolute",width:22,height:22,borderRadius:"50%",background:cm,animation:"vPulse 2s ease-out infinite"}}/><div style={{position:"absolute",width:22,height:22,borderRadius:"50%",background:cm,animation:"vPulse 2s ease-out infinite",animationDelay:"0.7s"}}/><div style={{position:"relative",width:16,height:16,borderRadius:"50%",background:c,border:`3px solid ${C.white}`,zIndex:1}}/></div>;}
-
-function Btn({onClick,children,style={},disabled=false,variant="primary",type="button"}){
-  const base={width:"100%",padding:"13px 0",border:"none",borderRadius:12,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.1s, opacity 0.1s"};
-  const vars={primary:{background:C.purple,color:C.white},outline:{background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},ghost:{background:"none",border:"none",color:C.textMid,fontSize:13,padding:"8px 0"},danger:{background:C.red,color:C.white},green:{background:C.green,color:C.white}};
-  return <button type={type} onClick={onClick} disabled={disabled} style={{...base,...vars[variant],...style}} onMouseDown={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}} onMouseUp={e=>e.currentTarget.style.transform="scale(1)"} onTouchStart={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}} onTouchEnd={e=>e.currentTarget.style.transform="scale(1)"}>{children}</button>;
+function PulsingDot({onClick,color}){
+  const c=color||C.purple,cm=color?color+"88":C.purpleMid;
+  return <div style={{position:"relative",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={onClick}>
+    <div style={{position:"absolute",width:22,height:22,borderRadius:"50%",background:cm,animation:"vPulse 2s ease-out infinite"}}/>
+    <div style={{position:"absolute",width:22,height:22,borderRadius:"50%",background:cm,animation:"vPulse 2s ease-out infinite",animationDelay:"0.7s"}}/>
+    <div style={{position:"relative",width:16,height:16,borderRadius:"50%",background:c,border:`3px solid ${C.white}`,zIndex:1}}/>
+  </div>;
 }
 
-// ── Received notification popup ──
+function Btn({onClick,children,style={},disabled=false,variant="primary"}){
+  const base={width:"100%",padding:"13px 0",border:"none",borderRadius:12,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.1s,opacity 0.1s"};
+  const vars={primary:{background:C.purple,color:C.white},outline:{background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},ghost:{background:"none",border:"none",color:C.textMid,fontSize:13,padding:"8px 0"},danger:{background:C.red,color:C.white},green:{background:C.green,color:C.white}};
+  return <button onClick={onClick} disabled={disabled} style={{...base,...vars[variant],...style}}
+    onMouseDown={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}}
+    onMouseUp={e=>e.currentTarget.style.transform="scale(1)"}
+    onTouchStart={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}}
+    onTouchEnd={e=>e.currentTarget.style.transform="scale(1)"}>{children}</button>;
+}
+
+function Spinner(){return <div style={{width:18,height:18,border:`2.5px solid ${C.purpleLight}`,borderTop:`2.5px solid ${C.purple}`,borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block",verticalAlign:"middle",marginRight:6}}/>;}
+
+function CheckboxConfirm({checked,hasError,onChange,label}){
+  const [active,setActive]=useState(false);
+  const bc=checked?C.green:hasError?C.red:active?"#9B90C0":C.cardBorder;
+  return <label style={{display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer",marginBottom:20,padding:"14px 16px",background:checked?"#E8FBF0":active?"#F5F2FC":C.white,border:`2px solid ${bc}`,borderRadius:14,transition:"all 0.15s",userSelect:"none"}}
+    onMouseDown={()=>setActive(true)} onMouseUp={()=>{setActive(false);onChange(!checked);}} onMouseLeave={()=>setActive(false)}
+    onTouchStart={()=>setActive(true)} onTouchEnd={e=>{e.preventDefault();setActive(false);onChange(!checked);}}>
+    <div style={{width:22,height:22,borderRadius:7,border:`2.5px solid ${bc}`,background:checked?C.green:active?"#F0EDF8":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s",marginTop:1,transform:active?"scale(0.9)":"scale(1)"}}>
+      {checked&&<svg width="13" height="10" viewBox="0 0 13 10" fill="none"><path d="M1 5L5 9L12 1" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+    </div>
+    <span style={{fontSize:14,color:checked?C.green:C.textMid,lineHeight:1.55,fontWeight:checked?500:400,transition:"color 0.15s"}}>{label}</span>
+  </label>;
+}
+
+// ─── MOMENT CIRCLE ───────────────────────────
+// Every moment on the timeline is ONLY a circle.
+// Tapping it opens a full detail modal.
+function MomentCircle({m,isNew,onTap,size=52}){
+  const tc = TYPE_COLORS[m.type]||TYPE_COLORS.texto;
+  const icon = TYPE_ICONS[m.type]||"✏️";
+  const isPhoto = m.type==="foto";
+  const isVideo = m.type==="video";
+  return (
+    <div onClick={onTap} style={{width:size,height:size,borderRadius:"50%",overflow:"hidden",cursor:"pointer",flexShrink:0,border:`2.5px solid ${isNew?C.purpleMid:C.white}`,boxShadow:`0 2px 8px rgba(0,0,0,0.12)`,animation:isNew?"momentPop 0.3s ease":"none",position:"relative",background:tc.bg}}>
+      {isPhoto&&m.content
+        ?<img src={m.content} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+        :isVideo&&m.content
+          ?<video src={m.content} style={{width:"100%",height:"100%",objectFit:"cover"}} muted playsInline/>
+          :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*0.42}}>{icon}</div>
+      }
+      {/* Music has album art if available */}
+      {m.type==="musica"&&m.albumArt&&<img src={m.albumArt} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>}
+    </div>
+  );
+}
+
+// ─── MOMENT DETAIL MODAL ─────────────────────
+function MomentDetail({m,onClose,onDelete}){
+  const [playing,setPlaying]=useState(false);
+  const audioRef=useRef(null);
+  const embed=m.type==="videolink"?getVideoEmbed(m.content):null;
+  const allTags=[...DEFAULT_TAGS,...(m.customTagDefs||[])];
+
+  const togglePlay=()=>{
+    if(!audioRef.current)return;
+    if(playing){audioRef.current.pause();}else{audioRef.current.play();}
+    setPlaying(p=>!p);
+  };
+
+  return <Modal title="" onClose={onClose}>
+    {/* Header */}
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+      <div style={{width:40,height:40,borderRadius:"50%",background:TYPE_COLORS[m.type]?.bg||C.purpleLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{TYPE_ICONS[m.type]||"✏️"}</div>
+      <div><p style={{margin:0,fontSize:13,color:C.textLight}}>{fmt(m.ts)}</p></div>
+      <button onClick={onClose} style={{marginLeft:"auto",background:C.purpleLight,border:"none",borderRadius:"50%",width:28,height:28,color:C.purple,fontSize:16,cursor:"pointer"}}>×</button>
+    </div>
+
+    {/* Content */}
+    {m.type==="foto"&&m.content&&<img src={m.content} alt="" style={{width:"100%",borderRadius:12,display:"block",marginBottom:12}}/>}
+    {m.type==="video"&&m.content&&<video src={m.content} controls style={{width:"100%",borderRadius:12,display:"block",maxHeight:320,marginBottom:12}}/>}
+    {m.type==="videolink"&&embed&&<div style={{position:"relative",paddingBottom:"56.25%",height:0,borderRadius:12,overflow:"hidden",marginBottom:12}}><iframe src={embed} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}} allowFullScreen title="v"/></div>}
+    {m.type==="link"&&<a href={m.content} target="_blank" rel="noopener noreferrer" style={{display:"block",color:C.blue,fontSize:14,wordBreak:"break-all",marginBottom:12,padding:"10px 14px",background:C.blueLight,borderRadius:10}}>{m.content}</a>}
+    {m.type==="texto"&&<p style={{fontSize:15,color:C.text,lineHeight:1.7,marginBottom:12}}>{m.content}</p>}
+
+    {/* Music player */}
+    {m.type==="musica"&&<div style={{background:"#E6F9F2",borderRadius:14,padding:"14px",marginBottom:12}}>
+      <div style={{display:"flex",gap:12,alignItems:"center"}}>
+        {m.albumArt&&<img src={m.albumArt} alt="" style={{width:56,height:56,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
+        <div style={{flex:1,overflow:"hidden"}}>
+          <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.trackTitle||m.content}</p>
+          <p style={{margin:"2px 0 0",fontSize:12,color:C.textMid}}>{m.trackArtist||""}</p>
+          {m.trackAlbum&&<p style={{margin:"1px 0 0",fontSize:11,color:C.textLight}}>{m.trackAlbum}</p>}
+        </div>
+      </div>
+      {m.previewUrl&&<div style={{marginTop:10}}>
+        <audio ref={audioRef} src={m.previewUrl} onEnded={()=>setPlaying(false)}/>
+        <button onClick={togglePlay} style={{width:"100%",padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:14,cursor:"pointer"}}>
+          {playing?"⏸ Pausar prévia":"▶ Ouvir prévia (30s)"}
+        </button>
+      </div>}
+      {m.appleMusicUrl&&<a href={m.appleMusicUrl} target="_blank" rel="noopener noreferrer" style={{display:"block",marginTop:8,textAlign:"center",fontSize:12,color:C.textMid}}>Abrir no Apple Music →</a>}
+    </div>}
+
+    {m.caption&&<p style={{fontSize:13,color:C.textMid,marginBottom:12,fontStyle:"italic"}}>"{m.caption}"</p>}
+
+    {/* Tags */}
+    {m.tags&&m.tags.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+      {m.tags.map(tagId=>{const t=allTags.find(x=>x.id===tagId);return t?<span key={tagId} style={{padding:"3px 10px",background:t.bg,color:t.color,borderRadius:20,fontSize:12,fontWeight:500}}>{t.emoji} {t.label}</span>:null;})}
+    </div>}
+
+    <Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>
+  </Modal>;
+}
+
+// ─── MUSIC PICKER MODAL ──────────────────────
+function MusicPicker({onSelect,onClose}){
+  const [query,setQuery]     = useState("");
+  const [results,setResults] = useState([]);
+  const [loading,setLoading] = useState(false);
+  const [service,setService] = useState("itunes"); // itunes | spotify | youtube
+  const [err,setErr]         = useState("");
+
+  const doSearch = async () => {
+    if(!query.trim())return;
+    setLoading(true);setErr("");setResults([]);
+    try{
+      const res = await searchMusic(query);
+      if(res.length===0)setErr("Nenhum resultado. Tente outro nome.");
+      setResults(res);
+    }catch{setErr("Erro ao buscar. Verifique sua conexão.");}
+    setLoading(false);
+  };
+
+  const openExternal = (r) => {
+    if(service==="spotify"){window.open(`https://open.spotify.com/search/${encodeURIComponent(r.spotifyQuery)}`);}
+    else if(service==="youtube"){window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(r.spotifyQuery)}`);}
+  };
+
+  return <Modal title="Buscar música" onClose={onClose}>
+    {/* Service selector */}
+    <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+      {[["itunes","🎵 Apple Music"],["spotify","💚 Spotify"],["youtube","🔴 YouTube"]].map(([s,l])=>(
+        <button key={s} onClick={()=>setService(s)} style={{padding:"5px 12px",background:service===s?C.purpleLight:C.white,border:`1.5px solid ${service===s?C.purple:C.cardBorder}`,borderRadius:20,fontSize:12,fontWeight:service===s?600:400,color:service===s?C.purple:C.textMid,cursor:"pointer"}}>{l}</button>
+      ))}
+    </div>
+    {/* Search */}
+    <div style={{display:"flex",gap:8,marginBottom:14}}>
+      <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doSearch()} placeholder="Nome da música ou artista..." style={{flex:1}}/>
+      <button onClick={doSearch} disabled={loading} style={{padding:"0 16px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600,flexShrink:0}}>{loading?<Spinner/>:"Buscar"}</button>
+    </div>
+    {err&&<p style={{fontSize:13,color:C.red,marginBottom:10}}>{err}</p>}
+    {/* Results */}
+    <div style={{maxHeight:320,overflowY:"auto"}}>
+      {results.map(r=>(
+        <div key={r.id} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.cardBorder}`,alignItems:"center"}}>
+          {r.art&&<img src={r.art} alt="" style={{width:44,height:44,borderRadius:6,objectFit:"cover",flexShrink:0}}/>}
+          <div style={{flex:1,overflow:"hidden"}}>
+            <p style={{margin:0,fontSize:13,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</p>
+            <p style={{margin:0,fontSize:12,color:C.textMid,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.artist}</p>
+          </div>
+          {service==="itunes"
+            ?<button onClick={()=>onSelect(r)} style={{padding:"6px 12px",background:C.green,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>Adicionar</button>
+            :<button onClick={()=>openExternal(r)} style={{padding:"6px 12px",background:C.purpleLight,color:C.purple,border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>Abrir →</button>
+          }
+        </div>
+      ))}
+    </div>
+    {service!=="itunes"&&results.length>0&&<p style={{fontSize:12,color:C.textLight,marginTop:10,textAlign:"center"}}>Abra a música no {service==="spotify"?"Spotify":"YouTube"} e cole o link na timeline.</p>}
+  </Modal>;
+}
+
+// ─── TAG PICKER ──────────────────────────────
+function TagPicker({selectedTags,onChange,customTags}){
+  const [newTag,setNewTag]=useState(""),[ adding,setAdding]=useState(false);
+  const allTags=[...DEFAULT_TAGS,...(customTags||[])];
+  const toggle=id=>onChange(selectedTags.includes(id)?selectedTags.filter(x=>x!==id):[...selectedTags,id]);
+  const addCustom=()=>{if(!newTag.trim())return;const id="c_"+Date.now();onChange([...selectedTags,id]);setNewTag("");setAdding(false);};
+  return <div>
+    <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:8}}>🏷️ Tags <span style={{fontWeight:400,color:C.textLight}}>(opcional)</span></label>
+    <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
+      {allTags.map(t=>{const sel=selectedTags.includes(t.id);return <button key={t.id} onClick={()=>toggle(t.id)} style={{padding:"5px 12px",background:sel?t.bg:C.white,border:`1.5px solid ${sel?t.color:C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:13,fontWeight:sel?600:400,color:sel?t.color:C.textMid,transition:"all 0.15s"}}>{t.emoji} {t.label}</button>;})}
+      <button onClick={()=>setAdding(a=>!a)} style={{padding:"5px 12px",background:"none",border:`1.5px dashed ${C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:13,color:C.textLight}}>+ Nova tag</button>
+    </div>
+    {adding&&<div style={{display:"flex",gap:8}}>
+      <input value={newTag} onChange={e=>setNewTag(e.target.value)} placeholder="Nome da tag" onKeyDown={e=>e.key==="Enter"&&addCustom()} style={{flex:1}}/>
+      <button onClick={addCustom} style={{padding:"0 14px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>OK</button>
+    </div>}
+  </div>;
+}
+
+// ─── RECEIVED NOTIF ──────────────────────────
 function ReceivedNotif({notif,onOpen,onDismiss}){
   return <div style={{position:"fixed",top:16,left:"50%",width:"calc(100% - 32px)",maxWidth:440,zIndex:500,animation:"notifDrop 0.4s cubic-bezier(.22,1,.36,1)"}}>
     <div style={{background:C.white,borderRadius:18,overflow:"hidden",boxShadow:"0 12px 40px rgba(60,40,120,0.22)"}}>
-      <div style={{background:`linear-gradient(135deg,${C.purple} 0%,${C.blue} 100%)`,padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+      <div style={{background:`linear-gradient(135deg,${C.purple},${C.blue})`,padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
         <AvatarBubble src={notif.avatarSrc} emoji={notif.emoji} color={notif.avatarColor||C.purpleLight} size={46} ring/>
-        <div style={{flex:1}}>
-          <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,0.75)"}}>✨ Novo Dia de Veeda recebido</p>
-          <p style={{margin:"2px 0 0",fontSize:15,fontWeight:600,color:"#fff"}}><strong>{notif.author}</strong> compartilhou o dia com você</p>
-        </div>
+        <div style={{flex:1}}><p style={{margin:0,fontSize:12,color:"rgba(255,255,255,0.75)"}}>✨ Novo Dia de Veeda</p><p style={{margin:"2px 0 0",fontSize:15,fontWeight:600,color:"#fff"}}><strong>{notif.author}</strong> compartilhou o dia com você</p></div>
         <button onClick={onDismiss} style={{background:"rgba(255,255,255,0.18)",border:"none",borderRadius:"50%",width:28,height:28,color:"#fff",fontSize:16,cursor:"pointer"}}>×</button>
       </div>
       {notif.message&&<div style={{padding:"12px 16px",background:"#FAF8FF"}}><p style={{margin:0,fontSize:14,color:C.textMid,fontStyle:"italic",lineHeight:1.6}}>"{notif.message}"</p></div>}
@@ -114,232 +440,175 @@ function ReceivedNotif({notif,onOpen,onDismiss}){
   </div>;
 }
 
-// ── Backup prompt ──
-function BackupPrompt({onBackup,onDismiss}){
-  return <div style={{position:"fixed",inset:0,background:"rgba(40,30,60,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:400,padding:20}}>
-    <div style={{background:C.white,borderRadius:20,padding:"28px 24px",maxWidth:360,width:"100%",animation:"popIn 0.3s ease",textAlign:"center"}}>
-      <div style={{fontSize:48,marginBottom:12}}>📦</div>
-      <p style={{fontSize:17,fontWeight:600,color:C.text,marginBottom:8}}>Seus Dias de Veeda</p>
-      <p style={{fontSize:14,color:C.textMid,lineHeight:1.65,marginBottom:24}}>Já se passou um mês! Seus registros mais antigos podem ser perdidos. Que tal fazer um backup dos seus Dias de Veeda antes disso?</p>
-      <Btn onClick={onBackup} style={{marginBottom:10}}>📥 Fazer backup agora</Btn>
-      <Btn onClick={onDismiss} variant="ghost">Lembrar depois</Btn>
-    </div>
-  </div>;
-}
-
-// ── Install Guide ──
+// ─── INSTALL GUIDE ───────────────────────────
 function InstallGuide({onClose}){
-  const[tab,setTab]=useState("ios");
-  const steps={ios:[["Abra o Safari","Acesse o endereço do Veeda no Safari. Não funciona no Chrome do iPhone."],["Toque em Compartilhar","Ícone de quadrado com seta ↑ na barra inferior."],["Adicionar à Tela de Início","Role a lista e toque nessa opção."],["Confirme","Toque em Adicionar no canto superior direito."]],android:[["Abra o Chrome","Acesse o endereço do Veeda no Google Chrome."],["Menu do navegador","Toque nos três pontos ⋮ no canto superior direito."],["Adicionar à tela inicial","Toque em 'Adicionar à tela inicial' ou 'Instalar app'."],["Confirme","Toque em Adicionar. Pronto!"]]};
+  const [tab,setTab]=useState("ios");
+  const steps={ios:[["Abra o Safari","Acesse o Veeda no Safari."],["Toque em Compartilhar","Ícone ↑ na barra inferior."],["Adicionar à Tela de Início","Role a lista e toque nesta opção."],["Confirme","Toque em Adicionar. Pronto!"]],android:[["Abra o Chrome","Acesse o Veeda no Chrome."],["Menu ⋮","Toque nos três pontos superiores."],["Instalar app","'Adicionar à tela inicial' ou 'Instalar app'."],["Confirme","Toque em Adicionar."]]};
   return <Modal title="Instalar o Veeda no celular" onClose={onClose}>
-    <div style={{display:"flex",gap:8,marginBottom:20}}>
-      {[["ios","iPhone"],["android","Android"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"10px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:14}}>{l}</button>)}
-    </div>
-    {steps[tab].map(([t,d],i)=><div key={i} style={{display:"flex",gap:14,marginBottom:18}}>
-      <div style={{width:30,height:30,borderRadius:"50%",background:C.purple,color:C.white,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:600,flexShrink:0}}>{i+1}</div>
-      <div><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{t}</p><p style={{margin:"3px 0 0",fontSize:13,color:C.textMid,lineHeight:1.5}}>{d}</p></div>
-    </div>)}
-    <div style={{background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:12,padding:"12px 16px",marginTop:4}}>
-      <p style={{fontSize:13,color:C.purple,margin:0}}>🌿 Depois de instalado, o Veeda funciona mesmo sem internet e abre direto da sua tela inicial.</p>
-    </div>
+    <div style={{display:"flex",gap:8,marginBottom:20}}>{[["ios","iPhone"],["android","Android"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"10px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:14}}>{l}</button>)}</div>
+    {steps[tab].map(([t,d],i)=><div key={i} style={{display:"flex",gap:14,marginBottom:18}}><div style={{width:30,height:30,borderRadius:"50%",background:C.purple,color:C.white,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:600,flexShrink:0}}>{i+1}</div><div><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{t}</p><p style={{margin:"3px 0 0",fontSize:13,color:C.textMid,lineHeight:1.5}}>{d}</p></div></div>)}
+    <div style={{background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:12,padding:"12px 16px"}}><p style={{fontSize:13,color:C.purple,margin:0}}>🌿 Depois de instalado, o Veeda funciona mesmo sem internet.</p></div>
   </Modal>;
 }
 
-// ── Invite Modal ──
-function InviteModal({profile,onClose}){
+// ─── INVITE MODAL ────────────────────────────
+function InviteModal({onClose}){
   const appUrl=window.location.href.split("?")[0];
   const msg=`Olá! Eu uso o Veeda para registrar e compartilhar os momentos do meu dia. Que tal entrar também?\n\n📱 Acesse: ${appUrl}\n\nNo Veeda você registra os momentos que viveu ao longo do dia e, quando quiser, compartilha sua linha do tempo com quem ama. 🌿`;
-  const waUrl=`https://wa.me/?text=${encodeURIComponent(msg)}`;
-  const signalUrl=`https://signal.me/#composetextlink=${encodeURIComponent(msg)}`;
-  const emailUrl=`mailto:?subject=${encodeURIComponent("Te convidar para o Veeda 🌿")}&body=${encodeURIComponent(msg)}`;
-  const smsUrl=`sms:?body=${encodeURIComponent(msg)}`;
-  const[copied,setCopied]=useState(false);
+  const [copied,setCopied]=useState(false);
   return <Modal title="Convidar para o Veeda" onClose={onClose}>
-    <div style={{textAlign:"center",marginBottom:20}}>
-      <div style={{width:64,height:64,borderRadius:"50%",background:`linear-gradient(135deg,${C.purple},${C.blue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 12px"}}>🌿</div>
-      <p style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:6}}>Compartilhe seus Dias de Veeda</p>
-      <p style={{fontSize:13,color:C.textMid,lineHeight:1.6}}>Convide amigos e familiares para viverem juntos seus dias no Veeda.</p>
-    </div>
+    <div style={{textAlign:"center",marginBottom:20}}><div style={{width:64,height:64,borderRadius:"50%",background:`linear-gradient(135deg,${C.purple},${C.blue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 12px"}}>🌿</div><p style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:6}}>Compartilhe o Veeda</p><p style={{fontSize:13,color:C.textMid,lineHeight:1.6}}>Convide amigos e familiares para viverem juntos seus dias.</p></div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-      {[
-        {label:"WhatsApp",emoji:"💬",color:"#25D366",bg:"#E8FBF0",url:waUrl},
-        {label:"Signal",emoji:"🔒",color:"#3A76F0",bg:"#EAF0FD",url:signalUrl},
-        {label:"E-mail",emoji:"✉️",color:C.purple,bg:C.purpleLight,url:emailUrl},
-        {label:"SMS",emoji:"📱",color:C.blue,bg:C.blueLight,url:smsUrl},
-      ].map(opt=><a key={opt.label} href={opt.url} target="_blank" rel="noopener noreferrer" style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:"16px 8px",background:opt.bg,borderRadius:14,textDecoration:"none",border:`1px solid ${opt.color}22`}}>
-        <span style={{fontSize:26}}>{opt.emoji}</span>
-        <span style={{fontSize:13,fontWeight:600,color:opt.color}}>{opt.label}</span>
-      </a>)}
+      {[{label:"WhatsApp",emoji:"💬",color:"#25D366",bg:"#E8FBF0",url:`https://wa.me/?text=${encodeURIComponent(msg)}`},{label:"Signal",emoji:"🔒",color:"#3A76F0",bg:"#EAF0FD",url:`https://signal.me/#composetextlink=${encodeURIComponent(msg)}`},{label:"E-mail",emoji:"✉️",color:C.purple,bg:C.purpleLight,url:`mailto:?subject=${encodeURIComponent("Te convidar para o Veeda 🌿")}&body=${encodeURIComponent(msg)}`},{label:"SMS",emoji:"📱",color:C.blue,bg:C.blueLight,url:`sms:?body=${encodeURIComponent(msg)}`}].map(opt=><a key={opt.label} href={opt.url} target="_blank" rel="noopener noreferrer" style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:"16px 8px",background:opt.bg,borderRadius:14,textDecoration:"none",border:`1px solid ${opt.color}22`}}><span style={{fontSize:26}}>{opt.emoji}</span><span style={{fontSize:13,fontWeight:600,color:opt.color}}>{opt.label}</span></a>)}
     </div>
-    <div style={{background:C.purpleLight,borderRadius:12,padding:"12px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-      <p style={{flex:1,margin:0,fontSize:12,color:C.textMid,wordBreak:"break-all"}}>{appUrl}</p>
-      <button onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(appUrl);setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{flexShrink:0,padding:"6px 12px",background:copied?C.green:C.purple,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}}>{copied?"✓":"Copiar"}</button>
-    </div>
+    <div style={{background:C.purpleLight,borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}><p style={{flex:1,margin:0,fontSize:12,color:C.textMid,wordBreak:"break-all"}}>{appUrl}</p><button onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(appUrl);setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{flexShrink:0,padding:"6px 12px",background:copied?C.green:C.purple,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}}>{copied?"✓":"Copiar"}</button></div>
   </Modal>;
 }
 
-// ── Share Day Modal ──
+// ─── SHARE DAY MODAL ─────────────────────────
 function ShareDayModal({profile,data,curDay,onClose,onShared}){
-  const[sel,setSel]=useState([]);
-  const[msg,setMsg]=useState("");
-  const[loading,setLoading]=useState(false);
-  const[done,setDone]=useState(false);
-  const contacts=data.contacts||[];
-  const moments=data.moments[curDay]||[];
-  const alreadyShared=(data.sharedLog||{})[curDay]||[];
-  const available=contacts.filter(c=>!alreadyShared.includes(c.code));
+  const [sel,setSel]=useState([]),[ msg,setMsg]=useState(""),[ loading,setLoading]=useState(false),[ done,setDone]=useState(false);
+  const contacts=data.contacts||[],moments=data.moments[curDay]||[],already=(data.sharedLog||{})[curDay]||[];
+  const available=contacts.filter(c=>!already.includes(c.code));
   const toggle=code=>setSel(p=>p.includes(code)?p.filter(x=>x!==code):[...p,code]);
-  const doShare=async()=>{
-    if(!sel.length)return;
-    setLoading(true);
-    const payload={date:curDay,author:profile.name,emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling:(data.dayFeelings||{})[curDay],message:msg.trim(),importedAt:Date.now()};
-    sel.forEach(code=>{const k=`veeda_inbox_${code}`,ex=JSON.parse(localStorage.getItem(k)||"[]");ex.push(payload);localStorage.setItem(k,JSON.stringify(ex));});
-    const newLog={...(data.sharedLog||{}),[curDay]:[...alreadyShared,...sel]};
-    await onShared(newLog);
-    setDone(true);setLoading(false);
-  };
-  if(done)return <Modal title="" onClose={onClose}>
-    <div style={{textAlign:"center",padding:"16px 0 8px"}}>
-      <div style={{fontSize:52,marginBottom:14}}>🌿</div>
-      <p style={{fontSize:18,fontWeight:600,color:C.text,marginBottom:8}}>Dia compartilhado!</p>
-      <p style={{fontSize:14,color:C.textMid,marginBottom:24,lineHeight:1.6}}>Seus contatos receberão uma notificação ao abrirem o Veeda.</p>
-      <Btn onClick={onClose}>Fechar</Btn>
-    </div>
-  </Modal>;
+  const doShare=async()=>{if(!sel.length)return;setLoading(true);const payload={date:curDay,author:profile.name,emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling:(data.dayFeelings||{})[curDay],message:msg.trim(),importedAt:Date.now()};sel.forEach(code=>{const k=`veeda_inbox_${code}`,ex=JSON.parse(localStorage.getItem(k)||"[]");ex.push(payload);localStorage.setItem(k,JSON.stringify(ex));});await onShared({...(data.sharedLog||{}),[curDay]:[...already,...sel]});setDone(true);setLoading(false);};
+  if(done)return <Modal title="" onClose={onClose}><div style={{textAlign:"center",padding:"16px 0 8px"}}><div style={{fontSize:52,marginBottom:14}}>🌿</div><p style={{fontSize:18,fontWeight:600,color:C.text,marginBottom:8}}>Dia compartilhado!</p><p style={{fontSize:14,color:C.textMid,marginBottom:24,lineHeight:1.6}}>Seus contatos receberão uma notificação.</p><Btn onClick={onClose}>Fechar</Btn></div></Modal>;
   return <Modal title="Compartilhar meu Dia de Veeda" onClose={onClose}>
     {moments.length===0?<p style={{fontSize:14,color:C.textMid,textAlign:"center",padding:"20px 0"}}>Nenhum momento registrado hoje.</p>:<div>
       <p style={{fontSize:13,color:C.textMid,marginBottom:14}}>{moments.length} momento{moments.length!==1?"s":""} · {fmtFull(curDay)}</p>
       {available.length===0&&<div style={{background:"#FFF8E1",border:"1px solid #FFD54F",borderRadius:12,padding:"12px 14px",marginBottom:16}}><p style={{fontSize:13,color:"#7A5800",margin:0}}>Você já compartilhou este dia com todos os seus contatos.</p></div>}
       {available.map(c=><button key={c.code} onClick={()=>toggle(c.code)} style={{width:"100%",background:sel.includes(c.code)?C.purpleLight:C.white,border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left",transition:"border-color 0.15s"}}>
-        <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={38}/>
-        <span style={{fontSize:14,fontWeight:500,color:C.text,flex:1}}>{c.name}</span>
-        <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,background:sel.includes(c.code)?C.purple:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#fff",transition:"all 0.15s"}}>{sel.includes(c.code)?"✓":""}</div>
+        <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={38}/><span style={{fontSize:14,fontWeight:500,color:C.text,flex:1}}>{c.name}</span>
+        <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,background:sel.includes(c.code)?C.purple:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#fff"}}>{sel.includes(c.code)?"✓":""}</div>
       </button>)}
-      <div style={{marginTop:16,marginBottom:16}}>
-        <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:8}}>Mensagem para acompanhar (opcional)</label>
-        <textarea value={msg} onChange={e=>setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia..." style={{width:"100%",minHeight:80,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:14,color:C.text,boxSizing:"border-box"}}/>
-      </div>
+      <div style={{marginTop:16,marginBottom:16}}><label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:8}}>Mensagem (opcional)</label><textarea value={msg} onChange={e=>setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia..." style={{width:"100%",minHeight:80,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:14,color:C.text,boxSizing:"border-box"}}/></div>
       <Btn onClick={doShare} disabled={loading||!sel.length}>{loading?"Compartilhando...":"Compartilhar linha do tempo"}</Btn>
     </div>}
   </Modal>;
 }
 
-// ── Future Events Modal ──
+// ─── EVENTS MODAL ────────────────────────────
 function EventsModal({data,profile,onSave,onClose}){
-  const[tab,setTab]=useState("list");
-  const[title,setTitle]=useState("");
-  const[evType,setEvType]=useState("outro");
-  const[date,setDate]=useState("");
-  const[time,setTime]=useState("");
-  const[notes,setNotes]=useState("");
+  const [tab,setTab]=useState("list"),[ title,setTitle]=useState(""),[ evType,setEvType]=useState("outro"),[ date,setDate]=useState(""),[ time,setTime]=useState(""),[ notes,setNotes]=useState("");
   const events=(data.events||[]).sort((a,b)=>a.date.localeCompare(b.date));
-  const add=()=>{if(!title.trim()||!date)return;const ev={id:Date.now(),title:title.trim(),type:evType,date,time,notes:notes.trim(),createdBy:profile.name,rsvp:{[profile.id]:"accepted"}};onSave([...events,ev]);setTitle("");setDate("");setTime("");setNotes("");setTab("list");};
-  const remove=id=>onSave(events.filter(e=>e.id!==id));
-  const t=EVENT_TYPES.find(t=>t.id===evType)||EVENT_TYPES[4];
+  const add=()=>{if(!title.trim()||!date)return;onSave([...events,{id:Date.now(),title:title.trim(),type:evType,date,time,notes:notes.trim(),createdBy:profile.name}]);setTitle("");setDate("");setTime("");setNotes("");setTab("list");};
   return <Modal title="Eventos futuros" onClose={onClose}>
-    <div style={{display:"flex",gap:8,marginBottom:20}}>
-      {[["list","Próximos"],["new","+ Novo evento"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"9px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:13}}>{l}</button>)}
-    </div>
-    {tab==="list"&&(events.length===0?<div style={{textAlign:"center",padding:"24px 0"}}><p style={{fontSize:14,color:C.textLight}}>Nenhum evento programado ainda.</p></div>:events.map(ev=>{const t2=EVENT_TYPES.find(t=>t.id===ev.type)||EVENT_TYPES[4];return <div key={ev.id} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"#FFF3DC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{t2.emoji}</div>
-        <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{ev.title}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{t2.label} · {ev.date}{ev.time?` às ${ev.time}`:""}</p></div>
-        <button onClick={()=>remove(ev.id)} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:12}}>remover</button>
-      </div>
-      {ev.notes&&<p style={{margin:0,fontSize:13,color:C.textMid,lineHeight:1.5}}>{ev.notes}</p>}
-    </div>;})) }
-    {tab==="new"&&<div>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Tipo</label>
-      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>{EVENT_TYPES.map(et=><button key={et.id} onClick={()=>setEvType(et.id)} style={{padding:"6px 12px",background:evType===et.id?"#FFF3DC":C.white,border:`1.5px solid ${evType===et.id?C.amber:C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:13,color:evType===et.id?C.amber:C.textMid}}>{et.emoji} {et.label}</button>)}</div>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome do evento</label>
-      <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Ex: Show da Ana Cañas" style={{marginBottom:14}}/>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-        <div><label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Data</label><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></div>
-        <div><label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Horário</label><input type="time" value={time} onChange={e=>setTime(e.target.value)}/></div>
-      </div>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Notas (opcional)</label>
-      <textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Observações sobre o evento..." style={{marginBottom:16,minHeight:70}}/>
-      <div style={{background:"#FFF8E1",border:"1px solid #FFD54F",borderRadius:12,padding:"10px 14px",marginBottom:16}}>
-        <p style={{fontSize:12,color:"#7A5800",margin:0}}>💡 Em breve: convide outros usuários do Veeda para este evento e eles poderão aceitar ou recusar a participação.</p>
-      </div>
-      <Btn onClick={add} disabled={!title.trim()||!date}>Adicionar evento</Btn>
-    </div>}
+    <div style={{display:"flex",gap:8,marginBottom:20}}>{[["list","Próximos"],["new","+ Novo"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"9px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:13}}>{l}</button>)}</div>
+    {tab==="list"&&(events.length===0?<p style={{textAlign:"center",fontSize:14,color:C.textLight,padding:"24px 0"}}>Nenhum evento programado.</p>:events.map(ev=>{const t2=EVENT_TYPES.find(t=>t.id===ev.type)||EVENT_TYPES[4];return <div key={ev.id} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"#FFF3DC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{t2.emoji}</div><div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{ev.title}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{t2.label} · {ev.date}{ev.time?` às ${ev.time}`:""}</p></div><button onClick={()=>onSave(events.filter(e=>e.id!==ev.id))} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:12}}>remover</button></div>{ev.notes&&<p style={{margin:"8px 0 0",fontSize:13,color:C.textMid,lineHeight:1.5}}>{ev.notes}</p>}</div>;}))}
+    {tab==="new"&&<div><label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Tipo</label><div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>{EVENT_TYPES.map(et=><button key={et.id} onClick={()=>setEvType(et.id)} style={{padding:"6px 12px",background:evType===et.id?"#FFF3DC":C.white,border:`1.5px solid ${evType===et.id?C.amber:C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:13,color:evType===et.id?C.amber:C.textMid}}>{et.emoji} {et.label}</button>)}</div><label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome</label><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Ex: Show da Ana Cañas" style={{marginBottom:14}}/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><div><label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Data</label><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></div><div><label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Horário</label><input type="time" value={time} onChange={e=>setTime(e.target.value)}/></div></div><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Observações..." style={{marginBottom:16,minHeight:70}}/><Btn onClick={add} disabled={!title.trim()||!date}>Adicionar evento</Btn></div>}
   </Modal>;
 }
 
-// ── Backup Modal ──
-function BackupModal({data,profile,onClose}){
-  const[done,setDone]=useState(false);
-  const doBackup=()=>{
-    const allDays=Object.keys(data.moments||{}).sort();
-    const cutoff=offsetDay(todayStr(),-30);
-    const archive={profile:{name:profile.name,emoji:profile.emoji},exportedAt:new Date().toISOString(),days:allDays.map(d=>({date:d,label:fmtFull(d),feeling:(data.dayFeelings||{})[d]||null,moments:(data.moments[d]||[])}))};
-    const blob=new Blob([JSON.stringify(archive,null,2)],{type:"application/json"});
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`veeda-backup-${todayStr()}.json`;a.click();
-    setDone(true);
-  };
-  const totalDays=Object.keys(data.moments||{}).filter(d=>(data.moments[d]||[]).length>0).length;
-  const totalMoments=Object.values(data.moments||{}).reduce((s,m)=>s+(m||[]).length,0);
-  return <Modal title="Backup dos Dias de Veeda" onClose={onClose}>
-    {!done?<div>
-      <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,borderRadius:16,padding:"20px",textAlign:"center",marginBottom:20}}>
-        <p style={{fontSize:32,margin:"0 0 8px"}}>🌿</p>
-        <p style={{fontSize:16,fontWeight:600,color:C.text,margin:"0 0 4px"}}>Seus Dias de Veeda</p>
-        <p style={{fontSize:13,color:C.textMid,margin:0}}>{totalDays} dia{totalDays!==1?"s":""} · {totalMoments} momento{totalMoments!==1?"s":""}</p>
-      </div>
-      <p style={{fontSize:14,color:C.textMid,lineHeight:1.65,marginBottom:20}}>O backup salva todos os seus dias como um arquivo <strong style={{color:C.text}}>.json</strong> no seu dispositivo. Você pode guardá-lo onde preferir — Google Drive, iCloud, e-mail ou computador.</p>
-      <Btn onClick={doBackup} style={{marginBottom:10}}>📥 Baixar backup completo</Btn>
-      <Btn onClick={onClose} variant="ghost">Fechar</Btn>
-    </div>:<div style={{textAlign:"center",padding:"8px 0"}}>
-      <div style={{fontSize:52,marginBottom:12}}>✅</div>
-      <p style={{fontSize:17,fontWeight:600,color:C.text,marginBottom:8}}>Backup realizado!</p>
-      <p style={{fontSize:14,color:C.textMid,lineHeight:1.6,marginBottom:24}}>Guarde o arquivo em um lugar seguro. Ele contém todos os seus Dias de Veeda.</p>
-      <Btn onClick={onClose}>Fechar</Btn>
-    </div>}
-  </Modal>;
-}
-
-// ── Reminders Modal ──
+// ─── REMINDERS MODAL ─────────────────────────
 function RemindersModal({reminders,onSave,onClose}){
-  const[list,setList]=useState(reminders||[]);
-  const[newTime,setNewTime]=useState("20:00");
-  const add=()=>{if(!list.includes(newTime))setList(p=>[...p,newTime].sort());};
-  const remove=t=>setList(p=>p.filter(x=>x!==t));
+  const [list,setList]=useState(reminders||[]),[ newTime,setNewTime]=useState("20:00");
   const req=()=>{if("Notification" in window&&Notification.permission==="default")Notification.requestPermission();};
   return <Modal title="Lembretes do Veeda" onClose={onClose}>
-    <p style={{fontSize:13,color:C.textMid,marginBottom:16,lineHeight:1.6}}>Receba uma notificação para compartilhar seus Dias de Veeda com o seu grupo nos horários escolhidos.</p>
-    <div style={{display:"flex",gap:8,marginBottom:16}}>
-      <input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{flex:1}}/>
-      <button onClick={add} style={{padding:"0 16px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>+ Adicionar</button>
-    </div>
-    {list.length===0?<p style={{fontSize:13,color:C.textLight,textAlign:"center",padding:"12px 0"}}>Nenhum lembrete configurado.</p>:
-    <div style={{marginBottom:16}}>{list.map(t=><div key={t} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.purpleLight,borderRadius:10,padding:"10px 14px",marginBottom:8}}><span style={{fontSize:16,fontWeight:600,color:C.purple}}>{t}</span><button onClick={()=>remove(t)} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:13}}>remover</button></div>)}</div>}
-    <div style={{background:"#FFF8E1",border:"1px solid #FFD54F",borderRadius:12,padding:"10px 14px",marginBottom:16}}>
-      <p style={{fontSize:12,color:"#7A5800",margin:0}}>Você precisa permitir notificações do Veeda para que os lembretes funcionem. <button onClick={req} style={{background:"none",border:"none",color:C.amber,cursor:"pointer",fontWeight:600,fontSize:12,padding:0}}>Permitir agora</button></p>
-    </div>
+    <div style={{display:"flex",gap:8,marginBottom:16}}><input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{flex:1}}/><button onClick={()=>{if(!list.includes(newTime))setList(p=>[...p,newTime].sort());}} style={{padding:"0 16px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>+ Adicionar</button></div>
+    {list.length===0?<p style={{fontSize:13,color:C.textLight,textAlign:"center",padding:"12px 0"}}>Nenhum lembrete.</p>:<div style={{marginBottom:16}}>{list.map(t=><div key={t} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.purpleLight,borderRadius:10,padding:"10px 14px",marginBottom:8}}><span style={{fontSize:16,fontWeight:600,color:C.purple}}>{t}</span><button onClick={()=>setList(p=>p.filter(x=>x!==t))} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:13}}>remover</button></div>)}</div>}
+    <div style={{background:"#FFF8E1",border:"1px solid #FFD54F",borderRadius:12,padding:"10px 14px",marginBottom:16}}><p style={{fontSize:12,color:"#7A5800",margin:0}}>Permita notificações do Veeda. <button onClick={req} style={{background:"none",border:"none",color:C.amber,cursor:"pointer",fontWeight:600,fontSize:12,padding:0}}>Permitir</button></p></div>
     <Btn onClick={()=>{onSave(list);onClose();}}>Salvar lembretes</Btn>
   </Modal>;
 }
 
-// ── Splash Screen ──
+// ─── BACKUP MODAL ────────────────────────────
+function BackupModal({data,profile,password,onClose}){
+  const [status,setStatus]=useState("idle"),[ msg,setMsg]=useState(""),[ driveToken,setDriveToken]=useState(gdriveToken()?.access_token||null);
+  const fileRef=useRef();
+  const connectDrive=async()=>{setStatus("connecting");setMsg("");try{const token=await gdriveAuth();setDriveToken(token);setStatus("idle");}catch(e){setStatus("error");setMsg(e.message);}};
+  const uploadDrive=async()=>{setStatus("uploading");setMsg("");try{await gdriveUpload(await encryptObj(data,password),driveToken);setStatus("done");setMsg("Backup salvo no Google Drive!");}catch(e){setStatus("error");setMsg("Erro: "+e.message);}};
+  const downloadDrive=async()=>{setStatus("downloading");setMsg("");try{const enc=await gdriveDownload(driveToken);if(!enc){setStatus("error");setMsg("Nenhum backup encontrado.");return;}await decryptObj(enc,password);setStatus("done");setMsg("Backup verificado! Restauração disponível.");}catch(e){setStatus("error");setMsg("Erro: "+e.message);}};
+  const exportLocal=()=>encryptObj(data,password).then(enc=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([enc],{type:"text/plain"}));a.download=`veeda-backup-${todayStr()}.veeda`;a.click();setMsg("Arquivo baixado!");});
+  const importLocal=file=>{const r=new FileReader();r.onload=async e=>{try{await decryptObj(e.target.result,password);setMsg("Backup importado com sucesso!");}catch{setStatus("error");setMsg("Arquivo inválido ou senha incorreta.");}};r.readAsText(file);};
+  const busy=status==="connecting"||status==="uploading"||status==="downloading";
+  const totalDays=Object.keys(data.moments||{}).filter(d=>(data.moments[d]||[]).length>0).length;
+  const totalMoments=Object.values(data.moments||{}).reduce((s,m)=>s+(m||[]).length,0);
+  return <Modal title="Backup dos Dias de Veeda" onClose={onClose}>
+    <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,borderRadius:14,padding:"16px",textAlign:"center",marginBottom:20}}><p style={{margin:0,fontSize:28}}>🌿</p><p style={{margin:"6px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{totalDays} Dias de Veeda · {totalMoments} momentos</p></div>
+    <p style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:10}}>☁️ Google Drive</p>
+    {!driveToken&&<Btn onClick={connectDrive} disabled={busy} style={{marginBottom:10}}>{status==="connecting"?<><Spinner/>Conectando...</>:"Conectar Google Drive"}</Btn>}
+    {driveToken&&<div style={{display:"flex",gap:8,marginBottom:10}}><Btn onClick={uploadDrive} disabled={busy} style={{flex:1,fontSize:13,padding:"11px 0"}}>{status==="uploading"?<><Spinner/>Salvando...</>:"↑ Salvar"}</Btn><Btn onClick={downloadDrive} disabled={busy} variant="outline" style={{flex:1,fontSize:13,padding:"11px 0"}}>{status==="downloading"?<><Spinner/>Verificando...</>:"↓ Verificar"}</Btn><button onClick={()=>{gdriveClear();setDriveToken(null);}} style={{padding:"0 10px",background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:10,color:C.textLight,cursor:"pointer",fontSize:12}}>Sair</button></div>}
+    <div style={{height:1,background:C.cardBorder,margin:"16px 0"}}/>
+    <p style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:10}}>📁 Arquivo local</p>
+    <div style={{display:"flex",gap:8,marginBottom:8}}><Btn onClick={exportLocal} style={{flex:1,fontSize:13,padding:"11px 0"}}>↓ Exportar .veeda</Btn><Btn onClick={()=>fileRef.current.click()} variant="outline" style={{flex:1,fontSize:13,padding:"11px 0"}}>↑ Importar .veeda</Btn></div>
+    <input ref={fileRef} type="file" accept=".veeda,.enc,.txt" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)importLocal(f);}}/>
+    {msg&&<div style={{marginTop:12,padding:"12px 14px",background:status==="error"?"#FDE8E8":C.greenLight,borderRadius:10}}><p style={{margin:0,fontSize:13,color:status==="error"?C.red:C.green,fontWeight:500}}>{msg}</p></div>}
+  </Modal>;
+}
+
+// ─── PHILOSOPHY ──────────────────────────────
+function PhilosophyScreen({onClose}){
+  return <Modal title="" onClose={onClose}>
+    <div style={{margin:"-20px -16px 0",borderRadius:"20px 20px 0 0",overflow:"hidden"}}>
+      <div style={{background:`linear-gradient(135deg,${C.purple},${C.blue})`,padding:"32px 24px 24px",textAlign:"center"}}>
+        <div style={{fontSize:44,marginBottom:12}}>🌿</div>
+        <p style={{margin:"0 0 6px",fontSize:22,fontWeight:700,color:"#fff"}}>Filosofia do Veeda</p>
+        <p style={{margin:0,fontSize:14,color:"rgba(255,255,255,0.75)",fontStyle:"italic"}}>"Dias de Veeda" — como Dias de Vida</p>
+      </div>
+    </div>
+    <div style={{paddingTop:20}}>
+      {[["O que é Veeda?","Veeda nasce da crença de que a vida não cabe em um feed de notícias. Cada dia é único, e merece ser vivido antes de ser compartilhado."],["Viva primeiro, compartilhe depois","Registre os momentos do seu dia enquanto eles acontecem. Ao final, quando você quiser, compartilhe sua linha do tempo com quem ama. O foco é na experiência, não na audiência."],["Privacidade como princípio","Seus dados ficam no seu dispositivo. O Veeda não tem servidor próprio. Ninguém — além de você e de quem você escolher — acessa seus Dias de Veeda."],["Tags e memórias","Use tags para agrupar momentos por experiência. Uma viagem, um show, um encontro especial. Seus Dias de Veeda ganham camadas de significado."],["Para quem é o Veeda?","Para quem quer estar presente no próprio dia. Para famílias que querem se conectar de forma genuína. Para amigos que preferem profundidade a superficialidade."]].map(([title,body],i,arr)=><div key={title} style={{marginBottom:i<arr.length-1?16:0}}><p style={{margin:"0 0 4px",fontSize:14,fontWeight:600,color:C.text}}>{title}</p><p style={{margin:0,fontSize:13,color:C.textMid,lineHeight:1.65}}>{body}</p>{i<arr.length-1&&<div style={{height:1,background:C.cardBorder,marginTop:16}}/>}</div>)}
+    </div>
+  </Modal>;
+}
+
+// ─── SUGGESTIONS ─────────────────────────────
+function SuggestionsModal({data,onSave,onClose}){
+  const [type,setType]=useState("feature"),[ text,setText]=useState(""),[ name,setName]=useState(""),[ sent,setSent]=useState(false);
+  const types=[{id:"feature",label:"✨ Nova funcionalidade",col:C.purple,bg:C.purpleLight},{id:"bug",label:"🐛 Problema",col:C.red,bg:"#FDE8E8"},{id:"design",label:"🎨 Design",col:C.blue,bg:C.blueLight},{id:"other",label:"💬 Outro",col:C.textMid,bg:C.cardBorder}];
+  const send=()=>{if(!text.trim())return;onSave([...(data.suggestions||[]),{id:Date.now(),type,text:text.trim(),name:name.trim(),date:todayStr()}]);setSent(true);};
+  if(sent)return <Modal title="" onClose={onClose}><div style={{textAlign:"center",padding:"16px 0"}}><div style={{fontSize:48,marginBottom:12}}>💡</div><p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>Sugestão enviada!</p><p style={{fontSize:14,color:C.textMid,marginBottom:24,lineHeight:1.6}}>Obrigado por contribuir com o Veeda.</p><Btn onClick={onClose}>Fechar</Btn></div></Modal>;
+  return <Modal title="Enviar sugestão" onClose={onClose}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>{types.map(t=><button key={t.id} onClick={()=>setType(t.id)} style={{padding:"10px 8px",background:type===t.id?t.bg:C.white,border:`1.5px solid ${type===t.id?t.col:C.cardBorder}`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:type===t.id?600:400,color:type===t.id?t.col:C.textMid,textAlign:"left"}}>{t.label}</button>)}</div>
+    <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Descreva sua ideia ou problema..." style={{width:"100%",minHeight:100,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:14,color:C.text,boxSizing:"border-box",marginBottom:14}}/>
+    <input value={name} onChange={e=>setName(e.target.value)} placeholder="Seu nome (opcional)" style={{marginBottom:20}}/>
+    <Btn onClick={send} disabled={!text.trim()}>Enviar sugestão</Btn>
+  </Modal>;
+}
+
+// ─── SETTINGS ────────────────────────────────
+function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,onClose}){
+  const [showPhil,setShowPhil]=useState(false),[ showSugg,setShowSugg]=useState(false),[ showBk,setShowBk]=useState(false);
+  const sections=[
+    {header:"Conta",rows:[{label:"E-mail",val:profile.email||"—"},{label:"Alterar senha",val:"→",action:()=>{}},{label:"Código de recuperação",val:"→",action:()=>{}}]},
+    {header:"Grupo",rows:[{label:"Nome do grupo",val:data.groupName||"Família & Amigos"}]},
+    {header:"Backup",rows:[{label:"Backup / Restaurar",val:"→",action:()=>setShowBk(true)}]},
+    {header:"Notificações",rows:[{label:"Lembretes",val:(data.reminders||[]).length>0?`${data.reminders.length} ativo(s)`:"Nenhum"}]},
+    {header:"Comunidade",rows:[{label:"Enviar sugestão",val:"→",action:()=>setShowSugg(true)},{label:"Filosofia do Veeda",val:"→",action:()=>setShowPhil(true)}]},
+    {header:"Sobre",rows:[{label:"Versão",val:"1.0.0"},{label:"Sair da conta",val:"→",danger:true,action:()=>{onLogout();onClose();}}]},
+  ];
+  return <>
+    {showPhil&&<PhilosophyScreen onClose={()=>setShowPhil(false)}/>}
+    {showSugg&&<SuggestionsModal data={data} onSave={s=>onSave({...data,suggestions:s})} onClose={()=>setShowSugg(false)}/>}
+    {showBk&&<BackupModal data={data} profile={profile} password={password} onClose={()=>setShowBk(false)}/>}
+    <Modal title="Configurações" onClose={onClose}>
+      <div style={{textAlign:"center",marginBottom:20,paddingBottom:20,borderBottom:`1px solid ${C.cardBorder}`}}>
+        <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={64} ring/>
+        <p style={{margin:"10px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
+        {profile.email&&<p style={{margin:0,fontSize:12,color:C.textLight}}>{profile.email}</p>}
+      </div>
+      {sections.map(sec=><div key={sec.header} style={{marginBottom:8}}>
+        <p style={{fontSize:11,fontWeight:600,color:C.textLight,margin:"0 0 6px",textTransform:"uppercase",letterSpacing:"0.5px"}}>{sec.header}</p>
+        <div style={{background:C.white,borderRadius:14,border:`1px solid ${C.cardBorder}`,overflow:"hidden",marginBottom:4}}>
+          {sec.rows.map((row,i)=><div key={row.label}><button onClick={row.action||undefined} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",background:"none",border:"none",cursor:row.action?"pointer":"default",textAlign:"left"}}><span style={{fontSize:14,color:row.danger?C.red:C.text}}>{row.label}</span><span style={{fontSize:13,color:C.textLight}}>{row.val}</span></button>{i<sec.rows.length-1&&<div style={{height:1,background:C.cardBorder,marginLeft:16}}/>}</div>)}
+        </div>
+      </div>)}
+    </Modal>
+  </>;
+}
+
+// ─── SPLASH ──────────────────────────────────
 function SplashScreen({onLogin,onCreate,onGuide}){
-  const logo=getLogo();
-  const logoRef=useRef();
-  const[localLogo,setLocalLogo]=useState(logo);
+  const logo=getLogo(),logoRef=useRef(),[ localLogo,setLocalLogo]=useState(logo);
   return <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${C.bg} 0%,#EAE6F8 100%)`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 32px 48px"}}>
     <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%"}}>
-      {localLogo
-        ?<img src={localLogo} alt="Veeda" style={{width:120,height:120,objectFit:"contain",marginBottom:24,borderRadius:24}}/>
-        :<div style={{width:100,height:100,borderRadius:28,background:`linear-gradient(135deg,${C.purple},${C.blue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:48,marginBottom:24,boxShadow:"0 8px 32px rgba(123,111,160,0.3)"}}>🌿</div>
-      }
+      {localLogo?<img src={localLogo} alt="Veeda" style={{width:120,height:120,objectFit:"contain",marginBottom:24,borderRadius:24}}/>:<div style={{width:100,height:100,borderRadius:28,background:`linear-gradient(135deg,${C.purple},${C.blue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:48,marginBottom:24,boxShadow:"0 8px 32px rgba(123,111,160,0.3)"}}>🌿</div>}
       <h1 style={{fontSize:36,fontWeight:700,color:C.text,margin:"0 0 8px",letterSpacing:"-1px"}}>Veeda</h1>
       <p style={{fontSize:16,color:C.textMid,margin:"0 0 6px",textAlign:"center",lineHeight:1.6}}>Seus dias, do seu jeito.</p>
       <p style={{fontSize:13,color:C.textLight,margin:0,textAlign:"center",lineHeight:1.6,maxWidth:260}}>Registre seus momentos e compartilhe seus Dias de Veeda com quem você ama.</p>
-      {/* Logo upload hint */}
       <div style={{marginTop:24}}>
         <input ref={logoRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{localStorage.setItem(LOGO_KEY,ev.target.result);setLocalLogo(ev.target.result);};r.readAsDataURL(f);}}/>
-        {!localLogo&&<button onClick={()=>logoRef.current.click()} style={{background:"none",border:`1px dashed ${C.cardBorder}`,borderRadius:10,padding:"6px 14px",fontSize:12,color:C.textLight,cursor:"pointer"}}>+ Adicionar logotipo</button>}
-        {localLogo&&<button onClick={()=>{localStorage.removeItem(LOGO_KEY);setLocalLogo(null);}} style={{background:"none",border:"none",fontSize:11,color:C.textLight,cursor:"pointer"}}>Remover logo</button>}
+        {!localLogo?<button onClick={()=>logoRef.current.click()} style={{background:"none",border:`1px dashed ${C.cardBorder}`,borderRadius:10,padding:"6px 14px",fontSize:12,color:C.textLight,cursor:"pointer"}}>+ Adicionar logotipo</button>:<button onClick={()=>{localStorage.removeItem(LOGO_KEY);setLocalLogo(null);}} style={{background:"none",border:"none",fontSize:11,color:C.textLight,cursor:"pointer"}}>Remover logo</button>}
       </div>
     </div>
     <div style={{width:"100%",maxWidth:360}}>
@@ -350,245 +619,235 @@ function SplashScreen({onLogin,onCreate,onGuide}){
   </div>;
 }
 
-// ── Screen: Select Profile ──
-function ScreenSelect({profiles,onSelect,onNew,onGuide,onBack}){
+// ─── AUTH SCREENS ────────────────────────────
+function ScreenSelect({profiles,onSelect,onNew,onBack}){
   return <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
     <Btn onClick={onBack} variant="ghost" style={{width:"auto",marginBottom:16}}>‹ Voltar</Btn>
     <p style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4}}>Bem-vindo de volta</p>
-    <p style={{fontSize:14,color:C.textMid,marginBottom:24}}>Quem é você?</p>
+    <p style={{fontSize:14,color:C.textMid,marginBottom:24}}>Selecione seu perfil</p>
     {profiles.map(p=><button key={p.id} onClick={()=>onSelect(p)} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"16px",marginBottom:10,display:"flex",alignItems:"center",gap:14,cursor:"pointer",textAlign:"left"}}>
-      <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/>
-      <div style={{flex:1}}><p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p><p style={{margin:0,fontSize:12,color:C.textLight}}>toque para entrar</p></div>
-      <span style={{fontSize:22,color:C.textLight}}>›</span>
+      <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/><div style={{flex:1}}><p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p><p style={{margin:0,fontSize:12,color:C.textLight}}>{p.email||"perfil local"}</p></div><span style={{fontSize:22,color:C.textLight}}>›</span>
     </button>)}
-    <Btn onClick={onNew} variant="outline" style={{marginTop:8}}>+ Adicionar perfil</Btn>
+    <Btn onClick={onNew} variant="outline" style={{marginTop:8}}>+ Novo perfil</Btn>
   </div>;
 }
 
-// ── Screen: Password ──
 function ScreenPassword({profile,onSuccess,onBack,onForgot}){
-  const[pw,setPw]=useState(""),[ err,setErr]=useState(""),[ loading,setLoading]=useState(false);
-  const attempt=async()=>{if(!pw.trim())return;setLoading(true);setErr("");const hash=await hashPw(pw.trim());if(hash!==profile.passwordHash){setErr("Senha incorreta. Tente novamente.");setPw("");setLoading(false);return;}onSuccess(pw.trim());};
+  const [pw,setPw]=useState(""),[ err,setErr]=useState(""),[ loading,setLoading]=useState(false);
+  const attempt=async()=>{if(!pw.trim())return;setLoading(true);setErr("");const hash=await hashPw(pw.trim());if(hash!==profile.passwordHash){setErr("Senha incorreta.");setPw("");setLoading(false);return;}onSuccess(pw.trim());};
   return <div style={{maxWidth:400,margin:"0 auto",padding:"3rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
     <Btn onClick={onBack} variant="ghost" style={{width:"auto",marginBottom:24}}>‹ Voltar</Btn>
-    <div style={{textAlign:"center",marginBottom:28}}>
-      <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={80} ring/>
-      <p style={{margin:"14px 0 4px",fontSize:18,fontWeight:700,color:C.text}}>{profile.name}</p>
-      <p style={{margin:0,fontSize:13,color:C.textLight}}>Digite sua senha para entrar</p>
-    </div>
+    <div style={{textAlign:"center",marginBottom:28}}><AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={80} ring/><p style={{margin:"14px 0 2px",fontSize:18,fontWeight:700,color:C.text}}>{profile.name}</p>{profile.email&&<p style={{margin:"0 0 4px",fontSize:13,color:C.textMid}}>{profile.email}</p>}<p style={{margin:0,fontSize:13,color:C.textLight}}>Digite sua senha para entrar</p></div>
     <div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"20px"}}>
-      <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&attempt()} placeholder="Senha" autoFocus style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,marginBottom:err?6:14,fontSize:16}}/>
+      <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&attempt()} placeholder="Senha" autoFocus style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,marginBottom:err?6:14}}/>
       {err&&<p style={{fontSize:13,color:C.red,margin:"0 0 14px",fontWeight:500}}>{err}</p>}
-      <Btn onClick={attempt} disabled={loading}>{loading?"Verificando...":"Entrar"}</Btn>
+      <Btn onClick={attempt} disabled={loading}>{loading?<><Spinner/>Verificando...</>:"Entrar"}</Btn>
       <Btn onClick={onForgot} variant="ghost">Esqueci minha senha</Btn>
     </div>
   </div>;
 }
 
-// ── Screen: Create ──
-function CheckboxConfirm({checked,hasError,onChange,label}){
-  const[active,setActive]=useState(false);
-  const borderColor=checked?C.green:hasError?C.red:active?"#9B90C0":C.cardBorder;
-  const bg=checked?C.green:active?"#F0EDF8":"transparent";
-  const cardBg=checked?"#E8FBF0":active?"#F5F2FC":C.white;
-  return <label
-    style={{display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer",marginBottom:20,padding:"14px 16px",background:cardBg,border:`2px solid ${borderColor}`,borderRadius:14,transition:"background 0.15s, border-color 0.15s",userSelect:"none"}}
-    onMouseDown={()=>setActive(true)}
-    onMouseUp={()=>{setActive(false);onChange(!checked);}}
-    onMouseLeave={()=>setActive(false)}
-    onTouchStart={()=>setActive(true)}
-    onTouchEnd={e=>{e.preventDefault();setActive(false);onChange(!checked);}}
-  >
-    <div style={{width:22,height:22,borderRadius:7,border:`2.5px solid ${borderColor}`,background:bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s",marginTop:1,transform:active?"scale(0.9)":"scale(1)"}}>
-      {checked&&<svg width="13" height="10" viewBox="0 0 13 10" fill="none"><path d="M1 5L5 9L12 1" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-    </div>
-    <span style={{fontSize:14,color:checked?C.green:C.textMid,lineHeight:1.55,fontWeight:checked?500:400,transition:"color 0.15s"}}>{label}</span>
-  </label>;
-}
-
 function ScreenCreate({onDone,onBack}){
-  const[step,setStep]=useState(1);
-  const[name,setName]=useState(""),[ emoji,setEmoji]=useState("🌿"),[ avatarColor,setAvatarColor]=useState(C.purpleLight),[ avatarSrc,setAvatarSrc]=useState(null);
-  const[pw,setPw]=useState(""),[ pw2,setPw2]=useState(""),[ err,setErr]=useState("");
-  const[code]=useState(genCode);
-  const[confirmed,setConfirmed]=useState(false),[ copied,setCopied]=useState(false),[ loading,setLoading]=useState(false);
+  const [step,setStep]=useState(1),[ email,setEmail]=useState(""),[ name,setName]=useState(""),[ emoji,setEmoji]=useState("🌿"),[ avatarColor,setAvatarColor]=useState(C.purpleLight),[ avatarSrc,setAvatarSrc]=useState(null),[ pw,setPw]=useState(""),[ pw2,setPw2]=useState(""),[ err,setErr]=useState(""),[ code]=useState(genCode),[ confirmed,setConfirmed]=useState(false),[ copied,setCopied]=useState(false),[ loading,setLoading]=useState(false);
   const photoRef=useRef(),galleryRef=useRef();
   const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
-  const finish=async()=>{
-    if(!confirmed){setErr("Marque a caixa acima para confirmar que você salvou o código.");return;}
-    setLoading(true);
-    try{
-      const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString();
-      const profile={id,name,emoji,avatarColor,avatarSrc,passwordHash,recoveryHash};
-      const ps=loadProfiles();ps.push(profile);saveProfiles(ps);
-      localStorage.setItem(`veeda_data_${id}`,await encryptObj(defaultData(),pw));
-      onDone(profile,pw);
-    }catch{setErr("Erro ao criar perfil.");setLoading(false);}
-  };
+  const finish=async()=>{if(!confirmed){setErr("Confirme que você salvou o código.");return;}setLoading(true);try{const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString(),profile={id,name,email,emoji,avatarColor,avatarSrc,passwordHash,recoveryHash},ps=loadProfiles();ps.push(profile);saveProfiles(ps);localStorage.setItem(`veeda_data_${id}`,await encryptObj(defaultData(),pw));onDone(profile,pw);}catch{setErr("Erro.");setLoading(false);}};
   return <div style={{maxWidth:400,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
     <Btn onClick={step===1?onBack:()=>setStep(s=>s-1)} variant="ghost" style={{width:"auto",marginBottom:20}}>‹ Voltar</Btn>
-    <div style={{display:"flex",gap:6,marginBottom:24}}>{[1,2,3].map(n=><div key={n} style={{flex:1,height:4,borderRadius:4,background:step>=n?C.purple:C.cardBorder,transition:"background 0.3s"}}/>)}</div>
-
+    <div style={{display:"flex",gap:6,marginBottom:24}}>{[1,2,3,4].map(n=><div key={n} style={{flex:1,height:4,borderRadius:4,background:step>=n?C.purple:C.cardBorder,transition:"background 0.3s"}}/>)}</div>
     {step===1&&<div style={{animation:"slideUp 0.25s ease"}}>
-      <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Como você quer aparecer?</p>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:20}}>Escolha um nome e avatar para o seu perfil.</p>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Seu nome</label>
-      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Nome" style={{marginBottom:20}}/>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:8}}>Foto de perfil</label>
+      <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Crie sua conta Veeda</p>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Seu e-mail identifica sua conta em qualquer dispositivo.</p>
+      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>E-mail</label>
+      <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="seu@email.com" style={{marginBottom:14}}/>
+      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome no Veeda</label>
+      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Como quer ser chamado" style={{marginBottom:20}}/>
+      <Btn onClick={()=>{if(!email.includes("@")){setErr("E-mail inválido.");return;}if(!name.trim()){setErr("Informe seu nome.");return;}setErr("");setStep(2);}}>Continuar</Btn>
+      {err&&<p style={{fontSize:13,color:C.red,marginTop:10,textAlign:"center"}}>{err}</p>}
+    </div>}
+    {step===2&&<div style={{animation:"slideUp 0.25s ease"}}>
+      <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Seu avatar</p>
       <div style={{display:"flex",gap:8,marginBottom:14}}>
         <input ref={photoRef} type="file" accept="image/*" capture="user" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAvatarSrc);}}/>
         <input ref={galleryRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAvatarSrc);}}/>
         <button onClick={()=>photoRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>📷 Tirar foto</button>
         <button onClick={()=>galleryRef.current.click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>🖼️ Galeria</button>
       </div>
-      {avatarSrc
-        ?<div style={{display:"flex",justifyContent:"center",marginBottom:16}}><div style={{position:"relative"}}><AvatarBubble src={avatarSrc} size={80} ring/><button onClick={()=>setAvatarSrc(null)} style={{position:"absolute",top:-4,right:-4,width:22,height:22,borderRadius:"50%",background:C.red,color:"#fff",border:"none",cursor:"pointer",fontSize:12}}>×</button></div></div>
-        :<div>
-          <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:8}}>Ou escolha um emoji</label>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>{AVATAR_EMOJIS.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{fontSize:20,background:emoji===e?C.purpleLight:"#F5F3FB",border:`2px solid ${emoji===e?C.purple:C.cardBorder}`,borderRadius:10,width:44,height:44,cursor:"pointer",transition:"border-color 0.15s"}}>{e}</button>)}</div>
-          <div style={{display:"flex",gap:8,marginBottom:16}}>{AVATAR_COLORS.map(col=><button key={col} onClick={()=>setAvatarColor(col)} style={{width:36,height:36,borderRadius:"50%",background:col,border:`3px solid ${avatarColor===col?C.purple:C.cardBorder}`,cursor:"pointer",transition:"border-color 0.15s"}}/>)}</div>
-          <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><AvatarBubble emoji={emoji} color={avatarColor} size={70} ring/></div>
-        </div>
-      }
-      <Btn onClick={()=>{if(name.trim())setStep(2);}}>Continuar</Btn>
+      {avatarSrc?<div style={{display:"flex",justifyContent:"center",marginBottom:14}}><div style={{position:"relative"}}><AvatarBubble src={avatarSrc} size={80} ring/><button onClick={()=>setAvatarSrc(null)} style={{position:"absolute",top:-4,right:-4,width:22,height:22,borderRadius:"50%",background:C.red,color:"#fff",border:"none",cursor:"pointer",fontSize:12}}>×</button></div></div>:<div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>{AVATAR_EMOJIS.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{fontSize:20,background:emoji===e?C.purpleLight:"#F5F3FB",border:`2px solid ${emoji===e?C.purple:C.cardBorder}`,borderRadius:10,width:44,height:44,cursor:"pointer"}}>{e}</button>)}</div>
+        <div style={{display:"flex",gap:8,marginBottom:14}}>{AVATAR_COLORS.map(col=><button key={col} onClick={()=>setAvatarColor(col)} style={{width:36,height:36,borderRadius:"50%",background:col,border:`3px solid ${avatarColor===col?C.purple:C.cardBorder}`,cursor:"pointer"}}/>)}</div>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><AvatarBubble emoji={emoji} color={avatarColor} size={70} ring/></div>
+      </div>}
+      <Btn onClick={()=>setStep(3)}>Continuar</Btn>
     </div>}
-
-    {step===2&&<div style={{animation:"slideUp 0.25s ease"}}>
+    {step===3&&<div style={{animation:"slideUp 0.25s ease"}}>
       <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Crie sua senha</p>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Sua senha protege todos os seus Dias de Veeda. Apenas você tem acesso.</p>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Senha</label>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Sua senha protege todos os seus Dias de Veeda.</p>
       <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} placeholder="Mínimo 6 caracteres" style={{marginBottom:14}}/>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Confirmar senha</label>
       <input type="password" value={pw2} onChange={e=>{setPw2(e.target.value);setErr("");}} placeholder="Repita a senha" style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,marginBottom:err?6:14}}/>
       {err&&<p style={{fontSize:13,color:C.red,margin:"0 0 14px",fontWeight:500}}>{err}</p>}
-      <Btn onClick={()=>{if(pw.length<6){setErr("Mínimo 6 caracteres.");return;}if(pw!==pw2){setErr("As senhas não coincidem.");return;}setErr("");setStep(3);}}>Continuar</Btn>
+      <Btn onClick={()=>{if(pw.length<6){setErr("Mínimo 6 caracteres.");return;}if(pw!==pw2){setErr("As senhas não coincidem.");return;}setErr("");setStep(4);}}>Continuar</Btn>
     </div>}
-
-    {step===3&&<div style={{animation:"slideUp 0.25s ease"}}>
+    {step===4&&<div style={{animation:"slideUp 0.25s ease"}}>
       <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Código de recuperação</p>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Se esquecer sua senha, este é o único jeito de recuperar seus Dias de Veeda. <strong style={{color:C.text}}>Anote agora.</strong></p>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}><strong style={{color:C.text}}>Anote agora.</strong> Este código é o único jeito de recuperar seus dados se esquecer a senha.</p>
       <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,border:`2px solid ${C.purpleMid}`,borderRadius:16,padding:"22px",textAlign:"center",marginBottom:14}}>
-        <p style={{margin:"0 0 6px",fontSize:11,color:C.textMid,fontWeight:500,letterSpacing:"1px",textTransform:"uppercase"}}>Seu código</p>
+        <p style={{margin:"0 0 4px",fontSize:11,color:C.textMid,fontWeight:500,letterSpacing:"1px",textTransform:"uppercase"}}>Seu código</p>
         <p style={{margin:0,fontSize:22,fontWeight:700,color:C.purple,letterSpacing:"3px",fontFamily:"monospace"}}>{code}</p>
       </div>
       <button onClick={()=>{if(navigator.clipboard)navigator.clipboard.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);}} style={{width:"100%",padding:"11px 0",marginBottom:20,background:copied?"#E8FBF0":"#fff",color:copied?C.green:C.purple,border:`2px solid ${copied?C.green:C.purple}`,borderRadius:12,fontWeight:600,fontSize:14,cursor:"pointer",transition:"all 0.2s"}}>{copied?"✓ Código copiado!":"Copiar código"}</button>
-
-      {/* Checkbox — released / active / selected */}
-      <CheckboxConfirm checked={confirmed} hasError={!!err} onChange={v=>{setConfirmed(v);if(v)setErr("");}} label="Eu anotei meu código de recuperação em um lugar seguro." />
-      {err&&<p style={{fontSize:13,color:C.red,margin:"0 0 14px",fontWeight:500}}>{err}</p>}
-      <Btn onClick={finish} disabled={loading}>{loading?"Criando conta...":"Entrar no Veeda 🌿"}</Btn>
+      <CheckboxConfirm checked={confirmed} hasError={!!err&&!confirmed} onChange={v=>{setConfirmed(v);if(v)setErr("");}} label="Eu anotei meu código de recuperação em um lugar seguro."/>
+      {err&&<p style={{fontSize:13,color:C.red,margin:"-10px 0 14px",fontWeight:500}}>{err}</p>}
+      <Btn onClick={finish} disabled={loading}>{loading?<><Spinner/>Criando conta...</>:"Entrar no Veeda 🌿"}</Btn>
     </div>}
   </div>;
 }
 
-// ── Screen: Forgot ──
 function ScreenForgot({profile,onSuccess,onBack}){
-  const[step,setStep]=useState(1),[ code,setCode]=useState(""),[ pw,setPw]=useState(""),[ pw2,setPw2]=useState(""),[ err,setErr]=useState(""),[ loading,setLoading]=useState(false);
+  const [step,setStep]=useState(1),[ code,setCode]=useState(""),[ pw,setPw]=useState(""),[ pw2,setPw2]=useState(""),[ err,setErr]=useState(""),[ loading,setLoading]=useState(false);
   const verify=async()=>{setLoading(true);setErr("");const h=await hashPw(code.trim().toUpperCase());if(h!==profile.recoveryHash){setErr("Código incorreto.");setLoading(false);return;}setStep(2);setLoading(false);};
-  const reset=async()=>{if(pw.length<6){setErr("Mínimo 6 caracteres.");return;}if(pw!==pw2){setErr("As senhas não coincidem.");return;}setLoading(true);try{const stored=localStorage.getItem(`veeda_data_${profile.id}`);let d=defaultData();try{d=await decryptObj(stored,code.trim().toUpperCase());}catch{}const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===profile.id);if(idx>=0){ps[idx].passwordHash=await hashPw(pw);saveProfiles(ps);}localStorage.setItem(`veeda_data_${profile.id}`,await encryptObj(d,pw));onSuccess(pw);}catch{setErr("Erro.");setLoading(false);}};
+  const reset=async()=>{if(pw.length<6){setErr("Mínimo 6 caracteres.");return;}if(pw!==pw2){setErr("Não coincidem.");return;}setLoading(true);try{const stored=localStorage.getItem(`veeda_data_${profile.id}`);let d=defaultData();try{d=await decryptObj(stored,code.trim().toUpperCase());}catch{}const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===profile.id);if(idx>=0){ps[idx].passwordHash=await hashPw(pw);saveProfiles(ps);}localStorage.setItem(`veeda_data_${profile.id}`,await encryptObj(d,pw));onSuccess(pw);}catch{setErr("Erro.");setLoading(false);}};
   return <div style={{maxWidth:400,margin:"0 auto",padding:"2.5rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
     <Btn onClick={onBack} variant="ghost" style={{width:"auto",marginBottom:24}}>‹ Voltar</Btn>
     <div style={{textAlign:"center",marginBottom:24}}><AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={64} ring/><p style={{margin:"10px 0 0",fontSize:16,fontWeight:700,color:C.text}}>{profile.name}</p></div>
     <div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"20px"}}>
-      {step===1&&<div><p style={{fontSize:15,fontWeight:600,color:C.text,margin:"0 0 14px"}}>Código de recuperação</p><input value={code} onChange={e=>{setCode(e.target.value);setErr("");}} placeholder="XXXX-XXXX-XXXX-XXXX" style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,fontFamily:"monospace",letterSpacing:"1px",marginBottom:err?6:14}}/>{err&&<p style={{fontSize:13,color:C.red,margin:"0 0 12px",fontWeight:500}}>{err}</p>}<Btn onClick={verify} disabled={loading}>{loading?"Verificando...":"Verificar"}</Btn></div>}
-      {step===2&&<div><p style={{fontSize:15,fontWeight:600,color:C.text,margin:"0 0 14px"}}>Nova senha</p><input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} placeholder="Nova senha" style={{marginBottom:12}}/><input type="password" value={pw2} onChange={e=>{setPw2(e.target.value);setErr("");}} placeholder="Confirmar" style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,marginBottom:err?6:14}}/>{err&&<p style={{fontSize:13,color:C.red,margin:"0 0 12px",fontWeight:500}}>{err}</p>}<Btn onClick={reset} disabled={loading}>{loading?"Salvando...":"Redefinir senha"}</Btn></div>}
+      {step===1&&<div><p style={{fontSize:15,fontWeight:600,color:C.text,margin:"0 0 14px"}}>Código de recuperação</p><input value={code} onChange={e=>{setCode(e.target.value);setErr("");}} placeholder="XXXX-XXXX-XXXX-XXXX" style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,fontFamily:"monospace",letterSpacing:"1px",marginBottom:err?6:14}}/>{err&&<p style={{fontSize:13,color:C.red,margin:"0 0 12px",fontWeight:500}}>{err}</p>}<Btn onClick={verify} disabled={loading}>{loading?<><Spinner/>Verificando...</>:"Verificar"}</Btn></div>}
+      {step===2&&<div><p style={{fontSize:15,fontWeight:600,color:C.text,margin:"0 0 14px"}}>Nova senha</p><input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} placeholder="Nova senha" style={{marginBottom:12}}/><input type="password" value={pw2} onChange={e=>{setPw2(e.target.value);setErr("");}} placeholder="Confirmar" style={{border:`1.5px solid ${err?C.red:C.cardBorder}`,marginBottom:err?6:14}}/>{err&&<p style={{fontSize:13,color:C.red,margin:"0 0 12px",fontWeight:500}}>{err}</p>}<Btn onClick={reset} disabled={loading}>{loading?<><Spinner/>Salvando...</>:"Redefinir senha"}</Btn></div>}
     </div>
   </div>;
 }
 
-// ── Main App ──
+// ─── MAIN APP ────────────────────────────────
 function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const dataKey=`veeda_data_${profile.id}`;
-  const[data,setData]=useState(null);
-  const[view,setView]=useState("hoje");
-  const[dayOffset,setDayOffset]=useState(0);
-  const[addType,setAddType]=useState("texto");
-  const[addContent,setAddContent]=useState("");
-  const[addCaption,setAddCaption]=useState("");
-  const[addMedia,setAddMedia]=useState(null);
-  const[showModal,setShowModal]=useState(false);
-  const[showEditDay,setShowEditDay]=useState(false);
-  const[showFeeling,setShowFeeling]=useState(false);
-  const[showAvatar,setShowAvatar]=useState(false);
-  const[showInvite,setShowInvite]=useState(false);
-  const[showInviteApp,setShowInviteApp]=useState(false);
-  const[showGroupName,setShowGroupName]=useState(false);
-  const[showShare,setShowShare]=useState(false);
-  const[showReminders,setShowReminders]=useState(false);
-  const[showEvents,setShowEvents]=useState(false);
-  const[showBackup,setShowBackup]=useState(false);
-  const[showGuide,setShowGuide]=useState(false);
-  const[importKey,setImportKey]=useState("");
-  const[importFile,setImportFile]=useState(null);
-  const[importMsg,setImportMsg]=useState("");
-  const[viewRec,setViewRec]=useState(null);
-  const[pendingNotif,setPendingNotif]=useState(null);
-  const[showBackupPrompt,setShowBackupPrompt]=useState(false);
-  const[expandedMedia,setExpandedMedia]=useState(null);
-  const[now,setNow]=useState(new Date());
-  const[invCode,setInvCode]=useState("");
-  const[invName,setInvName]=useState("");
-  const[newGroup,setNewGroup]=useState("");
-  const[lastId,setLastId]=useState(null);
-  const fileRef=useRef(),vidRef=useRef(),photoRef=useRef(),galleryRef=useRef(),touchX=useRef(null),lastRef=useRef(null);
+  const [data,setData]=useState(null);
+  const [view,setView]=useState("hoje");
+  const [dayOffset,setDayOffset]=useState(0);
+  const [addType,setAddType]=useState("texto");
+  const [addContent,setAddContent]=useState("");
+  const [addCaption,setAddCaption]=useState("");
+  const [addMedia,setAddMedia]=useState(null);
+  const [addTags,setAddTags]=useState([]);
+  const [showModal,setShowModal]=useState(false);
+  const [showMusicPicker,setShowMusicPicker]=useState(false);
+  const [showEditDay,setShowEditDay]=useState(false);
+  const [showFeeling,setShowFeeling]=useState(false);
+  const [showAvatar,setShowAvatar]=useState(false);
+  const [showInvite,setShowInvite]=useState(false);
+  const [showInviteApp,setShowInviteApp]=useState(false);
+  const [showGroupName,setShowGroupName]=useState(false);
+  const [showShare,setShowShare]=useState(false);
+  const [showReminders,setShowReminders]=useState(false);
+  const [showEvents,setShowEvents]=useState(false);
+  const [showSettings,setShowSettings]=useState(false);
+  const [showGuide,setShowGuide]=useState(false);
+  const [viewRec,setViewRec]=useState(null);
+  const [pendingNotif,setPendingNotif]=useState(null);
+  const [expandedMoment,setExpandedMoment]=useState(null);
+  const [now,setNow]=useState(new Date());
+  const [invCode,setInvCode]=useState("");
+  const [invName,setInvName]=useState("");
+  const [newGroup,setNewGroup]=useState("");
+  const [lastId,setLastId]=useState(null);
+  const vidRef=useRef(),photoRef=useRef(),galleryRef=useRef(),touchX=useRef(null),lastRef=useRef(null);
+
+  // ── Store media as IndexedDB to avoid localStorage size limits ──
+  const mediaDb = useRef(null);
+  const openDb = () => new Promise((res,rej)=>{
+    if(mediaDb.current){res(mediaDb.current);return;}
+    const req=indexedDB.open("veeda_media",1);
+    req.onupgradeneeded=e=>e.target.result.createObjectStore("media",{keyPath:"id"});
+    req.onsuccess=e=>{mediaDb.current=e.target.result;res(e.target.result);};
+    req.onerror=()=>rej("IDB error");
+  });
+  const saveMedia=async(id,dataUrl)=>{try{const db=await openDb();const tx=db.transaction("media","readwrite");tx.objectStore("media").put({id,dataUrl});}catch(e){console.warn("IDB save failed",e);}};
+  const loadMedia=async id=>{try{const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction("media","readonly");const req=tx.objectStore("media").get(id);req.onsuccess=()=>res(req.result?.dataUrl||null);req.onerror=()=>rej(null);});}catch{return null;}};
 
   useEffect(()=>{
-    (async()=>{try{const enc=localStorage.getItem(dataKey);const d=enc?await decryptObj(enc,password):defaultData();setData(d);
-      // Check monthly backup prompt
-      const lastPrompt=d.lastBackupPrompt?new Date(d.lastBackupPrompt):null;
-      const now=new Date();
-      if(!lastPrompt||(now-lastPrompt)>30*24*60*60*1000)setShowBackupPrompt(true);
-    }catch{setData(defaultData());}})();
+    (async()=>{
+      try{
+        const enc=localStorage.getItem(dataKey);
+        const d=enc?await decryptObj(enc,password):defaultData();
+        setData(d);
+      }catch{setData(defaultData());}
+    })();
     const t=setInterval(()=>setNow(new Date()),30000);
     return()=>clearInterval(t);
   },[]);
 
-  useEffect(()=>{if(!data)return;const k=`veeda_inbox_${profile.id}`;const inbox=JSON.parse(localStorage.getItem(k)||"[]");if(inbox.length>0){const notif=inbox[0];const already=(data.received||[]).find(r=>r.date===notif.date&&r.author===notif.author&&r.importedAt===notif.importedAt);if(!already)setPendingNotif(notif);}},[data]);
+  useEffect(()=>{if(!data)return;const k=`veeda_inbox_${profile.id}`,inbox=JSON.parse(localStorage.getItem(k)||"[]");if(inbox.length>0){const notif=inbox[0];if(!(data.received||[]).find(r=>r.date===notif.date&&r.author===notif.author&&r.importedAt===notif.importedAt))setPendingNotif(notif);}},[data]);
   useEffect(()=>{if(lastId&&lastRef.current){setTimeout(()=>lastRef.current&&lastRef.current.scrollIntoView({behavior:"smooth",block:"center"}),120);setLastId(null);}},[lastId,data]);
 
-  const save=async d=>{setData(d);localStorage.setItem(dataKey,await encryptObj(d,password));};
-  const resetModal=()=>{setAddContent("");setAddCaption("");setAddMedia(null);setShowModal(false);};
-  const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
-
-  const acceptNotif=async()=>{if(!pendingNotif)return;const k=`veeda_inbox_${profile.id}`;const inbox=JSON.parse(localStorage.getItem(k)||"[]");localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===pendingNotif.date&&x.author===pendingNotif.author&&x.importedAt===pendingNotif.importedAt))));const newData={...data,received:[...(data.received||[]),pendingNotif]};await save(newData);setPendingNotif(null);setView("recebidos");setViewRec(pendingNotif);};
-  const dismissNotif=()=>{if(!pendingNotif)return;const k=`veeda_inbox_${profile.id}`;const inbox=JSON.parse(localStorage.getItem(k)||"[]");localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===pendingNotif.date&&x.author===pendingNotif.author&&x.importedAt===pendingNotif.importedAt))));setPendingNotif(null);};
-  const dismissBackupPrompt=async()=>{const d={...data,lastBackupPrompt:new Date().toISOString()};await save(d);setShowBackupPrompt(false);};
-
-  if(!data)return <div style={{padding:32,textAlign:"center",color:C.textMid,fontSize:32}}>🌿</div>;
-
-  const curDay=offsetDay(todayStr(),-dayOffset),isToday=dayOffset===0;
-  const moments=(data.moments[curDay]||[]).slice().sort((a,b)=>a.ts-b.ts);
-  const allDays=Object.keys(data.moments).filter(d=>(data.moments[d]||[]).length>0).sort((a,b)=>b.localeCompare(a));
-  const nowKey=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
-  const dayColor=DAY_COLORS.find(c=>c.label===(data.dayColors||{})[curDay])||DAY_COLORS[0];
-  const feeling=(data.dayFeelings||{})[curDay];
-  const group=data.groupName||"Família & Amigos";
-  const lastMId=moments.length>0?moments[moments.length-1].id:null;
-  const upcomingEvents=(data.events||[]).filter(e=>e.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date));
-
-  const addMoment=()=>{const isMedia=addType==="foto"||addType==="video";if(isMedia&&!addMedia)return;if(!isMedia&&!addContent.trim())return;let type=addType,content=isMedia?addMedia:addContent.trim();if(type==="link"&&isVideoLink(content))type="videolink";const id=Date.now();save({...data,moments:{...data.moments,[todayStr()]:[...(data.moments[todayStr()]||[]),{id,ts:id,type,content,caption:addCaption.trim()}]}});resetModal();setLastId(id);};
-  const delMoment=(day,id)=>save({...data,moments:{...data.moments,[day]:(data.moments[day]||[]).filter(m=>m.id!==id)}});
-
-  const renderContent=(m,full=false,mini=false)=>{
-    if(m.type==="foto"||m.type==="video"){
-      if(mini)return <div onClick={()=>setExpandedMedia(m)} style={{width:52,height:52,borderRadius:"50%",overflow:"hidden",cursor:"pointer",border:`2.5px solid ${C.white}`,flexShrink:0}}>{m.type==="foto"?<img src={m.content} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<video src={m.content} style={{width:"100%",height:"100%",objectFit:"cover"}}/>}</div>;
-      if(m.type==="foto")return <img src={m.content} alt="" style={{width:"100%",borderRadius:10,display:"block",cursor:"pointer"}} onClick={()=>setExpandedMedia(m)}/>;
-      return <video src={m.content} controls style={{width:"100%",borderRadius:10,display:"block",maxHeight:full?320:160}}/>;
-    }
-    if(m.type==="evento")return <div style={{background:"#FFF8E1",borderRadius:10,padding:"10px 14px"}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.amber}}>{m.content}</p>{m.caption&&<p style={{margin:"4px 0 0",fontSize:13,color:C.textMid}}>{m.caption}</p>}</div>;
-    if(m.type==="videolink"){const e=getVideoEmbed(m.content);return e?<div style={{position:"relative",paddingBottom:"56.25%",height:0,borderRadius:10,overflow:"hidden"}}><iframe src={e} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}} allowFullScreen title="v"/></div>:<a href={m.content} target="_blank" rel="noopener noreferrer" style={{color:C.blue,fontSize:13,wordBreak:"break-all"}}>{m.content}</a>;}
-    if(m.type==="link")return <a href={m.content} target="_blank" rel="noopener noreferrer" style={{color:C.blue,fontSize:13,wordBreak:"break-all"}}>{m.content}</a>;
-    if(m.type==="musica")return <p style={{margin:0,fontSize:14,color:C.text}}>🎵 {m.content}</p>;
-    return <p style={{margin:0,fontSize:14,color:C.text,lineHeight:1.65}}>{m.content}</p>;
+  const save=async d=>{
+    // Strip media data from moments before storing in localStorage (save only IDs)
+    const lightweight={...d,moments:{}};
+    Object.keys(d.moments||{}).forEach(day=>{
+      lightweight.moments[day]=(d.moments[day]||[]).map(m=>{
+        if((m.type==="foto"||m.type==="video")&&m.content&&m.content.startsWith("data:")){
+          saveMedia(`${m.id}`,m.content);
+          return {...m,content:"IDB:"+m.id};
+        }
+        return m;
+      });
+    });
+    setData(d);
+    localStorage.setItem(dataKey,await encryptObj(lightweight,password));
   };
 
-  const MiniCard=({m,isNew})=>{const isMedia=m.type==="foto"||m.type==="video";return <div ref={isNew?lastRef:null} style={{marginBottom:4}}>{isMedia?renderContent(m,false,true):<div style={{background:C.white,border:`1px solid ${isNew?C.purpleMid:C.cardBorder}`,borderRadius:10,padding:"8px 10px",maxWidth:150}}><span style={{fontSize:10,color:C.textLight,display:"block",marginBottom:3}}>{fmt(m.ts)}</span><p style={{margin:0,fontSize:12,color:C.text,lineHeight:1.35,overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{typeIcons[m.type]} {m.content}</p></div>}</div>;};
+  // Hydrate media from IDB when data loads
+  const [hydratedData,setHydratedData]=useState(null);
+  useEffect(()=>{
+    if(!data)return;
+    (async()=>{
+      const hd={...data,moments:{}};
+      for(const day of Object.keys(data.moments||{})){
+        hd.moments[day]=await Promise.all((data.moments[day]||[]).map(async m=>{
+          if(m.content&&m.content.startsWith("IDB:")){
+            const mediaId=m.content.slice(4);
+            const dataUrl=await loadMedia(mediaId);
+            return dataUrl?{...m,content:dataUrl}:m;
+          }
+          return m;
+        }));
+      }
+      setHydratedData(hd);
+    })();
+  },[data]);
 
-  const FullCard=({m,onDelete,isNew})=><div ref={isNew?lastRef:null} style={{background:C.white,border:`1.5px solid ${isNew?C.purpleMid:C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10}}>
-    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:28,height:28,borderRadius:"50%",background:typeBg(m.type),display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{typeIcons[m.type]||"🔗"}</span><span style={{fontSize:12,color:C.textLight}}>{fmt(m.ts)}</span>{onDelete&&<button onClick={()=>onDelete()} style={{marginLeft:"auto",fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer"}}>remover</button>}</div>
-    {renderContent(m,true)}
-    {m.caption&&m.type!=="evento"&&<p style={{margin:"8px 0 0",fontSize:12,color:C.textMid}}>{m.caption}</p>}
-  </div>;
+  const activeData=hydratedData||data;
+
+  const resetModal=()=>{setAddContent("");setAddCaption("");setAddMedia(null);setAddTags([]);setShowModal(false);setShowMusicPicker(false);};
+  const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
+
+  const acceptNotif=async()=>{if(!pendingNotif)return;const k=`veeda_inbox_${profile.id}`,inbox=JSON.parse(localStorage.getItem(k)||"[]");localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===pendingNotif.date&&x.author===pendingNotif.author&&x.importedAt===pendingNotif.importedAt))));await save({...data,received:[...(data.received||[]),pendingNotif]});setPendingNotif(null);setView("recebidos");setViewRec(pendingNotif);};
+  const dismissNotif=()=>{if(!pendingNotif)return;const k=`veeda_inbox_${profile.id}`,inbox=JSON.parse(localStorage.getItem(k)||"[]");localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===pendingNotif.date&&x.author===pendingNotif.author&&x.importedAt===pendingNotif.importedAt))));setPendingNotif(null);};
+
+  const addMoment=(extra={})=>{
+    const isMedia=addType==="foto"||addType==="video";
+    if(isMedia&&!addMedia)return;
+    if(addType==="musica"&&!extra.trackTitle&&!addContent.trim())return;
+    if(!isMedia&&addType!=="musica"&&!addContent.trim())return;
+    let type=addType,content=isMedia?addMedia:addContent.trim();
+    if(type==="link"&&isVideoLink(content))type="videolink";
+    const id=Date.now();
+    const m={id,ts:id,type,content,caption:addCaption.trim(),tags:addTags,...extra};
+    save({...data,moments:{...data.moments,[todayStr()]:[...(data.moments[todayStr()]||[]),m]}});
+    resetModal();setLastId(id);
+  };
+
+  const delMoment=(day,id)=>save({...data,moments:{...data.moments,[day]:(data.moments[day]||[]).filter(m=>m.id!==id)}});
+
+  if(!activeData)return <div style={{padding:32,textAlign:"center",fontSize:32,color:C.textMid}}>🌿</div>;
+
+  const curDay=offsetDay(todayStr(),-dayOffset),isToday=dayOffset===0;
+  const moments=(activeData.moments[curDay]||[]).slice().sort((a,b)=>a.ts-b.ts);
+  const allDays=Object.keys(activeData.moments).filter(d=>(activeData.moments[d]||[]).length>0).sort((a,b)=>b.localeCompare(a));
+  const nowKey=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+  const dayColor=DAY_COLORS.find(c=>c.label===(activeData.dayColors||{})[curDay])||DAY_COLORS[0];
+  const feeling=(activeData.dayFeelings||{})[curDay];
+  const group=activeData.groupName||"Família & Amigos";
+  const lastMId=moments.length>0?moments[moments.length-1].id:null;
+  const upcoming=(activeData.events||[]).filter(e=>e.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date));
 
   const buildSlots=()=>{const byTime={};moments.forEach(m=>{const k=fmt(m.ts);if(!byTime[k])byTime[k]=[];byTime[k].push(m);});const times=new Set(Object.keys(byTime));if(isToday)times.add(nowKey);return Array.from(times).sort().map(time=>({time,moments:byTime[time]||[],isNow:isToday&&time===nowKey}));};
   const slots=buildSlots();
@@ -597,24 +856,24 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
   return <div style={{maxWidth:480,margin:"0 auto",background:dayColor.bg,minHeight:"100vh",transition:"background 0.4s"}}>
     {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
-    {showBackupPrompt&&<BackupPrompt onBackup={()=>{setShowBackupPrompt(false);setShowBackup(true);dismissBackupPrompt();}} onDismiss={dismissBackupPrompt}/>}
-    {expandedMedia&&<div onClick={()=>setExpandedMedia(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      {expandedMedia.type==="foto"?<img src={expandedMedia.content} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}}/>:<video src={expandedMedia.content} controls autoPlay style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}}/>}
-    </div>}
     {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
+
+    {/* Moment detail overlay */}
+    {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
 
     {/* Header */}
     <div style={{background:C.white,borderBottom:`1px solid ${C.cardBorder}`}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 6px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>{getLogo()?<img src={getLogo()} alt="logo" style={{width:28,height:28,objectFit:"contain",borderRadius:6}}/>:<span style={{fontSize:18}}>🌿</span>}<span style={{fontSize:15,fontWeight:700,color:C.text,letterSpacing:"-0.3px"}}>Veeda</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>{getLogo()?<img src={getLogo()} alt="logo" style={{width:28,height:28,objectFit:"contain",borderRadius:6}}/>:<span style={{fontSize:18}}>🌿</span>}<span style={{fontSize:15,fontWeight:700,color:C.text}}>Veeda</span></div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={()=>setShowInviteApp(true)} style={{background:C.purpleLight,border:"none",borderRadius:20,padding:"5px 12px",fontSize:12,color:C.purple,fontWeight:600,cursor:"pointer"}}>+ Convidar</button>
-          <button onClick={onLogout} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer"}}>sair</button>
+          <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",fontSize:20,color:C.textLight,cursor:"pointer",lineHeight:1}}>⚙️</button>
         </div>
       </div>
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"10px 0 12px",borderBottom:`1px solid ${C.cardBorder}`,cursor:"pointer"}} onClick={()=>view==="hoje"&&setShowAvatar(true)}>
         <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={64} ring/>
         <p style={{margin:"8px 0 0",fontSize:14,fontWeight:600,color:C.text}}>{profile.name}</p>
+        {profile.email&&<p style={{margin:"2px 0 0",fontSize:11,color:C.textLight}}>{profile.email}</p>}
         {feeling&&<div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:4,background:C.purpleLight,borderRadius:20,padding:"3px 12px"}}><span style={{fontSize:13}}>{feeling.emoji}</span><span style={{fontSize:11,color:C.purple,fontWeight:500}}>{feeling.label}</span></div>}
         {view==="hoje"&&<span style={{fontSize:11,color:C.textLight,marginTop:4}}>editar perfil</span>}
       </div>
@@ -635,43 +894,64 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           <button onClick={()=>setShowEditDay(true)} style={{fontSize:12,padding:"4px 12px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:20,color:C.textMid,cursor:"pointer"}}>🎨 cor</button>
           <button onClick={()=>setShowFeeling(true)} style={{fontSize:12,padding:"4px 12px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:20,color:C.textMid,cursor:"pointer"}}>{feeling?`${feeling.emoji} ${feeling.label}`:"😊 sentimento"}</button>
           <button onClick={()=>setShowReminders(true)} style={{fontSize:12,padding:"4px 12px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:20,color:C.textMid,cursor:"pointer"}}>🔔</button>
-          <button onClick={()=>setShowEvents(true)} style={{fontSize:12,padding:"4px 12px",background:"#FFF3DC",border:`1px solid ${C.amber}44`,borderRadius:20,color:C.amber,cursor:"pointer",fontWeight:500}}>📅 eventos{upcomingEvents.length>0?` (${upcomingEvents.length})`:""}</button>
-          <button onClick={()=>setShowBackup(true)} style={{fontSize:12,padding:"4px 12px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:20,color:C.textMid,cursor:"pointer"}}>📥 backup</button>
+          <button onClick={()=>setShowEvents(true)} style={{fontSize:12,padding:"4px 12px",background:"#FFF3DC",border:`1px solid ${C.amber}44`,borderRadius:20,color:C.amber,cursor:"pointer",fontWeight:500}}>📅{upcoming.length>0?` (${upcoming.length})`:""}</button>
         </div>
         {isToday&&<p style={{textAlign:"center",fontSize:11,color:C.textLight,margin:"0 0 4px"}}>← deslize para dias anteriores</p>}
-
-        {/* Upcoming events banner */}
-        {isToday&&upcomingEvents.length>0&&<div style={{margin:"0 16px 8px",background:"#FFF8E1",border:`1px solid ${C.amber}55`,borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:18}}>{EVENT_TYPES.find(t=>t.id===upcomingEvents[0].type)?.emoji||"📅"}</span>
-          <div><p style={{margin:0,fontSize:13,fontWeight:600,color:C.amber}}>{upcomingEvents[0].title}</p><p style={{margin:0,fontSize:11,color:C.textMid}}>{fmtFull(upcomingEvents[0].date)}{upcomingEvents[0].time?` às ${upcomingEvents[0].time}`:""}</p></div>
+        {isToday&&upcoming.length>0&&<div style={{margin:"0 16px 8px",background:"#FFF8E1",border:`1px solid ${C.amber}55`,borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:18}}>{EVENT_TYPES.find(t=>t.id===upcoming[0].type)?.emoji||"📅"}</span>
+          <div><p style={{margin:0,fontSize:13,fontWeight:600,color:C.amber}}>{upcoming[0].title}</p><p style={{margin:0,fontSize:11,color:C.textMid}}>{fmtFull(upcoming[0].date)}{upcoming[0].time?` às ${upcoming[0].time}`:""}</p></div>
         </div>}
 
+        {/* ── TIMELINE — only circles ── */}
         <div style={{position:"relative",padding:"16px 0 24px"}}>
           {slots.length>0&&<div style={{position:"absolute",left:"50%",top:0,bottom:0,width:3,borderRadius:3,background:`linear-gradient(to bottom,${dayColor.dot}44,${dayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`,transform:"translateX(-50%)",zIndex:0}}/>}
           {slots.length===0&&<div style={{textAlign:"center",padding:"3rem 2rem"}}><p style={{fontSize:14,color:C.textLight,margin:0}}>{isToday?"Nenhum momento ainda.":"Nenhum momento neste dia."}</p></div>}
-          {slots.map((slot,i)=>{const isLeft=i%2===0;return <div key={slot.time} style={{position:"relative",display:"flex",alignItems:"flex-start",marginBottom:28,zIndex:1}}>
-            <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-end",paddingRight:20,paddingLeft:12}}>{isLeft&&(slot.isNow?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`2px solid ${dayColor.dot}`,borderRadius:20,padding:"9px 16px",fontSize:13,color:C.purple,cursor:"pointer",fontWeight:600,lineHeight:1.4,textAlign:"center"}}>registrar<br/>acontecimento</button>:slot.moments.map(m=><MiniCard key={m.id} m={m} isNew={m.id===lastMId&&lastId===null}/>))}</div>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0,position:"relative",zIndex:2}}>{slot.isNow?<PulsingDot onClick={()=>setShowModal(true)} color={dayColor.dot}/>:<div style={{width:14,height:14,borderRadius:"50%",background:typeColor(slot.moments[0]&&slot.moments[0].type),border:`2.5px solid ${C.white}`,outline:`2px solid ${typeBg(slot.moments[0]&&slot.moments[0].type)}`}}/>}<span style={{fontSize:10,color:C.textLight,marginTop:4,whiteSpace:"nowrap"}}>{slot.time}</span></div>
-            <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-start",paddingLeft:20,paddingRight:12}}>{!isLeft&&(slot.isNow?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`2px solid ${dayColor.dot}`,borderRadius:20,padding:"9px 16px",fontSize:13,color:C.purple,cursor:"pointer",fontWeight:600,lineHeight:1.4,textAlign:"center"}}>registrar<br/>acontecimento</button>:slot.moments.map(m=><MiniCard key={m.id} m={m} isNew={m.id===lastMId&&lastId===null}/>))}</div>
-          </div>;})}
+          {slots.map((slot,i)=>{
+            const isLeft=i%2===0;
+            return <div key={slot.time} style={{position:"relative",display:"flex",alignItems:"flex-start",marginBottom:28,zIndex:1}}>
+              {/* Left */}
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-end",paddingRight:18,paddingLeft:12,gap:6}}>
+                {isLeft&&(slot.isNow
+                  ?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`2px solid ${dayColor.dot}`,borderRadius:20,padding:"9px 14px",fontSize:12,color:C.purple,cursor:"pointer",fontWeight:600,lineHeight:1.4,textAlign:"center",maxWidth:140}}>registrar<br/>acontecimento</button>
+                  :slot.moments.map(m=><div key={m.id} ref={m.id===lastMId&&lastId===null?lastRef:null}><MomentCircle m={m} isNew={m.id===lastMId&&lastId===null} onTap={()=>setExpandedMoment(m)}/><span style={{display:"block",textAlign:"right",fontSize:10,color:C.textLight,marginTop:2}}>{fmt(m.ts)}</span></div>)
+                )}
+              </div>
+              {/* Center */}
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0,position:"relative",zIndex:2}}>
+                {slot.isNow
+                  ?<PulsingDot onClick={()=>setShowModal(true)} color={dayColor.dot}/>
+                  :<div style={{width:10,height:10,borderRadius:"50%",background:dayColor.dot,border:`2px solid ${C.white}`}}/>
+                }
+                <span style={{fontSize:9,color:C.textLight,marginTop:3,whiteSpace:"nowrap"}}>{slot.time}</span>
+              </div>
+              {/* Right */}
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-start",paddingLeft:18,paddingRight:12,gap:6}}>
+                {!isLeft&&(slot.isNow
+                  ?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`2px solid ${dayColor.dot}`,borderRadius:20,padding:"9px 14px",fontSize:12,color:C.purple,cursor:"pointer",fontWeight:600,lineHeight:1.4,textAlign:"center",maxWidth:140}}>registrar<br/>acontecimento</button>
+                  :slot.moments.map(m=><div key={m.id} ref={m.id===lastMId&&lastId===null?lastRef:null}><MomentCircle m={m} isNew={m.id===lastMId&&lastId===null} onTap={()=>setExpandedMoment(m)}/><span style={{display:"block",fontSize:10,color:C.textLight,marginTop:2}}>{fmt(m.ts)}</span></div>)
+                )}
+              </div>
+            </div>;
+          })}
         </div>
-        {moments.length>0&&<div style={{padding:"0 16px 16px"}}><p style={{margin:"0 0 10px",fontSize:13,fontWeight:600,color:C.textMid}}>Momentos do dia</p>{moments.map(m=><FullCard key={m.id} m={m} onDelete={()=>delMoment(curDay,m.id)} isNew={m.id===lastMId&&lastId===null}/>)}</div>}
       </div>}
 
       {/* GRUPO */}
       {view==="grupo"&&<div style={{padding:"20px 16px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}><p style={{margin:0,fontSize:16,fontWeight:700,color:C.text}}>{group}</p><button onClick={()=>{setNewGroup(group);setShowGroupName(true);}} style={{fontSize:12,color:C.purple,background:"none",border:"none",cursor:"pointer"}}>renomear</button></div>
         <Btn onClick={()=>setShowInvite(true)} style={{marginBottom:20}}>+ Adicionar contato</Btn>
-        {(!data.contacts||data.contacts.length===0)?<div style={{textAlign:"center",padding:"2rem 0"}}><p style={{fontSize:14,color:C.textLight}}>Nenhum contato ainda.</p><button onClick={()=>setShowInviteApp(true)} style={{marginTop:12,background:"none",border:`1px solid ${C.purple}`,borderRadius:20,padding:"8px 18px",color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>Convidar alguém para o Veeda</button></div>:data.contacts.map((c,i)=><div key={i} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
+        {(!activeData.contacts||activeData.contacts.length===0)?<div style={{textAlign:"center",padding:"2rem 0"}}><p style={{fontSize:14,color:C.textLight}}>Nenhum contato ainda.</p><button onClick={()=>setShowInviteApp(true)} style={{marginTop:12,background:"none",border:`1px solid ${C.purple}`,borderRadius:20,padding:"8px 18px",color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>Convidar alguém para o Veeda</button></div>
+        :activeData.contacts.map((c,i)=><div key={i} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
           <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={42}/>
           <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{c.name}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>ID: <span style={{fontFamily:"monospace",color:C.purple}}>{c.code}</span></p></div>
-          <button onClick={()=>{const nc=[...data.contacts];nc.splice(i,1);save({...data,contacts:nc});}} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer"}}>remover</button>
+          <button onClick={()=>{const nc=[...activeData.contacts];nc.splice(i,1);save({...data,contacts:nc});}} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer"}}>remover</button>
         </div>)}
       </div>}
 
       {/* RECEBIDOS */}
       {view==="recebidos"&&!viewRec&&<div style={{padding:"20px 16px"}}>
-        {(data.received||[]).length===0?<p style={{fontSize:14,color:C.textLight,textAlign:"center",marginTop:40}}>Nenhum Dia de Veeda recebido ainda.</p>:(data.received||[]).slice().sort((a,b)=>b.importedAt-a.importedAt).map((r,i)=><div key={i} onClick={()=>setViewRec(r)} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+        {(activeData.received||[]).length===0?<p style={{fontSize:14,color:C.textLight,textAlign:"center",marginTop:40}}>Nenhum Dia de Veeda recebido ainda.</p>
+        :(activeData.received||[]).slice().sort((a,b)=>b.importedAt-a.importedAt).map((r,i)=><div key={i} onClick={()=>setViewRec(r)} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
           <AvatarBubble src={r.avatarSrc} emoji={r.emoji||"🌿"} color={r.avatarColor||C.purpleLight} size={44} ring/>
           <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{r.author}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length!==1?"s":""}{r.feeling?` · ${r.feeling.emoji}`:""}</p></div>
           <span style={{color:C.textLight,fontSize:20}}>›</span>
@@ -686,15 +966,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           {viewRec.message&&<div style={{margin:"12px 0 0",background:C.purpleLight,borderRadius:12,padding:"12px 16px",width:"100%",boxSizing:"border-box"}}><p style={{margin:0,fontSize:14,color:C.purple,fontStyle:"italic",lineHeight:1.6}}>"{viewRec.message}"</p></div>}
           <button onClick={()=>setViewRec(null)} style={{marginTop:12,fontSize:13,color:C.textMid,background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:20,padding:"5px 16px",cursor:"pointer"}}>‹ Voltar</button>
         </div>
-        <div style={{padding:"16px"}}>{(viewRec.moments||[]).slice().sort((a,b)=>a.ts-b.ts).map(m=><div key={m.id} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:28,height:28,borderRadius:"50%",background:typeBg(m.type),display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{typeIcons[m.type]||"🔗"}</span><span style={{fontSize:12,color:C.textLight}}>{fmt(m.ts)}</span></div>
-          {renderContent(m,true)}
-          {m.caption&&<p style={{margin:"8px 0 0",fontSize:12,color:C.textMid}}>{m.caption}</p>}
-        </div>)}</div>
+        {/* Received moments also as circles */}
+        <div style={{padding:"16px",display:"flex",flexWrap:"wrap",gap:12}}>
+          {(viewRec.moments||[]).slice().sort((a,b)=>a.ts-b.ts).map(m=><div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+            <MomentCircle m={m} onTap={()=>setExpandedMoment(m)} size={56}/>
+            <span style={{fontSize:10,color:C.textLight}}>{fmt(m.ts)}</span>
+          </div>)}
+        </div>
       </div>}
     </div>
 
-    {/* Share FAB */}
+    {/* FABs */}
     {view==="hoje"&&moments.length>0&&<div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 28px",background:`linear-gradient(to top,${dayColor.bg} 55%,transparent)`,pointerEvents:"none"}}>
       <button onClick={()=>setShowShare(true)} style={{width:"100%",padding:"15px 0",background:C.purple,color:"#fff",border:"none",borderRadius:18,fontWeight:700,fontSize:15,cursor:"pointer",pointerEvents:"auto",boxShadow:"0 6px 24px rgba(123,111,160,0.38)"}}>🌿 Compartilhar meu Dia de Veeda</button>
     </div>}
@@ -702,24 +984,60 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       <button onClick={()=>setShowModal(true)} style={{width:"100%",padding:"15px 0",background:C.purple,color:"#fff",border:"none",borderRadius:18,fontWeight:700,fontSize:15,cursor:"pointer",pointerEvents:"auto",boxShadow:"0 6px 24px rgba(123,111,160,0.38)"}}>+ Registrar primeiro momento</button>
     </div>}
 
-    {/* Modals */}
-    {showShare&&<ShareDayModal profile={profile} data={data} curDay={curDay} onClose={()=>setShowShare(false)} onShared={async log=>{await save({...data,sharedLog:log});}}/>}
-    {showEvents&&<EventsModal data={data} profile={profile} onSave={events=>save({...data,events})} onClose={()=>setShowEvents(false)}/>}
-    {showBackup&&<BackupModal data={data} profile={profile} onClose={()=>setShowBackup(false)}/>}
-    {showReminders&&<RemindersModal reminders={data.reminders||[]} onSave={list=>save({...data,reminders:list})} onClose={()=>setShowReminders(false)}/>}
-    {showInviteApp&&<InviteModal profile={profile} onClose={()=>setShowInviteApp(false)}/>}
+    {/* ── Modals ── */}
+    {showShare&&<ShareDayModal profile={profile} data={activeData} curDay={curDay} onClose={()=>setShowShare(false)} onShared={async log=>{await save({...data,sharedLog:log});}}/>}
+    {showEvents&&<EventsModal data={activeData} profile={profile} onSave={events=>save({...data,events})} onClose={()=>setShowEvents(false)}/>}
+    {showReminders&&<RemindersModal reminders={activeData.reminders||[]} onSave={list=>save({...data,reminders:list})} onClose={()=>setShowReminders(false)}/>}
+    {showInviteApp&&<InviteModal onClose={()=>setShowInviteApp(false)}/>}
+    {showSettings&&<SettingsModal profile={profile} data={activeData} password={password} onUpdateProfile={updateAv} onSave={save} onLogout={onLogout} onClose={()=>setShowSettings(false)}/>}
+    {showMusicPicker&&<MusicPicker onClose={()=>setShowMusicPicker(false)} onSelect={r=>{setShowMusicPicker(false);addMoment({type:"musica",content:r.title,trackTitle:r.title,trackArtist:r.artist,trackAlbum:r.album,albumArt:r.art,previewUrl:r.preview,appleMusicUrl:r.appleMusicUrl,caption:addCaption.trim(),tags:addTags});}}/>}
 
+    {/* ── ADD MOMENT MODAL ── */}
     {showModal&&<Modal title="Registrar acontecimento" onClose={resetModal}>
-      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>{[["texto","✏️","texto"],["foto","📷","foto"],["video","🎬","vídeo"],["link","🔗","link"],["musica","🎵","música"]].map(([t,icon,label])=><button key={t} onClick={()=>{setAddType(t);setAddMedia(null);setAddContent("");}} style={{padding:"6px 12px",fontSize:13,background:addType===t?typeBg(t):"#F5F3FB",border:`1.5px solid ${addType===t?typeColor(t):C.cardBorder}`,borderRadius:20,cursor:"pointer",color:addType===t?typeColor(t):C.textMid,fontWeight:addType===t?600:400}}>{icon} {label}</button>)}</div>
-      {addType==="foto"&&(!addMedia?<div style={{display:"flex",gap:8,marginBottom:10}}><input ref={photoRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/><input ref={galleryRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/><button onClick={()=>photoRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>📷 Câmera</button><button onClick={()=>galleryRef.current.click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>🖼️ Galeria</button></div>:<div style={{marginBottom:10,position:"relative"}}><img src={addMedia} alt="" style={{width:"100%",borderRadius:10}}/><button onClick={()=>setAddMedia(null)} style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.5)",border:"none",borderRadius:"50%",width:30,height:30,color:"#fff",cursor:"pointer",fontSize:15}}>×</button></div>)}
-      {addType==="video"&&(!addMedia?<div style={{display:"flex",gap:8,marginBottom:10}}><input ref={vidRef} type="file" accept="video/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/><input ref={fileRef} type="file" accept="video/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/><button onClick={()=>vidRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>🎥 Gravar</button><button onClick={()=>fileRef.current.click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>📁 Galeria</button></div>:<div style={{marginBottom:10,position:"relative"}}><video src={addMedia} controls style={{width:"100%",borderRadius:10,maxHeight:240}}/><button onClick={()=>setAddMedia(null)} style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.5)",border:"none",borderRadius:"50%",width:30,height:30,color:"#fff",cursor:"pointer",fontSize:15}}>×</button></div>)}
-      {(addType==="texto"||addType==="link"||addType==="musica")&&<textarea value={addContent} onChange={e=>setAddContent(e.target.value)} placeholder={addType==="link"?"Cole o link...":addType==="musica"?"Música e artista...":"O que aconteceu?"} style={{width:"100%",minHeight:88,marginBottom:10,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:16,boxSizing:"border-box"}}/>}
-      <input value={addCaption} onChange={e=>setAddCaption(e.target.value)} placeholder="Legenda (opcional)" style={{marginBottom:16}}/>
-      <Btn onClick={addMoment}>Adicionar momento</Btn>
+      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+        {[["texto","✏️","texto"],["foto","📷","foto"],["video","🎬","vídeo"],["link","🔗","link"],["musica","🎵","música"]].map(([t,icon,label])=>(
+          <button key={t} onClick={()=>{setAddType(t);setAddMedia(null);setAddContent("");}} style={{padding:"6px 12px",fontSize:13,background:addType===t?TYPE_COLORS[t==="musica"?"musica":t==="foto"?"foto":t==="video"?"video":t==="link"?"link":"texto"]?.bg||C.purpleLight:"#F5F3FB",border:`1.5px solid ${addType===t?TYPE_COLORS[t==="musica"?"musica":t==="foto"?"foto":t==="video"?"video":t==="link"?"link":"texto"]?.fill||C.purple:C.cardBorder}`,borderRadius:20,cursor:"pointer",color:addType===t?TYPE_COLORS[t==="musica"?"musica":t==="foto"?"foto":t==="video"?"video":t==="link"?"link":"texto"]?.fill||C.purple:C.textMid,fontWeight:addType===t?600:400}}>{icon} {label}</button>
+        ))}
+      </div>
+
+      {/* FOTO */}
+      {addType==="foto"&&(!addMedia
+        ?<div style={{display:"flex",gap:8,marginBottom:10}}>
+          <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/>
+          <input ref={galleryRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/>
+          <button onClick={()=>photoRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>📷 Câmera</button>
+          <button onClick={()=>galleryRef.current.click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>🖼️ Galeria</button>
+        </div>
+        :<div style={{marginBottom:10,position:"relative"}}><img src={addMedia} alt="" style={{width:"100%",borderRadius:10}}/><button onClick={()=>setAddMedia(null)} style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.5)",border:"none",borderRadius:"50%",width:30,height:30,color:"#fff",cursor:"pointer",fontSize:15}}>×</button></div>
+      )}
+
+      {/* VIDEO */}
+      {addType==="video"&&(!addMedia
+        ?<div style={{display:"flex",gap:8,marginBottom:10}}>
+          <input ref={vidRef} type="file" accept="video/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/>
+          <input type="file" accept="video/*" style={{display:"none"}} id="gvid" onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/>
+          <button onClick={()=>vidRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>🎥 Gravar</button>
+          <button onClick={()=>document.getElementById("gvid").click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>📁 Galeria</button>
+        </div>
+        :<div style={{marginBottom:10,position:"relative"}}><video src={addMedia} controls style={{width:"100%",borderRadius:10,maxHeight:240}}/><button onClick={()=>setAddMedia(null)} style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.5)",border:"none",borderRadius:"50%",width:30,height:30,color:"#fff",cursor:"pointer",fontSize:15}}>×</button></div>
+      )}
+
+      {/* MÚSICA */}
+      {addType==="musica"&&<div style={{marginBottom:10}}>
+        <button onClick={()=>setShowMusicPicker(true)} style={{width:"100%",padding:"12px 0",background:"#E6F9F2",color:C.green,border:`1px solid ${C.green}44`,borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:600}}>🎵 Buscar música...</button>
+        <p style={{fontSize:11,color:C.textLight,textAlign:"center",marginTop:6}}>Pesquisa via Apple Music. Preview de 30s incluído.</p>
+      </div>}
+
+      {/* TEXTO / LINK */}
+      {(addType==="texto"||addType==="link")&&<textarea value={addContent} onChange={e=>setAddContent(e.target.value)} placeholder={addType==="link"?"Cole o link (YouTube, Vimeo, ou URL)...":"O que aconteceu?"} style={{width:"100%",minHeight:88,marginBottom:10,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:16,boxSizing:"border-box"}}/>}
+
+      <input value={addCaption} onChange={e=>setAddCaption(e.target.value)} placeholder="Legenda (opcional)" style={{marginBottom:14}}/>
+      <div style={{marginBottom:16}}><TagPicker selectedTags={addTags} onChange={setAddTags} customTags={activeData.customTags||[]}/></div>
+      {addType!=="musica"&&<Btn onClick={()=>addMoment()}>Adicionar momento</Btn>}
     </Modal>}
 
-    {showEditDay&&<Modal title="Cor do dia" onClose={()=>setShowEditDay(false)}><div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>{DAY_COLORS.map(col=><button key={col.label} onClick={()=>{save({...data,dayColors:{...(data.dayColors||{}),[curDay]:col.label}});setShowEditDay(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",padding:8}}><div style={{width:48,height:48,borderRadius:"50%",background:col.bg,border:`3px solid ${col.dot}`,outline:dayColor.label===col.label?`3px solid ${C.purple}`:"none",outlineOffset:2,transition:"outline 0.15s"}}/><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{col.label}</span></button>)}</div></Modal>}
-    {showFeeling&&<Modal title="Como foi esse Dia de Veeda?" onClose={()=>setShowFeeling(false)}><div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>{FEELINGS.map(f=><button key={f.label} onClick={()=>{save({...data,dayFeelings:{...(data.dayFeelings||{}),[curDay]:f}});setShowFeeling(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:feeling&&feeling.label===f.label?C.purpleLight:"#F5F3FB",border:`2px solid ${feeling&&feeling.label===f.label?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",cursor:"pointer",minWidth:68,transition:"all 0.15s"}}><span style={{fontSize:28}}>{f.emoji}</span><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{f.label}</span></button>)}</div></Modal>}
+    {showEditDay&&<Modal title="Cor do dia" onClose={()=>setShowEditDay(false)}><div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>{DAY_COLORS.map(col=><button key={col.label} onClick={()=>{save({...data,dayColors:{...(data.dayColors||{}),[curDay]:col.label}});setShowEditDay(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",padding:8}}><div style={{width:48,height:48,borderRadius:"50%",background:col.bg,border:`3px solid ${col.dot}`,outline:dayColor.label===col.label?`3px solid ${C.purple}`:"none",outlineOffset:2}}/><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{col.label}</span></button>)}</div></Modal>}
+    {showFeeling&&<Modal title="Como foi esse Dia de Veeda?" onClose={()=>setShowFeeling(false)}><div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>{FEELINGS.map(f=><button key={f.label} onClick={()=>{save({...data,dayFeelings:{...(data.dayFeelings||{}),[curDay]:f}});setShowFeeling(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:feeling&&feeling.label===f.label?C.purpleLight:"#F5F3FB",border:`2px solid ${feeling&&feeling.label===f.label?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",cursor:"pointer",minWidth:68}}><span style={{fontSize:28}}>{f.emoji}</span><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{f.label}</span></button>)}</div></Modal>}
 
     {showAvatar&&<Modal title="Personalizar perfil" onClose={()=>setShowAvatar(false)}>
       <div style={{display:"flex",gap:8,marginBottom:14}}>
@@ -738,14 +1056,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     </Modal>}
 
     {showInvite&&<Modal title="Adicionar contato" onClose={()=>setShowInvite(false)}>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Adicione o ID de um contato para poder compartilhar seus Dias de Veeda com ele.</p>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome</label>
-      <input value={invName} onChange={e=>setInvName(e.target.value)} placeholder="Ex: Mamãe" style={{marginBottom:14}}/>
-      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>ID do contato no Veeda</label>
-      <div style={{display:"flex",gap:8,marginBottom:8}}>
-        <input value={invCode} onChange={e=>setInvCode(e.target.value)} placeholder="Ex: sol-lua-7" style={{flex:1,width:"auto"}}/>
-        <button onClick={()=>{const w=["sol","lua","rio","mar","flor","paz","luz","céu","vale","nuvem"];setInvCode(`${w[Math.floor(Math.random()*w.length)]}-${Math.floor(100+Math.random()*900)}`);}} style={{padding:"0 12px",background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:8,color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>gerar</button>
-      </div>
+      <input value={invName} onChange={e=>setInvName(e.target.value)} placeholder="Nome" style={{marginBottom:14}}/>
+      <div style={{display:"flex",gap:8,marginBottom:16}}><input value={invCode} onChange={e=>setInvCode(e.target.value)} placeholder="ID do contato" style={{flex:1,width:"auto"}}/><button onClick={()=>{const w=["sol","lua","rio","mar","flor","paz","luz","céu","vale","nuvem"];setInvCode(`${w[Math.floor(Math.random()*w.length)]}-${Math.floor(100+Math.random()*900)}`);}} style={{padding:"0 12px",background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:8,color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>gerar</button></div>
       <Btn onClick={()=>{if(!invName.trim()||!invCode.trim())return;save({...data,contacts:[...(data.contacts||[]),{name:invName.trim(),code:invCode.trim(),emoji:"🌿",addedAt:Date.now()}]});setInvName("");setInvCode("");setShowInvite(false);}}>Adicionar ao grupo</Btn>
     </Modal>}
 
@@ -756,24 +1068,14 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   </div>;
 }
 
-// ── ROOT ──
+// ─── ROOT ────────────────────────────────────
 function Veeda(){
-  const[screen,setScreen]=useState("loading");
-  const[profiles,setProfiles]=useState([]);
-  const[selProfile,setSelProfile]=useState(null);
-  const[activeProfile,setActiveProfile]=useState(null);
-  const[activePw,setActivePw]=useState(null);
-  const[forgotProfile,setForgotProfile]=useState(null);
-  const[showGuide,setShowGuide]=useState(false);
+  const [screen,setScreen]=useState("loading"),[ profiles,setProfiles]=useState([]),[ selProfile,setSelProfile]=useState(null),[ activeProfile,setActiveProfile]=useState(null),[ activePw,setActivePw]=useState(null),[ forgotProfile,setForgotProfile]=useState(null),[ showGuide,setShowGuide]=useState(false);
 
   useEffect(()=>{
-    const session=loadSession();
-    const ps=loadProfiles();
+    const session=loadSession(),ps=loadProfiles();
     setProfiles(ps);
-    if(session&&session.profileId&&session.pw){
-      const p=ps.find(x=>x.id===session.profileId);
-      if(p){setActiveProfile(p);setActivePw(session.pw);setScreen("app");return;}
-    }
+    if(session?.profileId&&session?.pw){const p=ps.find(x=>x.id===session.profileId);if(p){setActiveProfile(p);setActivePw(session.pw);setScreen("app");return;}}
     setScreen("splash");
   },[]);
 
@@ -781,25 +1083,14 @@ function Veeda(){
   const updateProfile=updated=>{const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);if(idx>=0){ps[idx]={...ps[idx],emoji:updated.emoji,avatarColor:updated.avatarColor,avatarSrc:updated.avatarSrc};saveProfiles(ps);setActiveProfile({...updated});}};
 
   if(screen==="loading")return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,fontSize:40}}>🌿</div>;
-
-  if(screen==="app"&&activeProfile&&activePw)return <VeedaApp profile={activeProfile} password={activePw} onLogout={()=>{clearSession();setActiveProfile(null);setActivePw(null);const ps=refresh();setScreen("splash");}} onUpdateProfile={updateProfile}/>;
-
+  if(screen==="app"&&activeProfile&&activePw)return <VeedaApp profile={activeProfile} password={activePw} onLogout={()=>{clearSession();setActiveProfile(null);setActivePw(null);setScreen("splash");}} onUpdateProfile={updateProfile}/>;
   if(screen==="forgot"&&forgotProfile)return <ScreenForgot profile={forgotProfile} onBack={()=>setScreen("password")} onSuccess={pw=>{const ps=loadProfiles(),p=ps.find(x=>x.id===forgotProfile.id);saveSession(p.id,pw);setActiveProfile(p);setActivePw(pw);setForgotProfile(null);setScreen("app");}}/>;
-
   if(screen==="password"&&selProfile)return <ScreenPassword profile={selProfile} onBack={()=>setScreen(profiles.length>0?"select":"splash")} onForgot={()=>{setForgotProfile(selProfile);setScreen("forgot");}} onSuccess={pw=>{saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");}}/>;
-
   if(screen==="create")return <ScreenCreate onBack={()=>setScreen("splash")} onDone={(profile,pw)=>{refresh();saveSession(profile.id,pw);setActiveProfile(profile);setActivePw(pw);setScreen("app");}}/>;
-
   if(screen==="select")return <ScreenSelect profiles={profiles} onSelect={p=>{setSelProfile(p);setScreen("password");}} onNew={()=>setScreen("create")} onBack={()=>setScreen("splash")}/>;
-
-  // splash
   return <>
     {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
-    <SplashScreen
-      onLogin={()=>setScreen(profiles.length>0?"select":"password")}
-      onCreate={()=>setScreen("create")}
-      onGuide={()=>setShowGuide(true)}
-    />
+    <SplashScreen onLogin={()=>setScreen(profiles.length>0?"select":"password")} onCreate={()=>setScreen("create")} onGuide={()=>setShowGuide(true)}/>
   </>;
 }
 
@@ -807,7 +1098,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
-    const sw=`const CACHE="veeda-v4",FILES=["./index.html"];self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES))));self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));self.addEventListener("fetch",e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));`;
+    const sw=`const CACHE="veeda-v6",FILES=["./index.html"];self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES))));self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));self.addEventListener("fetch",e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));`;
     navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:"application/javascript"}))).catch(()=>{});
   });
 }
