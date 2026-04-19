@@ -277,7 +277,7 @@ function PulsingDot({onClick,color}){
 }
 
 function Btn({onClick,children,style={},disabled=false,variant="primary"}){
-  const base={width:"100%",padding:"14px 0",border:"none",borderRadius:50,fontFamily:PASSO,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.1s"};
+  const base={width:"100%",padding:"14px 0",border:"none",borderRadius:50,fontFamily:PASSO,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.12s",WebkitTapHighlightColor:"transparent"};
   const vars={
     primary:{background:C.purple,color:C.white},
     outline:{background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},
@@ -286,9 +286,20 @@ function Btn({onClick,children,style={},disabled=false,variant="primary"}){
     danger:{background:C.red,color:C.white},
     green:{background:C.green,color:C.white},
   };
-  return <button onClick={disabled?undefined:onClick} disabled={disabled} style={{...base,...vars[variant],...style}}
+  const handleTouchEnd = e => {
+    e.currentTarget.style.transform = "scale(1)";
+    // Fire onClick immediately on touchEnd to avoid 300ms delay
+    if(!disabled && onClick){
+      e.preventDefault();
+      onClick(e);
+    }
+  };
+  return <button
+    onClick={disabled?undefined:onClick}
+    disabled={disabled}
+    style={{...base,...vars[variant],...style}}
     onTouchStart={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}}
-    onTouchEnd={e=>{e.currentTarget.style.transform="scale(1)";}}>
+    onTouchEnd={handleTouchEnd}>
     {children}
   </button>;
 }
@@ -823,11 +834,19 @@ function ScreenSelect({profiles,onSelect,onNew,onBack}){
   return <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
     <Btn onClick={onBack} variant="ghost" style={{width:"auto",marginBottom:16}}>‹ Voltar</Btn>
     <p style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4}}>Bem-vindo de volta</p>
-    <p style={{fontSize:14,color:C.textMid,marginBottom:24}}>Selecione seu perfil</p>
-    {profiles.map(p=><button key={p.id} onClick={()=>onSelect(p)} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"16px",marginBottom:10,display:"flex",alignItems:"center",gap:14,cursor:"pointer",textAlign:"left"}}>
-      <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/><div style={{flex:1}}><p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p><p style={{margin:0,fontSize:12,color:C.textLight}}>{p.handle||p.email||"perfil local"}</p></div><span style={{fontSize:22,color:C.textLight}}>›</span>
-    </button>)}
-    <Btn onClick={onNew} variant="outline" style={{marginTop:8}}>+ Novo perfil</Btn>
+    {profiles.length===0
+      ?<div style={{textAlign:"center",padding:"3rem 0"}}>
+          <p style={{fontSize:14,color:C.textMid,marginBottom:24,lineHeight:1.6}}>Nenhum perfil encontrado neste dispositivo.</p>
+          <Btn onClick={onNew}>Criar um perfil</Btn>
+        </div>
+      :<div>
+          <p style={{fontSize:14,color:C.textMid,marginBottom:24}}>Selecione seu perfil</p>
+          {profiles.map(p=><button key={p.id} onClick={()=>onSelect(p)} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"16px",marginBottom:10,display:"flex",alignItems:"center",gap:14,cursor:"pointer",textAlign:"left"}}>
+            <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/><div style={{flex:1}}><p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p><p style={{margin:0,fontSize:12,color:C.textLight}}>{p.handle||p.email||"perfil local"}</p></div><span style={{fontSize:22,color:C.textLight}}>›</span>
+          </button>)}
+          <Btn onClick={onNew} variant="outline" style={{marginTop:8}}>+ Novo perfil</Btn>
+        </div>
+    }
   </div>;
 }
 
@@ -1185,48 +1204,26 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   },[data]);
 
   const activeData=hydratedData||data;
-  const resetModal=useCallback(()=>{setAddContent("");setAddCaption("");setAddMedia(null);setAddTags([]);setShowModal(false);setShowMusicPicker(false);},[]);
-  const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
 
-  const clearInbox=notif=>{
-    const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
-    [`veeda_inbox_${myH}`,`veeda_inbox_${profile.id}`].forEach(k=>{
-      const inbox=JSON.parse(localStorage.getItem(k)||"[]");
-      localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===notif.date&&x.author===notif.author&&x.importedAt===notif.importedAt))));
-    });
-  };
-
-  const acceptNotif=async()=>{if(!pendingNotif)return;clearInbox(pendingNotif);await save({...data,received:[...(data.received||[]),pendingNotif]});setPendingNotif(null);setView("recebidos");setViewRec(pendingNotif);};
-  const dismissNotif=()=>{if(!pendingNotif)return;clearInbox(pendingNotif);setPendingNotif(null);};
-
-  const addMoment=useCallback((extra={})=>{
-    const isMedia=addType==="foto"||addType==="video";
-    if(isMedia&&!addMedia)return;
-    if(addType==="musica"&&!extra.trackTitle&&!addContent.trim())return;
-    if(!isMedia&&addType!=="musica"&&addType!=="arte"&&!addContent.trim())return;
-    let type=addType,content=isMedia?addMedia:addContent.trim();
-    if(type==="link"&&isVideoLink(content))type="videolink";
-    const id=Date.now();
-    const m={id,ts:id,type,content,caption:addCaption.trim(),tags:addTags,...extra};
-    save({...data,moments:{...data.moments,[todayStr()]:[...(data.moments[todayStr()]||[]),m]}});
-    resetModal();setLastId(id);
-  },[addType,addMedia,addContent,addCaption,addTags,data,save,resetModal]);
-
-  const delMoment=useCallback((day,id)=>save({...data,moments:{...data.moments,[day]:(data.moments[day]||[]).filter(m=>m.id!==id)}}),[data,save]);
-
-  const updateAv=useCallback(updated=>{const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);if(idx>=0){ps[idx]={...ps[idx],emoji:updated.emoji,avatarColor:updated.avatarColor,avatarSrc:updated.avatarSrc};saveProfiles(ps);onUpdateProfile(updated);}},[onUpdateProfile]);
-
-  if(!activeData)return <div style={{padding:32,textAlign:"center",fontSize:32,color:C.textMid}}>🌿</div>;
-
+  // ── ALL hooks must be called before any early return (React rules of hooks) ──
   const curDay=offsetDay(todayStr(),-dayOffset),isToday=dayOffset===0;
-  const moments=useMemo(()=>(activeData.moments[curDay]||[]).slice().sort((a,b)=>a.ts-b.ts),[activeData,curDay]);
-  const allDays=useMemo(()=>Object.keys(activeData.moments).filter(d=>(activeData.moments[d]||[]).length>0).sort((a,b)=>b.localeCompare(a)),[activeData]);
   const nowKey=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
-  const dayColor=DAY_COLORS.find(c=>c.label===(activeData.dayColors||{})[curDay])||DAY_COLORS[0];
-  const feeling=(activeData.dayFeelings||{})[curDay];
-  const group=activeData.groupName||"Meu Círculo";
-  const lastMId=moments.length>0?moments[moments.length-1].id:null;
-  const upcoming=useMemo(()=>(activeData.events||[]).filter(e=>e.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date)),[activeData]);
+
+  // Safe memos — guard against null activeData with fallbacks
+  const moments=useMemo(()=>{
+    if(!activeData)return [];
+    return ((activeData.moments||{})[curDay]||[]).slice().sort((a,b)=>a.ts-b.ts);
+  },[activeData,curDay]);
+
+  const allDays=useMemo(()=>{
+    if(!activeData)return [];
+    return Object.keys(activeData.moments||{}).filter(d=>((activeData.moments||{})[d]||[]).length>0).sort((a,b)=>b.localeCompare(a));
+  },[activeData]);
+
+  const upcoming=useMemo(()=>{
+    if(!activeData)return [];
+    return (activeData.events||[]).filter(e=>e.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date));
+  },[activeData]);
 
   const slots=useMemo(()=>{
     const byTime={};
@@ -1235,6 +1232,46 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     if(isToday)times.add(nowKey);
     return Array.from(times).sort().map(time=>({time,moments:byTime[time]||[],isNow:isToday&&time===nowKey}));
   },[moments,isToday,nowKey]);
+
+  const resetModal=useCallback(()=>{setAddContent("");setAddCaption("");setAddMedia(null);setAddTags([]);setShowModal(false);setShowMusicPicker(false);},[]);
+  const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
+
+  const clearInbox=useCallback(notif=>{
+    const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+    [`veeda_inbox_${myH}`,`veeda_inbox_${profile.id}`].forEach(k=>{
+      const inbox=JSON.parse(localStorage.getItem(k)||"[]");
+      localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===notif.date&&x.author===notif.author&&x.importedAt===notif.importedAt))));
+    });
+  },[profile]);
+
+  const acceptNotif=useCallback(async()=>{if(!pendingNotif||!data)return;clearInbox(pendingNotif);await save({...data,received:[...(data.received||[]),pendingNotif]});setPendingNotif(null);setView("recebidos");setViewRec(pendingNotif);},[pendingNotif,data,clearInbox,save]);
+  const dismissNotif=useCallback(()=>{if(!pendingNotif)return;clearInbox(pendingNotif);setPendingNotif(null);},[pendingNotif,clearInbox]);
+
+  const addMoment=useCallback((extra={})=>{
+    if(!data)return;
+    const isMedia=addType==="foto"||addType==="video";
+    if(isMedia&&!addMedia)return;
+    if(addType==="musica"&&!extra.trackTitle&&!addContent.trim())return;
+    if(!isMedia&&addType!=="musica"&&addType!=="arte"&&!addContent.trim())return;
+    let type=addType,content=isMedia?addMedia:addContent.trim();
+    if(type==="link"&&isVideoLink(content))type="videolink";
+    const id=Date.now();
+    const m={id,ts:id,type,content,caption:addCaption.trim(),tags:addTags,...extra};
+    save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});
+    resetModal();setLastId(id);
+  },[addType,addMedia,addContent,addCaption,addTags,data,save,resetModal]);
+
+  const delMoment=useCallback((day,id)=>{if(!data)return;save({...data,moments:{...(data.moments||{}),[day]:((data.moments||{})[day]||[]).filter(m=>m.id!==id)}});},[data,save]);
+
+  const updateAv=useCallback(updated=>{const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);if(idx>=0){ps[idx]={...ps[idx],emoji:updated.emoji,avatarColor:updated.avatarColor,avatarSrc:updated.avatarSrc};saveProfiles(ps);onUpdateProfile(updated);}},[onUpdateProfile]);
+
+  // NOW safe to return early — all hooks have been called above
+  if(!activeData)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontSize:40,color:C.textMid}}>🌿</div>;
+
+  const dayColor=DAY_COLORS.find(c=>c.label===(activeData.dayColors||{})[curDay])||DAY_COLORS[0];
+  const feeling=(activeData.dayFeelings||{})[curDay];
+  const group=activeData.groupName||"Meu Círculo";
+  const lastMId=moments.length>0?moments[moments.length-1].id:null;
 
   return <div style={{maxWidth:480,margin:"0 auto",background:`linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradientEnd} 99%)`,minHeight:"100vh",transition:"background 0.4s",fontFamily:SANS}}>
     {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
@@ -1499,7 +1536,7 @@ function Veeda(){
   if(screen==="select")return <ScreenSelect profiles={profiles} onSelect={p=>{setSelProfile(p);setScreen("password");}} onNew={()=>setScreen("create")} onBack={()=>setScreen("splash")}/>;
   return <>
     {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
-    <SplashScreen onLogin={()=>setScreen(profiles.length>0?"select":"password")} onCreate={()=>setScreen("create")} onGuide={()=>setShowGuide(true)}/>
+    <SplashScreen onLogin={()=>setScreen("select")} onCreate={()=>setScreen("create")} onGuide={()=>setShowGuide(true)}/>
   </>;
 }
 
