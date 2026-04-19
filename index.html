@@ -30,42 +30,37 @@ textarea{resize:vertical;font-size:16px;}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="text/babel">
-const {useState,useEffect,useRef,useCallback} = React;
+const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ─── CONSTANTS ───────────────────────────────
 const PROFILES_KEY = "veeda_profiles";
 const SESSION_KEY  = "veeda_session";
-const LOGO_KEY     = "veeda_logo";
 const GDRIVE_KEY   = "veeda_gdrive_token";
 const GOOGLE_CLIENT_ID = "377556817223-t88d5ejs7sopv5fftg96j0bq9gdpt18f.apps.googleusercontent.com";
 const GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const GDRIVE_FILE  = "veeda-backup.enc";
 
 const C = {
-  // ── Updated from Figma ──
   purple:"#9000FF",purpleLight:"#EDE9F6",purpleMid:"#BB7DEB",
-  purpleSoft:"#F9F1FF",   // very light purple for secondary btn label
+  purpleSoft:"#F9F1FF",
   blue:"#5B7FA6",blueLight:"#E6EEF8",blueMid:"#A8C0DA",
   amber:"#D4860A",amberLight:"#FFF3DC",
-  green:"#1D9E75",greenLight:"#EAFFF8",  // mint green background
-  red:"#C0392B",
-  cardBorder:"#CBC0D3",   // updated input border colour
-  bg:"#EAFFF8",           // mint green bg (from Figma)
-  bgGradientEnd:"#FEFEFC",
-  text:"#3A3350",textMid:"#715B81",textLight:"#ADA8C0",white:"#FFFFFF",
-  // accent colours kept for internal logic
-  purpleLogic:"#7B6FA0",
+  green:"#1D9E75",greenLight:"#EAFFF8",
+  red:"#C0392B",pink:"#E91E8C",pinkLight:"#FDE8F0",
+  cardBorder:"#CBC0D3",    // card/input borders
+  headerBorder:"#DDD8EE",  // header dividers (Figma)
+  bg:"#EAFFF8",bgGradientEnd:"#FEFEFC",
+  splashBg:"#22FCB7",      // splash screen bold mint (Figma)
+  text:"#3A3350",textMid:"#7A7090",textLight:"#ADA8C0",white:"#FFFFFF",
+  purpleLogic:"#7B6FA0",   // used for active tabs, badges (Figma)
 };
 
-// ── Font: Passo (Google Fonts via CDN) for display text ──
 const PASSO = "'Passo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const SANS  = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
-// ── inject Passo font ──
 if (!document.getElementById("passo-font")) {
   const lnk = document.createElement("link");
-  lnk.id = "passo-font";
-  lnk.rel = "stylesheet";
+  lnk.id = "passo-font"; lnk.rel = "stylesheet";
   lnk.href = "https://fonts.googleapis.com/css2?family=Passo:wght@400;600;700&display=swap";
   document.head.appendChild(lnk);
 }
@@ -99,10 +94,9 @@ const DEFAULT_TAGS = [
   {id:"amigos",emoji:"🤝",label:"Amigos",bg:"#EDE9F6",color:"#7B6FA0"},
 ];
 
-// Icon per type (SVG paths inside circle)
 const TYPE_ICONS = {
-  texto: "✏️", foto: "📷", video: "🎬", link: "🔗",
-  musica: "🎵", videolink: "🔗", evento: "📅",
+  texto:"✏️",foto:"📷",video:"🎬",link:"🔗",
+  musica:"🎵",videolink:"🔗",evento:"📅",arte:"🎨",
 };
 const TYPE_COLORS = {
   texto:{fill:C.purple,bg:C.purpleLight},
@@ -112,27 +106,56 @@ const TYPE_COLORS = {
   musica:{fill:"#1D9E75",bg:"#E6F9F2"},
   videolink:{fill:C.blue,bg:C.blueLight},
   evento:{fill:C.amber,bg:C.amberLight},
+  arte:{fill:C.pink,bg:C.pinkLight},
 };
 
-// ─── CRYPTO ──────────────────────────────────
-const strToKey = async (pw,salt) => {
+// ─── CRYPTO (with key caching for fast saves) ─
+const _keyCache = new Map();
+
+const _deriveKey = async (pw, salt) => {
   const km = await crypto.subtle.importKey("raw",new TextEncoder().encode(pw),"PBKDF2",false,["deriveKey"]);
   return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:150000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
 };
-const encryptObj = async (obj,pw) => {
-  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
-  const key=await strToKey(pw,salt);
-  const buf=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(obj)));
+
+// Cached key derivation — caches by stable profile salt key
+const getOrDeriveKey = async (pw, salt) => {
+  const cacheKey = pw + "|" + salt.slice(0,4).join("-");
+  if (_keyCache.has(cacheKey)) return _keyCache.get(cacheKey);
+  const key = await _deriveKey(pw, salt);
+  _keyCache.set(cacheKey, key);
+  return key;
+};
+
+// Returns {key, data} — key cached for fast subsequent saves
+const decryptObjFull = async (ct, pw) => {
+  const {salt,iv,data} = JSON.parse(atob(ct));
+  const saltArr = new Uint8Array(salt);
+  const key = await getOrDeriveKey(pw, saltArr);
+  const buf = await crypto.subtle.decrypt({name:"AES-GCM",iv:new Uint8Array(iv)},key,new Uint8Array(data));
+  return {key, salt: saltArr, data: JSON.parse(new TextDecoder().decode(buf))};
+};
+
+// Uses pre-cached key — no PBKDF2 on subsequent saves!
+const encryptFast = async (obj, key, salt) => {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const buf = await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(obj)));
   return btoa(JSON.stringify({salt:Array.from(salt),iv:Array.from(iv),data:Array.from(new Uint8Array(buf))}));
 };
-const decryptObj = async (ct,pw) => {
-  const {salt,iv,data}=JSON.parse(atob(ct));
-  const key=await strToKey(pw,new Uint8Array(salt));
-  const buf=await crypto.subtle.decrypt({name:"AES-GCM",iv:new Uint8Array(iv)},key,new Uint8Array(data));
-  return JSON.parse(new TextDecoder().decode(buf));
+
+// Full encrypt (first save for new account)
+const encryptObj = async (obj, pw) => {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await getOrDeriveKey(pw, salt);
+  return encryptFast(obj, key, salt);
 };
+
+const decryptObj = async (ct, pw) => {
+  const r = await decryptObjFull(ct, pw);
+  return r.data;
+};
+
 const hashPw = async pw => {
-  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode("veeda:"+pw));
+  const buf = await crypto.subtle.digest("SHA-256",new TextEncoder().encode("veeda:"+pw));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
 };
 const genCode = () => {
@@ -174,20 +197,33 @@ const gdriveDownload = async token => {
   return res.ok?res.text():null;
 };
 
+// ─── HANDLE HELPERS ──────────────────────────
+const sanitizeHandle = str =>
+  str.trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/[^a-z0-9_]/g,"")
+    .slice(0,20);
+
+const nameToHandle = name => "@" + sanitizeHandle(name);
+
+const isHandleAvailable = (handle, excludeId) => {
+  const h = handle.replace(/^@/,"");
+  return !loadProfiles().find(p => p.id !== excludeId && p.handle && p.handle.replace(/^@/,"") === h);
+};
+
+const findProfileByHandle = handle => {
+  const h = handle.replace(/^@/,"");
+  return loadProfiles().find(p => p.handle && p.handle.replace(/^@/,"") === h) || null;
+};
+
 // ─── MUSIC SEARCH ────────────────────────────
 const searchMusic = async query => {
-  // Use iTunes Search API (no key needed, CORS-friendly)
   const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&limit=8`);
-  const d   = await res.json();
+  const d = await res.json();
   return (d.results||[]).map(r=>({
-    id: r.trackId,
-    title: r.trackName,
-    artist: r.artistName,
-    album: r.collectionName,
-    art: r.artworkUrl100,
-    preview: r.previewUrl,  // 30-sec AAC preview
-    appleMusicUrl: r.trackViewUrl,
-    spotifyQuery: `${r.trackName} ${r.artistName}`,
+    id:r.trackId, title:r.trackName, artist:r.artistName, album:r.collectionName,
+    art:r.artworkUrl100, preview:r.previewUrl, appleMusicUrl:r.trackViewUrl,
+    spotifyQuery:`${r.trackName} ${r.artistName}`,
   }));
 };
 
@@ -205,13 +241,12 @@ const todayStr     = ()  => new Date().toISOString().slice(0,10);
 const offsetDay    = (d,n) => {const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
 const fmtLabel     = d   => {const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
 const fmtFull      = d   => {const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};
-const defaultData  = ()  => ({moments:{},received:[],contacts:[],groupName:"Família & Amigos",dayColors:{},dayFeelings:{},reminders:[],sharedLog:{},events:[],lastBackupPrompt:null,customTags:[],suggestions:[]});
+const defaultData  = ()  => ({moments:{},received:[],contacts:[],groupName:"Meu Círculo",dayColors:{},dayFeelings:{},reminders:[],sharedLog:{},events:[],lastBackupPrompt:null,customTags:[],suggestions:[]});
 const loadProfiles = ()  => {try{return JSON.parse(localStorage.getItem(PROFILES_KEY)||"[]");}catch{return[];}};
 const saveProfiles = ps  => localStorage.setItem(PROFILES_KEY,JSON.stringify(ps));
 const saveSession  = (id,pw) => sessionStorage.setItem(SESSION_KEY,JSON.stringify({profileId:id,pw}));
 const loadSession  = ()  => {try{return JSON.parse(sessionStorage.getItem(SESSION_KEY)||"null");}catch{return null;}};
 const clearSession = ()  => sessionStorage.removeItem(SESSION_KEY);
-const getLogo      = ()  => localStorage.getItem(LOGO_KEY)||null;
 
 // ─── SHARED UI ───────────────────────────────
 function AvatarBubble({src,emoji,color,size=38,ring=false}){
@@ -242,7 +277,7 @@ function PulsingDot({onClick,color}){
 }
 
 function Btn({onClick,children,style={},disabled=false,variant="primary"}){
-  const base={width:"100%",padding:"14px 0",border:"none",borderRadius:50,fontFamily:PASSO,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.1s,opacity 0.1s"};
+  const base={width:"100%",padding:"14px 0",border:"none",borderRadius:50,fontFamily:PASSO,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.6:1,transition:"transform 0.1s"};
   const vars={
     primary:{background:C.purple,color:C.white},
     outline:{background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},
@@ -251,35 +286,144 @@ function Btn({onClick,children,style={},disabled=false,variant="primary"}){
     danger:{background:C.red,color:C.white},
     green:{background:C.green,color:C.white},
   };
-  return <button onClick={onClick} disabled={disabled} style={{...base,...vars[variant],...style}}
-    onMouseDown={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}}
-    onMouseUp={e=>e.currentTarget.style.transform="scale(1)"}
+  return <button onClick={disabled?undefined:onClick} disabled={disabled} style={{...base,...vars[variant],...style}}
     onTouchStart={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}}
-    onTouchEnd={e=>e.currentTarget.style.transform="scale(1)"}>{children}</button>;
+    onTouchEnd={e=>{e.currentTarget.style.transform="scale(1)";}}>
+    {children}
+  </button>;
 }
 
 function Spinner(){return <div style={{width:18,height:18,border:`2.5px solid ${C.purpleLight}`,borderTop:`2.5px solid ${C.purple}`,borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block",verticalAlign:"middle",marginRight:6}}/>;}
 
 function CheckboxConfirm({checked,hasError,onChange,label}){
-  const [active,setActive]=useState(false);
-  const bc=checked?C.green:hasError?C.red:active?"#9B90C0":C.cardBorder;
-  return <label style={{display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer",marginBottom:20,padding:"14px 16px",background:checked?"#E8FBF0":active?"#F5F2FC":C.white,border:`2px solid ${bc}`,borderRadius:14,transition:"all 0.15s",userSelect:"none"}}
-    onMouseDown={()=>setActive(true)} onMouseUp={()=>{setActive(false);onChange(!checked);}} onMouseLeave={()=>setActive(false)}
-    onTouchStart={()=>setActive(true)} onTouchEnd={e=>{e.preventDefault();setActive(false);onChange(!checked);}}>
-    <div style={{width:22,height:22,borderRadius:7,border:`2.5px solid ${bc}`,background:checked?C.green:active?"#F0EDF8":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s",marginTop:1,transform:active?"scale(0.9)":"scale(1)"}}>
+  return <label style={{display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer",marginBottom:20,padding:"14px 16px",background:checked?"#E8FBF0":C.white,border:`2px solid ${checked?C.green:hasError?C.red:C.cardBorder}`,borderRadius:14,userSelect:"none"}}
+    onTouchEnd={e=>{e.preventDefault();onChange(!checked);}}>
+    <div style={{width:22,height:22,borderRadius:7,border:`2.5px solid ${checked?C.green:C.cardBorder}`,background:checked?C.green:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>
       {checked&&<svg width="13" height="10" viewBox="0 0 13 10" fill="none"><path d="M1 5L5 9L12 1" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
     </div>
-    <span style={{fontSize:14,color:checked?C.green:C.textMid,lineHeight:1.55,fontWeight:checked?500:400,transition:"color 0.15s"}}>{label}</span>
+    <span style={{fontSize:14,color:checked?C.green:C.textMid,lineHeight:1.55,fontWeight:checked?500:400}}>{label}</span>
   </label>;
 }
 
+// ─── DRAWING CANVAS ──────────────────────────
+function DrawingCanvas({onSave,onClose}){
+  const canvasRef = useRef(null);
+  const [color,setColor]   = useState('#3A3350');
+  const [brushSz,setBrushSz] = useState(5);
+  const [tool,setTool]     = useState('pen');
+  const drawing = useRef(false);
+  const lastPt  = useRef(null);
+  const CANVAS_W = 1000, CANVAS_H = 1000;
+
+  useEffect(()=>{
+    const c = canvasRef.current;
+    c.width  = CANVAS_W; c.height = CANVAS_H;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+  },[]);
+
+  const getPos = e => {
+    const c = canvasRef.current;
+    const rect = c.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return {
+      x:(src.clientX - rect.left)*(CANVAS_W/rect.width),
+      y:(src.clientY - rect.top)*(CANVAS_H/rect.height),
+    };
+  };
+
+  const onStart = e => {
+    e.preventDefault(); drawing.current = true;
+    const pt = getPos(e); lastPt.current = pt;
+    const ctx = canvasRef.current.getContext('2d');
+    const r = (tool==='eraser'?brushSz*3:brushSz)/2;
+    ctx.beginPath(); ctx.arc(pt.x,pt.y,r,0,Math.PI*2);
+    ctx.fillStyle = tool==='eraser'?'#ffffff':color; ctx.fill();
+  };
+
+  const onMove = e => {
+    if(!drawing.current) return; e.preventDefault();
+    const pt = getPos(e);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.beginPath(); ctx.moveTo(lastPt.current.x,lastPt.current.y); ctx.lineTo(pt.x,pt.y);
+    ctx.strokeStyle = tool==='eraser'?'#ffffff':color;
+    ctx.lineWidth   = tool==='eraser'?brushSz*3:brushSz;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+    lastPt.current = pt;
+  };
+
+  const onEnd = () => { drawing.current=false; lastPt.current=null; };
+
+  const clear = () => {
+    const c = canvasRef.current, ctx = c.getContext('2d');
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c.width,c.height);
+  };
+
+  const importImg = file => {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        const c = canvasRef.current, ctx = c.getContext('2d');
+        const scale = Math.min(c.width/img.width, c.height/img.height);
+        const w = img.width*scale, h = img.height*scale;
+        ctx.drawImage(img,(c.width-w)/2,(c.height-h)/2,w,h);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const COLORS = ['#000000','#3A3350','#9000FF','#5B7FA6','#1D9E75','#D4860A','#C0392B','#E91E8C','#FF9800','#607D8B','#ffffff','#FDF5F0'];
+  const SIZES  = [2,5,10,20];
+
+  return <div style={{position:'fixed',inset:0,background:'#1a1025',zIndex:400,display:'flex',flexDirection:'column',maxWidth:480,margin:'0 auto'}}>
+    {/* Top */}
+    <div style={{background:'#2a1d3d',padding:'8px 12px',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+      <button onClick={onClose} style={{background:'rgba(255,255,255,0.12)',border:'none',borderRadius:8,color:'#fff',padding:'7px 11px',cursor:'pointer',fontSize:13}}>✕</button>
+      <span style={{flex:1,color:'rgba(255,255,255,0.55)',fontSize:13,textAlign:'center',fontWeight:600}}>🎨 Arte Veeda</span>
+      <button onClick={()=>onSave(canvasRef.current.toDataURL('image/png'))} style={{background:C.purple,border:'none',borderRadius:8,color:'#fff',padding:'7px 14px',cursor:'pointer',fontSize:13,fontWeight:700}}>Salvar ✓</button>
+    </div>
+    {/* Canvas */}
+    <div style={{flex:1,overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',padding:8,background:'#13091e'}}>
+      <canvas ref={canvasRef}
+        style={{width:'100%',height:'100%',objectFit:'contain',touchAction:'none',borderRadius:10,display:'block',cursor:tool==='eraser'?'cell':'crosshair'}}
+        onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}
+        onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}/>
+    </div>
+    {/* Toolbar */}
+    <div style={{background:'#2a1d3d',padding:'10px 12px 20px',flexShrink:0}}>
+      {/* Colors */}
+      <div style={{display:'flex',gap:7,justifyContent:'center',flexWrap:'wrap',marginBottom:10}}>
+        {COLORS.map(c=>(
+          <button key={c} onClick={()=>{setTool('pen');setColor(c);}}
+            style={{width:26,height:26,borderRadius:'50%',background:c,border:`3px solid ${color===c&&tool==='pen'?'#fff':'rgba(255,255,255,0.15)'}`,cursor:'pointer',flexShrink:0}}/>
+        ))}
+      </div>
+      {/* Tools */}
+      <div style={{display:'flex',gap:6,justifyContent:'center',alignItems:'center',flexWrap:'wrap'}}>
+        <button onClick={()=>setTool('pen')} style={{padding:'5px 12px',background:tool==='pen'?C.purple:'rgba(255,255,255,0.1)',border:'none',borderRadius:8,color:'#fff',cursor:'pointer',fontSize:12,fontWeight:600}}>✏️ Pincel</button>
+        <button onClick={()=>setTool('eraser')} style={{padding:'5px 12px',background:tool==='eraser'?C.purpleMid:'rgba(255,255,255,0.1)',border:'none',borderRadius:8,color:'#fff',cursor:'pointer',fontSize:12,fontWeight:600}}>⬜ Borracha</button>
+        {SIZES.map(s=>(
+          <button key={s} onClick={()=>setBrushSz(s)} style={{width:30,height:30,display:'flex',alignItems:'center',justifyContent:'center',background:brushSz===s?'rgba(255,255,255,0.28)':'rgba(255,255,255,0.08)',border:`2px solid ${brushSz===s?'#fff':'transparent'}`,borderRadius:'50%',cursor:'pointer'}}>
+            <div style={{width:Math.max(4,s*0.7),height:Math.max(4,s*0.7),borderRadius:'50%',background:'#fff'}}/>
+          </button>
+        ))}
+        <label style={{padding:'5px 10px',background:'rgba(255,255,255,0.1)',borderRadius:8,color:'#fff',cursor:'pointer',fontSize:12}}>
+          🖼️ <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)importImg(f);}}/>
+        </label>
+        <button onClick={clear} style={{padding:'5px 10px',background:'rgba(255,255,255,0.1)',border:'none',borderRadius:8,color:'#fff',cursor:'pointer',fontSize:12}}>🗑️</button>
+      </div>
+    </div>
+  </div>;
+}
+
 // ─── MOMENT CIRCLE ───────────────────────────
-// Every moment on the timeline is ONLY a circle.
-// Tapping it opens a full detail modal.
 function MomentCircle({m,isNew,onTap,size=52}){
   const tc = TYPE_COLORS[m.type]||TYPE_COLORS.texto;
   const icon = TYPE_ICONS[m.type]||"✏️";
-  const isPhoto = m.type==="foto";
+  const isPhoto = m.type==="foto"||m.type==="arte";
   const isVideo = m.type==="video";
   return (
     <div onClick={onTap} style={{width:size,height:size,borderRadius:"50%",overflow:"hidden",cursor:"pointer",flexShrink:0,border:`2.5px solid ${isNew?C.purpleMid:C.white}`,boxShadow:`0 2px 8px rgba(0,0,0,0.12)`,animation:isNew?"momentPop 0.3s ease":"none",position:"relative",background:tc.bg}}>
@@ -289,7 +433,6 @@ function MomentCircle({m,isNew,onTap,size=52}){
           ?<video src={m.content} style={{width:"100%",height:"100%",objectFit:"cover"}} muted playsInline/>
           :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*0.42}}>{icon}</div>
       }
-      {/* Music has album art if available */}
       {m.type==="musica"&&m.albumArt&&<img src={m.albumArt} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>}
     </div>
   );
@@ -302,28 +445,29 @@ function MomentDetail({m,onClose,onDelete}){
   const embed=m.type==="videolink"?getVideoEmbed(m.content):null;
   const allTags=[...DEFAULT_TAGS,...(m.customTagDefs||[])];
 
-  const togglePlay=()=>{
-    if(!audioRef.current)return;
-    if(playing){audioRef.current.pause();}else{audioRef.current.play();}
-    setPlaying(p=>!p);
+  const saveToDevice = () => {
+    const a = document.createElement('a');
+    a.href = m.content;
+    const ext = m.type==='video'?'mp4':'png';
+    a.download = `veeda-${m.id}.${ext}`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
   };
 
+  const canSave = (m.type==='foto'||m.type==='arte'||m.type==='video') && m.content && !m.content.startsWith('IDB:');
+
   return <Modal title="" onClose={onClose}>
-    {/* Header */}
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
       <div style={{width:40,height:40,borderRadius:"50%",background:TYPE_COLORS[m.type]?.bg||C.purpleLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{TYPE_ICONS[m.type]||"✏️"}</div>
-      <div><p style={{margin:0,fontSize:13,color:C.textLight}}>{fmt(m.ts)}</p></div>
+      <p style={{margin:0,fontSize:13,color:C.textLight}}>{fmt(m.ts)}</p>
       <button onClick={onClose} style={{marginLeft:"auto",background:C.purpleLight,border:"none",borderRadius:"50%",width:28,height:28,color:C.purple,fontSize:16,cursor:"pointer"}}>×</button>
     </div>
 
-    {/* Content */}
-    {m.type==="foto"&&m.content&&<img src={m.content} alt="" style={{width:"100%",borderRadius:12,display:"block",marginBottom:12}}/>}
+    {(m.type==="foto"||m.type==="arte")&&m.content&&<img src={m.content} alt="" style={{width:"100%",borderRadius:12,display:"block",marginBottom:12}}/>}
     {m.type==="video"&&m.content&&<video src={m.content} controls style={{width:"100%",borderRadius:12,display:"block",maxHeight:320,marginBottom:12}}/>}
     {m.type==="videolink"&&embed&&<div style={{position:"relative",paddingBottom:"56.25%",height:0,borderRadius:12,overflow:"hidden",marginBottom:12}}><iframe src={embed} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}} allowFullScreen title="v"/></div>}
     {m.type==="link"&&<a href={m.content} target="_blank" rel="noopener noreferrer" style={{display:"block",color:C.blue,fontSize:14,wordBreak:"break-all",marginBottom:12,padding:"10px 14px",background:C.blueLight,borderRadius:10}}>{m.content}</a>}
     {m.type==="texto"&&<p style={{fontSize:15,color:C.text,lineHeight:1.7,marginBottom:12}}>{m.content}</p>}
 
-    {/* Music player */}
     {m.type==="musica"&&<div style={{background:"#E6F9F2",borderRadius:14,padding:"14px",marginBottom:12}}>
       <div style={{display:"flex",gap:12,alignItems:"center"}}>
         {m.albumArt&&<img src={m.albumArt} alt="" style={{width:56,height:56,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
@@ -335,7 +479,7 @@ function MomentDetail({m,onClose,onDelete}){
       </div>
       {m.previewUrl&&<div style={{marginTop:10}}>
         <audio ref={audioRef} src={m.previewUrl} onEnded={()=>setPlaying(false)}/>
-        <button onClick={togglePlay} style={{width:"100%",padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:14,cursor:"pointer"}}>
+        <button onClick={()=>{if(!audioRef.current)return;playing?audioRef.current.pause():audioRef.current.play();setPlaying(p=>!p);}} style={{width:"100%",padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:14,cursor:"pointer"}}>
           {playing?"⏸ Pausar prévia":"▶ Ouvir prévia (30s)"}
         </button>
       </div>}
@@ -344,10 +488,14 @@ function MomentDetail({m,onClose,onDelete}){
 
     {m.caption&&<p style={{fontSize:13,color:C.textMid,marginBottom:12,fontStyle:"italic"}}>"{m.caption}"</p>}
 
-    {/* Tags */}
     {m.tags&&m.tags.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
       {m.tags.map(tagId=>{const t=allTags.find(x=>x.id===tagId);return t?<span key={tagId} style={{padding:"3px 10px",background:t.bg,color:t.color,borderRadius:20,fontSize:12,fontWeight:500}}>{t.emoji} {t.label}</span>:null;})}
     </div>}
+
+    {/* Save to device */}
+    {canSave&&<Btn onClick={saveToDevice} variant="outline" style={{marginBottom:8,fontSize:13,padding:"10px 0"}}>
+      ↓ Salvar no dispositivo
+    </Btn>}
 
     <Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>
   </Modal>;
@@ -358,39 +506,28 @@ function MusicPicker({onSelect,onClose}){
   const [query,setQuery]     = useState("");
   const [results,setResults] = useState([]);
   const [loading,setLoading] = useState(false);
-  const [service,setService] = useState("itunes"); // itunes | spotify | youtube
+  const [service,setService] = useState("itunes");
   const [err,setErr]         = useState("");
 
   const doSearch = async () => {
     if(!query.trim())return;
     setLoading(true);setErr("");setResults([]);
-    try{
-      const res = await searchMusic(query);
-      if(res.length===0)setErr("Nenhum resultado. Tente outro nome.");
-      setResults(res);
-    }catch{setErr("Erro ao buscar. Verifique sua conexão.");}
+    try{const res=await searchMusic(query);if(!res.length)setErr("Nenhum resultado.");setResults(res);}
+    catch{setErr("Erro ao buscar.");}
     setLoading(false);
   };
 
-  const openExternal = (r) => {
-    if(service==="spotify"){window.open(`https://open.spotify.com/search/${encodeURIComponent(r.spotifyQuery)}`);}
-    else if(service==="youtube"){window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(r.spotifyQuery)}`);}
-  };
-
   return <Modal title="Buscar música" onClose={onClose}>
-    {/* Service selector */}
     <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
       {[["itunes","🎵 Apple Music"],["spotify","💚 Spotify"],["youtube","🔴 YouTube"]].map(([s,l])=>(
         <button key={s} onClick={()=>setService(s)} style={{padding:"5px 12px",background:service===s?C.purpleLight:C.white,border:`1.5px solid ${service===s?C.purple:C.cardBorder}`,borderRadius:20,fontSize:12,fontWeight:service===s?600:400,color:service===s?C.purple:C.textMid,cursor:"pointer"}}>{l}</button>
       ))}
     </div>
-    {/* Search */}
     <div style={{display:"flex",gap:8,marginBottom:14}}>
-      <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doSearch()} placeholder="Nome da música ou artista..." style={{flex:1}}/>
+      <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doSearch()} placeholder="Música ou artista..." style={{flex:1}}/>
       <button onClick={doSearch} disabled={loading} style={{padding:"0 16px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600,flexShrink:0}}>{loading?<Spinner/>:"Buscar"}</button>
     </div>
     {err&&<p style={{fontSize:13,color:C.red,marginBottom:10}}>{err}</p>}
-    {/* Results */}
     <div style={{maxHeight:320,overflowY:"auto"}}>
       {results.map(r=>(
         <div key={r.id} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.cardBorder}`,alignItems:"center"}}>
@@ -401,12 +538,11 @@ function MusicPicker({onSelect,onClose}){
           </div>
           {service==="itunes"
             ?<button onClick={()=>onSelect(r)} style={{padding:"6px 12px",background:C.green,color:"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>Adicionar</button>
-            :<button onClick={()=>openExternal(r)} style={{padding:"6px 12px",background:C.purpleLight,color:C.purple,border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>Abrir →</button>
+            :<button onClick={()=>window.open(service==="spotify"?`https://open.spotify.com/search/${encodeURIComponent(r.spotifyQuery)}`:`https://www.youtube.com/results?search_query=${encodeURIComponent(r.spotifyQuery)}`)} style={{padding:"6px 12px",background:C.purpleLight,color:C.purple,border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>Abrir →</button>
           }
         </div>
       ))}
     </div>
-    {service!=="itunes"&&results.length>0&&<p style={{fontSize:12,color:C.textLight,marginTop:10,textAlign:"center"}}>Abra a música no {service==="spotify"?"Spotify":"YouTube"} e cole o link na timeline.</p>}
   </Modal>;
 }
 
@@ -415,27 +551,26 @@ function TagPicker({selectedTags,onChange,customTags}){
   const [newTag,setNewTag]=useState(""),[ adding,setAdding]=useState(false);
   const allTags=[...DEFAULT_TAGS,...(customTags||[])];
   const toggle=id=>onChange(selectedTags.includes(id)?selectedTags.filter(x=>x!==id):[...selectedTags,id]);
-  const addCustom=()=>{if(!newTag.trim())return;const id="c_"+Date.now();onChange([...selectedTags,id]);setNewTag("");setAdding(false);};
   return <div>
     <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:8}}>🏷️ Tags <span style={{fontWeight:400,color:C.textLight}}>(opcional)</span></label>
     <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
-      {allTags.map(t=>{const sel=selectedTags.includes(t.id);return <button key={t.id} onClick={()=>toggle(t.id)} style={{padding:"5px 12px",background:sel?t.bg:C.white,border:`1.5px solid ${sel?t.color:C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:13,fontWeight:sel?600:400,color:sel?t.color:C.textMid,transition:"all 0.15s"}}>{t.emoji} {t.label}</button>;})}
+      {allTags.map(t=>{const sel=selectedTags.includes(t.id);return <button key={t.id} onClick={()=>toggle(t.id)} style={{padding:"5px 12px",background:sel?t.bg:C.white,border:`1.5px solid ${sel?t.color:C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:13,fontWeight:sel?600:400,color:sel?t.color:C.textMid}}>{t.emoji} {t.label}</button>;})}
       <button onClick={()=>setAdding(a=>!a)} style={{padding:"5px 12px",background:"none",border:`1.5px dashed ${C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:13,color:C.textLight}}>+ Nova tag</button>
     </div>
     {adding&&<div style={{display:"flex",gap:8}}>
-      <input value={newTag} onChange={e=>setNewTag(e.target.value)} placeholder="Nome da tag" onKeyDown={e=>e.key==="Enter"&&addCustom()} style={{flex:1}}/>
-      <button onClick={addCustom} style={{padding:"0 14px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>OK</button>
+      <input value={newTag} onChange={e=>setNewTag(e.target.value)} placeholder="Nome da tag" onKeyDown={e=>e.key==="Enter"&&(()=>{if(!newTag.trim())return;const id="c_"+Date.now();onChange([...selectedTags,id]);setNewTag("");setAdding(false);})()}  style={{flex:1}}/>
+      <button onClick={()=>{if(!newTag.trim())return;const id="c_"+Date.now();onChange([...selectedTags,id]);setNewTag("");setAdding(false);}} style={{padding:"0 14px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>OK</button>
     </div>}
   </div>;
 }
 
 // ─── RECEIVED NOTIF ──────────────────────────
 function ReceivedNotif({notif,onOpen,onDismiss}){
-  return <div style={{position:"fixed",top:16,left:"50%",width:"calc(100% - 32px)",maxWidth:440,zIndex:500,animation:"notifDrop 0.4s cubic-bezier(.22,1,.36,1)"}}>
+  return <div style={{position:"fixed",top:16,left:"50%",width:"calc(100% - 32px)",maxWidth:440,zIndex:500,animation:"notifDrop 0.4s cubic-bezier(.22,1,.36,1)",transform:"translateX(-50%)"}}>
     <div style={{background:C.white,borderRadius:18,overflow:"hidden",boxShadow:"0 12px 40px rgba(60,40,120,0.22)"}}>
       <div style={{background:`linear-gradient(135deg,${C.purple},${C.blue})`,padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
         <AvatarBubble src={notif.avatarSrc} emoji={notif.emoji} color={notif.avatarColor||C.purpleLight} size={46} ring/>
-        <div style={{flex:1}}><p style={{margin:0,fontSize:12,color:"rgba(255,255,255,0.75)"}}>✨ Novo Dia de Veeda</p><p style={{margin:"2px 0 0",fontSize:15,fontWeight:600,color:"#fff"}}><strong>{notif.author}</strong> compartilhou o dia com você</p></div>
+        <div style={{flex:1}}><p style={{margin:0,fontSize:12,color:"rgba(255,255,255,0.75)"}}>✨ Novo Dia de Veeda</p><p style={{margin:"2px 0 0",fontSize:15,fontWeight:600,color:"#fff"}}><strong>{notif.author}</strong> compartilhou o dia</p></div>
         <button onClick={onDismiss} style={{background:"rgba(255,255,255,0.18)",border:"none",borderRadius:"50%",width:28,height:28,color:"#fff",fontSize:16,cursor:"pointer"}}>×</button>
       </div>
       {notif.message&&<div style={{padding:"12px 16px",background:"#FAF8FF"}}><p style={{margin:0,fontSize:14,color:C.textMid,fontStyle:"italic",lineHeight:1.6}}>"{notif.message}"</p></div>}
@@ -454,7 +589,6 @@ function InstallGuide({onClose}){
   return <Modal title="Instalar o Veeda no celular" onClose={onClose}>
     <div style={{display:"flex",gap:8,marginBottom:20}}>{[["ios","iPhone"],["android","Android"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"10px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:14}}>{l}</button>)}</div>
     {steps[tab].map(([t,d],i)=><div key={i} style={{display:"flex",gap:14,marginBottom:18}}><div style={{width:30,height:30,borderRadius:"50%",background:C.purple,color:C.white,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:600,flexShrink:0}}>{i+1}</div><div><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{t}</p><p style={{margin:"3px 0 0",fontSize:13,color:C.textMid,lineHeight:1.5}}>{d}</p></div></div>)}
-    <div style={{background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:12,padding:"12px 16px"}}><p style={{fontSize:13,color:C.purple,margin:0}}>🌿 Depois de instalado, o Veeda funciona mesmo sem internet.</p></div>
   </Modal>;
 }
 
@@ -478,13 +612,23 @@ function ShareDayModal({profile,data,curDay,onClose,onShared}){
   const contacts=data.contacts||[],moments=data.moments[curDay]||[],already=(data.sharedLog||{})[curDay]||[];
   const available=contacts.filter(c=>!already.includes(c.code));
   const toggle=code=>setSel(p=>p.includes(code)?p.filter(x=>x!==code):[...p,code]);
-  const doShare=async()=>{if(!sel.length)return;setLoading(true);const payload={date:curDay,author:profile.name,emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling:(data.dayFeelings||{})[curDay],message:msg.trim(),importedAt:Date.now()};sel.forEach(code=>{const k=`veeda_inbox_${code}`,ex=JSON.parse(localStorage.getItem(k)||"[]");ex.push(payload);localStorage.setItem(k,JSON.stringify(ex));});await onShared({...(data.sharedLog||{}),[curDay]:[...already,...sel]});setDone(true);setLoading(false);};
+  const doShare=async()=>{if(!sel.length)return;setLoading(true);
+    const payload={date:curDay,author:profile.name,handle:profile.handle||nameToHandle(profile.name),emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling:(data.dayFeelings||{})[curDay],message:msg.trim(),importedAt:Date.now()};
+    sel.forEach(contactHandle=>{
+      const k=`veeda_inbox_${contactHandle.replace(/^@/,"")}`;
+      const ex=JSON.parse(localStorage.getItem(k)||"[]");
+      ex.push(payload);
+      localStorage.setItem(k,JSON.stringify(ex));
+    });
+    await onShared({...(data.sharedLog||{}),[curDay]:[...already,...sel]});
+    setDone(true);setLoading(false);
+  };
   if(done)return <Modal title="" onClose={onClose}><div style={{textAlign:"center",padding:"16px 0 8px"}}><div style={{fontSize:52,marginBottom:14}}>🌿</div><p style={{fontSize:18,fontWeight:600,color:C.text,marginBottom:8}}>Dia compartilhado!</p><p style={{fontSize:14,color:C.textMid,marginBottom:24,lineHeight:1.6}}>Seus contatos receberão uma notificação.</p><Btn onClick={onClose}>Fechar</Btn></div></Modal>;
   return <Modal title="Compartilhar meu Dia de Veeda" onClose={onClose}>
     {moments.length===0?<p style={{fontSize:14,color:C.textMid,textAlign:"center",padding:"20px 0"}}>Nenhum momento registrado hoje.</p>:<div>
       <p style={{fontSize:13,color:C.textMid,marginBottom:14}}>{moments.length} momento{moments.length!==1?"s":""} · {fmtFull(curDay)}</p>
-      {available.length===0&&<div style={{background:"#FFF8E1",border:"1px solid #FFD54F",borderRadius:12,padding:"12px 14px",marginBottom:16}}><p style={{fontSize:13,color:"#7A5800",margin:0}}>Você já compartilhou este dia com todos os seus contatos.</p></div>}
-      {available.map(c=><button key={c.code} onClick={()=>toggle(c.code)} style={{width:"100%",background:sel.includes(c.code)?C.purpleLight:C.white,border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left",transition:"border-color 0.15s"}}>
+      {available.length===0&&<div style={{background:"#FFF8E1",border:"1px solid #FFD54F",borderRadius:12,padding:"12px 14px",marginBottom:16}}><p style={{fontSize:13,color:"#7A5800",margin:0}}>Você já compartilhou este dia com todos os contatos.</p></div>}
+      {available.map(c=><button key={c.code} onClick={()=>toggle(c.code)} style={{width:"100%",background:sel.includes(c.code)?C.purpleLight:C.white,border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left"}}>
         <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={38}/><span style={{fontSize:14,fontWeight:500,color:C.text,flex:1}}>{c.name}</span>
         <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,background:sel.includes(c.code)?C.purple:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#fff"}}>{sel.includes(c.code)?"✓":""}</div>
       </button>)}
@@ -509,11 +653,9 @@ function EventsModal({data,profile,onSave,onClose}){
 // ─── REMINDERS MODAL ─────────────────────────
 function RemindersModal({reminders,onSave,onClose}){
   const [list,setList]=useState(reminders||[]),[ newTime,setNewTime]=useState("20:00");
-  const req=()=>{if("Notification" in window&&Notification.permission==="default")Notification.requestPermission();};
   return <Modal title="Lembretes do Veeda" onClose={onClose}>
     <div style={{display:"flex",gap:8,marginBottom:16}}><input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{flex:1}}/><button onClick={()=>{if(!list.includes(newTime))setList(p=>[...p,newTime].sort());}} style={{padding:"0 16px",background:C.purple,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>+ Adicionar</button></div>
     {list.length===0?<p style={{fontSize:13,color:C.textLight,textAlign:"center",padding:"12px 0"}}>Nenhum lembrete.</p>:<div style={{marginBottom:16}}>{list.map(t=><div key={t} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.purpleLight,borderRadius:10,padding:"10px 14px",marginBottom:8}}><span style={{fontSize:16,fontWeight:600,color:C.purple}}>{t}</span><button onClick={()=>setList(p=>p.filter(x=>x!==t))} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:13}}>remover</button></div>)}</div>}
-    <div style={{background:"#FFF8E1",border:"1px solid #FFD54F",borderRadius:12,padding:"10px 14px",marginBottom:16}}><p style={{fontSize:12,color:"#7A5800",margin:0}}>Permita notificações do Veeda. <button onClick={req} style={{background:"none",border:"none",color:C.amber,cursor:"pointer",fontWeight:600,fontSize:12,padding:0}}>Permitir</button></p></div>
     <Btn onClick={()=>{onSave(list);onClose();}}>Salvar lembretes</Btn>
   </Modal>;
 }
@@ -524,17 +666,16 @@ function BackupModal({data,profile,password,onClose}){
   const fileRef=useRef();
   const connectDrive=async()=>{setStatus("connecting");setMsg("");try{const token=await gdriveAuth();setDriveToken(token);setStatus("idle");}catch(e){setStatus("error");setMsg(e.message);}};
   const uploadDrive=async()=>{setStatus("uploading");setMsg("");try{await gdriveUpload(await encryptObj(data,password),driveToken);setStatus("done");setMsg("Backup salvo no Google Drive!");}catch(e){setStatus("error");setMsg("Erro: "+e.message);}};
-  const downloadDrive=async()=>{setStatus("downloading");setMsg("");try{const enc=await gdriveDownload(driveToken);if(!enc){setStatus("error");setMsg("Nenhum backup encontrado.");return;}await decryptObj(enc,password);setStatus("done");setMsg("Backup verificado! Restauração disponível.");}catch(e){setStatus("error");setMsg("Erro: "+e.message);}};
   const exportLocal=()=>encryptObj(data,password).then(enc=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([enc],{type:"text/plain"}));a.download=`veeda-backup-${todayStr()}.veeda`;a.click();setMsg("Arquivo baixado!");});
-  const importLocal=file=>{const r=new FileReader();r.onload=async e=>{try{await decryptObj(e.target.result,password);setMsg("Backup importado com sucesso!");}catch{setStatus("error");setMsg("Arquivo inválido ou senha incorreta.");}};r.readAsText(file);};
-  const busy=status==="connecting"||status==="uploading"||status==="downloading";
+  const importLocal=file=>{const r=new FileReader();r.onload=async e=>{try{await decryptObj(e.target.result,password);setMsg("Backup verificado!");}catch{setStatus("error");setMsg("Arquivo inválido ou senha incorreta.");}};r.readAsText(file);};
+  const busy=status==="connecting"||status==="uploading";
   const totalDays=Object.keys(data.moments||{}).filter(d=>(data.moments[d]||[]).length>0).length;
   const totalMoments=Object.values(data.moments||{}).reduce((s,m)=>s+(m||[]).length,0);
   return <Modal title="Backup dos Dias de Veeda" onClose={onClose}>
     <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,borderRadius:14,padding:"16px",textAlign:"center",marginBottom:20}}><p style={{margin:0,fontSize:28}}>🌿</p><p style={{margin:"6px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{totalDays} Dias de Veeda · {totalMoments} momentos</p></div>
     <p style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:10}}>☁️ Google Drive</p>
     {!driveToken&&<Btn onClick={connectDrive} disabled={busy} style={{marginBottom:10}}>{status==="connecting"?<><Spinner/>Conectando...</>:"Conectar Google Drive"}</Btn>}
-    {driveToken&&<div style={{display:"flex",gap:8,marginBottom:10}}><Btn onClick={uploadDrive} disabled={busy} style={{flex:1,fontSize:13,padding:"11px 0"}}>{status==="uploading"?<><Spinner/>Salvando...</>:"↑ Salvar"}</Btn><Btn onClick={downloadDrive} disabled={busy} variant="outline" style={{flex:1,fontSize:13,padding:"11px 0"}}>{status==="downloading"?<><Spinner/>Verificando...</>:"↓ Verificar"}</Btn><button onClick={()=>{gdriveClear();setDriveToken(null);}} style={{padding:"0 10px",background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:10,color:C.textLight,cursor:"pointer",fontSize:12}}>Sair</button></div>}
+    {driveToken&&<div style={{display:"flex",gap:8,marginBottom:10}}><Btn onClick={uploadDrive} disabled={busy} style={{flex:1,fontSize:13,padding:"11px 0"}}>{status==="uploading"?<><Spinner/>Salvando...</>:"↑ Salvar"}</Btn><button onClick={()=>{gdriveClear();setDriveToken(null);}} style={{padding:"0 10px",background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:10,color:C.textLight,cursor:"pointer",fontSize:12}}>Sair</button></div>}
     <div style={{height:1,background:C.cardBorder,margin:"16px 0"}}/>
     <p style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:10}}>📁 Arquivo local</p>
     <div style={{display:"flex",gap:8,marginBottom:8}}><Btn onClick={exportLocal} style={{flex:1,fontSize:13,padding:"11px 0"}}>↓ Exportar .veeda</Btn><Btn onClick={()=>fileRef.current.click()} variant="outline" style={{flex:1,fontSize:13,padding:"11px 0"}}>↑ Importar .veeda</Btn></div>
@@ -554,7 +695,7 @@ function PhilosophyScreen({onClose}){
       </div>
     </div>
     <div style={{paddingTop:20}}>
-      {[["O que é Veeda?","Veeda nasce da crença de que a vida não cabe em um feed de notícias. Cada dia é único, e merece ser vivido antes de ser compartilhado."],["Viva primeiro, compartilhe depois","Registre os momentos do seu dia enquanto eles acontecem. Ao final, quando você quiser, compartilhe sua linha do tempo com quem ama. O foco é na experiência, não na audiência."],["Privacidade como princípio","Seus dados ficam no seu dispositivo. O Veeda não tem servidor próprio. Ninguém — além de você e de quem você escolher — acessa seus Dias de Veeda."],["Tags e memórias","Use tags para agrupar momentos por experiência. Uma viagem, um show, um encontro especial. Seus Dias de Veeda ganham camadas de significado."],["Para quem é o Veeda?","Para quem quer estar presente no próprio dia. Para famílias que querem se conectar de forma genuína. Para amigos que preferem profundidade a superficialidade."]].map(([title,body],i,arr)=><div key={title} style={{marginBottom:i<arr.length-1?16:0}}><p style={{margin:"0 0 4px",fontSize:14,fontWeight:600,color:C.text}}>{title}</p><p style={{margin:0,fontSize:13,color:C.textMid,lineHeight:1.65}}>{body}</p>{i<arr.length-1&&<div style={{height:1,background:C.cardBorder,marginTop:16}}/>}</div>)}
+      {[["O que é Veeda?","Veeda nasce da crença de que a vida não cabe em um feed de notícias. Cada dia é único, e merece ser vivido antes de ser compartilhado."],["Viva primeiro, compartilhe depois","Registre os momentos do seu dia enquanto eles acontecem. Ao final, quando você quiser, compartilhe sua linha do tempo com quem ama."],["Privacidade como princípio","Seus dados ficam no seu dispositivo. O Veeda não tem servidor próprio. Ninguém — além de você e de quem você escolher — acessa seus Dias de Veeda."],["Para quem é o Veeda?","Para quem quer estar presente no próprio dia. Para famílias que querem se conectar de forma genuína. Para amigos que preferem profundidade a superficialidade."]].map(([title,body],i,arr)=><div key={title} style={{marginBottom:i<arr.length-1?16:0}}><p style={{margin:"0 0 4px",fontSize:14,fontWeight:600,color:C.text}}>{title}</p><p style={{margin:0,fontSize:13,color:C.textMid,lineHeight:1.65}}>{body}</p>{i<arr.length-1&&<div style={{height:1,background:C.cardBorder,marginTop:16}}/>}</div>)}
     </div>
   </Modal>;
 }
@@ -564,35 +705,89 @@ function SuggestionsModal({data,onSave,onClose}){
   const [type,setType]=useState("feature"),[ text,setText]=useState(""),[ name,setName]=useState(""),[ sent,setSent]=useState(false);
   const types=[{id:"feature",label:"✨ Nova funcionalidade",col:C.purple,bg:C.purpleLight},{id:"bug",label:"🐛 Problema",col:C.red,bg:"#FDE8E8"},{id:"design",label:"🎨 Design",col:C.blue,bg:C.blueLight},{id:"other",label:"💬 Outro",col:C.textMid,bg:C.cardBorder}];
   const send=()=>{if(!text.trim())return;onSave([...(data.suggestions||[]),{id:Date.now(),type,text:text.trim(),name:name.trim(),date:todayStr()}]);setSent(true);};
-  if(sent)return <Modal title="" onClose={onClose}><div style={{textAlign:"center",padding:"16px 0"}}><div style={{fontSize:48,marginBottom:12}}>💡</div><p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>Sugestão enviada!</p><p style={{fontSize:14,color:C.textMid,marginBottom:24,lineHeight:1.6}}>Obrigado por contribuir com o Veeda.</p><Btn onClick={onClose}>Fechar</Btn></div></Modal>;
+  if(sent)return <Modal title="" onClose={onClose}><div style={{textAlign:"center",padding:"16px 0"}}><div style={{fontSize:48,marginBottom:12}}>💡</div><p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>Sugestão enviada!</p><Btn onClick={onClose}>Fechar</Btn></div></Modal>;
   return <Modal title="Enviar sugestão" onClose={onClose}>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>{types.map(t=><button key={t.id} onClick={()=>setType(t.id)} style={{padding:"10px 8px",background:type===t.id?t.bg:C.white,border:`1.5px solid ${type===t.id?t.col:C.cardBorder}`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:type===t.id?600:400,color:type===t.id?t.col:C.textMid,textAlign:"left"}}>{t.label}</button>)}</div>
-    <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Descreva sua ideia ou problema..." style={{width:"100%",minHeight:100,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:14,color:C.text,boxSizing:"border-box",marginBottom:14}}/>
+    <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Descreva sua ideia..." style={{width:"100%",minHeight:100,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:14,color:C.text,boxSizing:"border-box",marginBottom:14}}/>
     <input value={name} onChange={e=>setName(e.target.value)} placeholder="Seu nome (opcional)" style={{marginBottom:20}}/>
     <Btn onClick={send} disabled={!text.trim()}>Enviar sugestão</Btn>
   </Modal>;
 }
 
+// ─── EDIT HANDLE MODAL ───────────────────────
+function EditHandleModal({profile,onSave,onClose}){
+  const [handle,setHandle] = useState((profile.handle||nameToHandle(profile.name)).replace(/^@/,""));
+  const [err,setErr]       = useState("");
+
+  const validate = h => {
+    if(!h) return "Handle obrigatório.";
+    if(h.length < 3) return "Mínimo 3 caracteres.";
+    if(!/^[a-z0-9_]+$/.test(h)) return "Use só letras, números e _.";
+    if(!isHandleAvailable("@"+h, profile.id)) return "Este handle já está em uso.";
+    return "";
+  };
+
+  const save = () => {
+    const h = sanitizeHandle(handle);
+    const e = validate(h);
+    if(e){ setErr(e); return; }
+    onSave("@"+h);
+  };
+
+  return <Modal title="Alterar seu @handle" onClose={onClose}>
+    <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>
+      Seu <strong>@handle</strong> é como as pessoas te encontram no Veeda. Ele precisa ser único.
+    </p>
+    <div style={{position:"relative",marginBottom:err?6:16}}>
+      <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:15,color:C.purple,fontWeight:700,pointerEvents:"none"}}>@</span>
+      <input
+        value={handle}
+        onChange={e=>{setHandle(sanitizeHandle(e.target.value));setErr("");}}
+        placeholder="seuhandle"
+        style={{paddingLeft:30,border:`1.5px solid ${err?C.red:C.cardBorder}`,borderRadius:50}}
+      />
+    </div>
+    {err&&<p style={{fontSize:13,color:C.red,marginBottom:14,fontWeight:500}}>{err}</p>}
+    <Btn onClick={save}>Salvar @handle</Btn>
+  </Modal>;
+}
+
 // ─── SETTINGS ────────────────────────────────
 function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,onClose}){
-  const [showPhil,setShowPhil]=useState(false),[ showSugg,setShowSugg]=useState(false),[ showBk,setShowBk]=useState(false);
+  const [showPhil,setShowPhil]=useState(false);
+  const [showSugg,setShowSugg]=useState(false);
+  const [showBk,setShowBk]=useState(false);
+  const [showHandle,setShowHandle]=useState(false);
+
+  const saveHandle = (newHandle) => {
+    const ps = loadProfiles();
+    const idx = ps.findIndex(p=>p.id===profile.id);
+    if(idx>=0){ ps[idx].handle=newHandle; saveProfiles(ps); onUpdateProfile({...profile,handle:newHandle}); }
+    setShowHandle(false);
+  };
+
   const sections=[
-    {header:"Conta",rows:[{label:"E-mail",val:profile.email||"—"},{label:"Alterar senha",val:"→",action:()=>{}},{label:"Código de recuperação",val:"→",action:()=>{}}]},
-    {header:"Grupo",rows:[{label:"Nome do grupo",val:data.groupName||"Família & Amigos"}]},
+    {header:"Perfil",rows:[
+      {label:"Nome",val:profile.name},
+      {label:"@handle",val:profile.handle||nameToHandle(profile.name),action:()=>setShowHandle(true)},
+      {label:"E-mail",val:profile.email||"—"},
+    ]},
     {header:"Backup",rows:[{label:"Backup / Restaurar",val:"→",action:()=>setShowBk(true)}]},
-    {header:"Notificações",rows:[{label:"Lembretes",val:(data.reminders||[]).length>0?`${data.reminders.length} ativo(s)`:"Nenhum"}]},
     {header:"Comunidade",rows:[{label:"Enviar sugestão",val:"→",action:()=>setShowSugg(true)},{label:"Filosofia do Veeda",val:"→",action:()=>setShowPhil(true)}]},
-    {header:"Sobre",rows:[{label:"Versão",val:"1.0.0"},{label:"Sair da conta",val:"→",danger:true,action:()=>{onLogout();onClose();}}]},
+    {header:"Sobre",rows:[{label:"Versão",val:"1.1.0"},{label:"Sair da conta",val:"→",danger:true,action:()=>{onLogout();onClose();}}]},
   ];
+
   return <>
     {showPhil&&<PhilosophyScreen onClose={()=>setShowPhil(false)}/>}
     {showSugg&&<SuggestionsModal data={data} onSave={s=>onSave({...data,suggestions:s})} onClose={()=>setShowSugg(false)}/>}
     {showBk&&<BackupModal data={data} profile={profile} password={password} onClose={()=>setShowBk(false)}/>}
+    {showHandle&&<EditHandleModal profile={profile} onSave={saveHandle} onClose={()=>setShowHandle(false)}/>}
     <Modal title="Configurações" onClose={onClose}>
       <div style={{textAlign:"center",marginBottom:20,paddingBottom:20,borderBottom:`1px solid ${C.cardBorder}`}}>
         <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={64} ring/>
         <p style={{margin:"10px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
-        {profile.email&&<p style={{margin:0,fontSize:12,color:C.textLight}}>{profile.email}</p>}
+        <p style={{margin:0,fontSize:13,color:C.purple,fontWeight:600}}>{profile.handle||nameToHandle(profile.name)}</p>
+        {profile.email&&<p style={{margin:"2px 0 0",fontSize:12,color:C.textLight}}>{profile.email}</p>}
       </div>
       {sections.map(sec=><div key={sec.header} style={{marginBottom:8}}>
         <p style={{fontSize:11,fontWeight:600,color:C.textLight,margin:"0 0 6px",textTransform:"uppercase",letterSpacing:"0.5px"}}>{sec.header}</p>
@@ -606,29 +801,18 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
 
 // ─── SPLASH ──────────────────────────────────
 function SplashScreen({onLogin,onCreate,onGuide}){
-  const logo=getLogo(),logoRef=useRef(),[localLogo,setLocalLogo]=useState(logo);
-  return <div style={{minHeight:"100vh",background:`linear-gradient(180deg,${C.greenLight} 0%,${C.bgGradientEnd} 99%)`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 34px 48px"}}>
+  return <div style={{minHeight:"100vh",background:C.splashBg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 34px 48px"}}>
     <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%",gap:16}}>
-      {/* Logo */}
-      <input ref={logoRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{localStorage.setItem(LOGO_KEY,ev.target.result);setLocalLogo(ev.target.result);};r.readAsDataURL(f);}}/>
-      {localLogo
-        ?<div onClick={()=>logoRef.current.click()} style={{cursor:"pointer"}}><img src={localLogo} alt="Veeda" style={{width:180,maxHeight:100,objectFit:"contain"}}/></div>
-        :<div onClick={()=>logoRef.current.click()} style={{cursor:"pointer",textAlign:"center"}}>
-          <p style={{fontFamily:PASSO,fontSize:52,fontWeight:700,color:C.purple,lineHeight:1,letterSpacing:"-2px"}}>Veeda</p>
-          <p style={{fontSize:11,color:C.textLight,marginTop:4}}>+ Adicionar logotipo</p>
-        </div>
-      }
-      {/* Tagline */}
+      <p style={{fontFamily:PASSO,fontSize:56,fontWeight:700,color:C.purple,lineHeight:1,letterSpacing:"-2px"}}>Veeda</p>
       <p style={{fontFamily:PASSO,fontSize:16,color:C.purple,textAlign:"center",margin:0}}>Viva primeiro, compartilhe depois.</p>
-      <p style={{fontFamily:SANS,fontSize:13,color:C.text,textAlign:"center",lineHeight:1.6,maxWidth:318,margin:0}}>Viva experiências, registre na hora e compartilhe com quem realmente importa.</p>
+      <p style={{fontFamily:SANS,fontSize:13,color:"#381653",textAlign:"center",lineHeight:1.6,maxWidth:318,margin:0}}>Viva experiências, registre na hora e compartilhe com quem realmente importa.</p>
     </div>
-    {/* Actions */}
     <div style={{width:"100%",maxWidth:322,display:"flex",flexDirection:"column",gap:21}}>
       <Btn onClick={onCreate}>Criar a sua</Btn>
       <Btn onClick={onLogin} variant="secondary">Já tenho uma</Btn>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
-        <button onClick={onGuide} style={{background:"none",border:"none",color:C.textMid,fontSize:13,cursor:"pointer",fontFamily:SANS}}>📱 Como instalar o Veeda</button>
-        <span style={{fontSize:11,color:C.text,fontFamily:SANS}}>Veeda App by @inoihd</span>
+        <button onClick={onGuide} style={{background:"none",border:"none",color:C.textMid,fontSize:13,cursor:"pointer",fontFamily:PASSO}}>📱 Como instalar o Veeda</button>
+        <span style={{fontSize:11,color:C.text,fontFamily:PASSO}}>Veeda App by @inoihd</span>
       </div>
     </div>
   </div>;
@@ -641,7 +825,7 @@ function ScreenSelect({profiles,onSelect,onNew,onBack}){
     <p style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4}}>Bem-vindo de volta</p>
     <p style={{fontSize:14,color:C.textMid,marginBottom:24}}>Selecione seu perfil</p>
     {profiles.map(p=><button key={p.id} onClick={()=>onSelect(p)} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"16px",marginBottom:10,display:"flex",alignItems:"center",gap:14,cursor:"pointer",textAlign:"left"}}>
-      <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/><div style={{flex:1}}><p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p><p style={{margin:0,fontSize:12,color:C.textLight}}>{p.email||"perfil local"}</p></div><span style={{fontSize:22,color:C.textLight}}>›</span>
+      <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/><div style={{flex:1}}><p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p><p style={{margin:0,fontSize:12,color:C.textLight}}>{p.handle||p.email||"perfil local"}</p></div><span style={{fontSize:22,color:C.textLight}}>›</span>
     </button>)}
     <Btn onClick={onNew} variant="outline" style={{marginTop:8}}>+ Novo perfil</Btn>
   </div>;
@@ -654,36 +838,76 @@ function ScreenPassword({profile,onSuccess,onBack,onForgot}){
     <Btn onClick={onBack} variant="ghost" style={{width:"auto",marginBottom:24}}>‹ Voltar</Btn>
     <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:13}}>
       <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={80} ring/>
-      <p style={{margin:0,fontSize:18,fontWeight:700,color:C.text,fontFamily:SANS,textAlign:"center"}}>{profile.name}</p>
-      {profile.email&&<p style={{margin:0,fontSize:12,color:C.textLight,textAlign:"center"}}>{profile.email}</p>}
-      <p style={{margin:0,fontSize:16,color:C.textMid,fontFamily:PASSO,textAlign:"center"}}>Digite sua senha para entrar</p>
-      {/* Pill input */}
+      <p style={{margin:0,fontSize:18,fontWeight:700,color:C.text,textAlign:"center"}}>{profile.name}</p>
+      {(profile.handle||profile.email)&&<p style={{margin:0,fontSize:13,color:C.purple,textAlign:"center",fontWeight:600}}>{profile.handle||profile.email}</p>}
       <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&attempt()} placeholder="Senha" autoFocus style={{border:`1px solid ${err?C.red:C.cardBorder}`,borderRadius:50,padding:"16px 20px",fontSize:16,width:"100%",boxSizing:"border-box",background:C.white,outline:"none"}}/>
       {err&&<p style={{fontSize:13,color:C.red,margin:0,fontWeight:500}}>{err}</p>}
       <p onClick={onForgot} style={{margin:0,fontSize:13,color:C.purple,cursor:"pointer",textAlign:"right",width:"100%"}}>Esqueci minha senha</p>
     </div>
-    <Btn onClick={attempt} disabled={loading} style={{marginTop:24}}>{loading?<><Spinner/>Verificando...</>:"Tomar conta da sua Veeda"}</Btn>
+    <Btn onClick={attempt} disabled={loading} style={{marginTop:24}}>{loading?<><Spinner/>Verificando...</>:"Entrar"}</Btn>
   </div>;
 }
 
 function ScreenCreate({onDone,onBack}){
-  const [step,setStep]=useState(1),[ email,setEmail]=useState(""),[ name,setName]=useState(""),[ emoji,setEmoji]=useState("🌿"),[ avatarColor,setAvatarColor]=useState(C.purpleLight),[ avatarSrc,setAvatarSrc]=useState(null),[ pw,setPw]=useState(""),[ pw2,setPw2]=useState(""),[ err,setErr]=useState(""),[ code]=useState(genCode),[ confirmed,setConfirmed]=useState(false),[ copied,setCopied]=useState(false),[ loading,setLoading]=useState(false);
+  const [step,setStep]=useState(1);
+  const [email,setEmail]=useState(""),[ name,setName]=useState("");
+  const [handle,setHandle]=useState(""),[ handleErr,setHandleErr]=useState("");
+  const [emoji,setEmoji]=useState("🌿"),[ avatarColor,setAvatarColor]=useState(C.purpleLight),[ avatarSrc,setAvatarSrc]=useState(null);
+  const [pw,setPw]=useState(""),[ pw2,setPw2]=useState(""),[ err,setErr]=useState("");
+  const [code]=useState(genCode),[ confirmed,setConfirmed]=useState(false),[ copied,setCopied]=useState(false),[ loading,setLoading]=useState(false);
   const photoRef=useRef(),galleryRef=useRef();
   const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
-  const finish=async()=>{if(!confirmed){setErr("Confirme que você salvou o código.");return;}setLoading(true);try{const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString(),profile={id,name,email,emoji,avatarColor,avatarSrc,passwordHash,recoveryHash},ps=loadProfiles();ps.push(profile);saveProfiles(ps);localStorage.setItem(`veeda_data_${id}`,await encryptObj(defaultData(),pw));onDone(profile,pw);}catch{setErr("Erro.");setLoading(false);}};
+
+  // Auto-fill handle from name
+  useEffect(()=>{ if(!handleManuallyEdited.current) setHandle(sanitizeHandle(name)); },[name]);
+  const handleManuallyEdited = useRef(false);
+
+  const finish=async()=>{if(!confirmed){setErr("Confirme que você salvou o código.");return;}setLoading(true);try{
+    const h = "@"+(handle||sanitizeHandle(name)||sanitizeHandle(email.split("@")[0]));
+    if(!isHandleAvailable(h,null)){setErr("Este @handle já está em uso. Escolha outro.");setLoading(false);return;}
+    const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString();
+    const profile={id,name,email,handle:h,emoji,avatarColor,avatarSrc,passwordHash,recoveryHash};
+    const ps=loadProfiles();ps.push(profile);saveProfiles(ps);
+    localStorage.setItem(`veeda_data_${id}`,await encryptObj(defaultData(),pw));
+    onDone(profile,pw);
+  }catch{setErr("Erro ao criar conta.");setLoading(false);}};
+
   return <div style={{maxWidth:400,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
     <Btn onClick={step===1?onBack:()=>setStep(s=>s-1)} variant="ghost" style={{width:"auto",marginBottom:20}}>‹ Voltar</Btn>
     <div style={{display:"flex",gap:6,marginBottom:24}}>{[1,2,3,4].map(n=><div key={n} style={{flex:1,height:4,borderRadius:4,background:step>=n?C.purple:C.cardBorder,transition:"background 0.3s"}}/>)}</div>
+
     {step===1&&<div style={{animation:"slideUp 0.25s ease"}}>
       <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Crie sua conta Veeda</p>
       <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Seu e-mail identifica sua conta em qualquer dispositivo.</p>
       <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>E-mail</label>
       <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="seu@email.com" style={{marginBottom:14}}/>
       <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome no Veeda</label>
-      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Como quer ser chamado" style={{marginBottom:20}}/>
-      <Btn onClick={()=>{if(!email.includes("@")){setErr("E-mail inválido.");return;}if(!name.trim()){setErr("Informe seu nome.");return;}setErr("");setStep(2);}}>Continuar</Btn>
+      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Como quer ser chamado" style={{marginBottom:14}}/>
+      <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>
+        Seu @handle <span style={{color:C.textLight,fontWeight:400}}>(único, pode editar)</span>
+      </label>
+      <div style={{position:"relative",marginBottom:handleErr?6:20}}>
+        <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:15,color:C.purple,fontWeight:700,pointerEvents:"none"}}>@</span>
+        <input
+          value={handle}
+          onChange={e=>{handleManuallyEdited.current=true;setHandle(sanitizeHandle(e.target.value));setHandleErr("");}}
+          placeholder="seuhandle"
+          style={{paddingLeft:30,border:`1.5px solid ${handleErr?C.red:C.cardBorder}`}}
+        />
+      </div>
+      {handleErr&&<p style={{fontSize:13,color:C.red,margin:"-10px 0 14px",fontWeight:500}}>{handleErr}</p>}
+      {handle&&<p style={{fontSize:12,color:C.green,margin:"-14px 0 14px"}}>✓ Seu handle será: <strong>@{handle}</strong></p>}
+      <Btn onClick={()=>{
+        if(!email.includes("@")){setErr("E-mail inválido.");return;}
+        if(!name.trim()){setErr("Informe seu nome.");return;}
+        const h = handle||sanitizeHandle(name);
+        if(!h||h.length<3){setHandleErr("Handle muito curto (mín. 3 caracteres).");return;}
+        if(!isHandleAvailable("@"+h,null)){setHandleErr("Este @handle já está em uso.");return;}
+        setErr("");setStep(2);
+      }}>Continuar</Btn>
       {err&&<p style={{fontSize:13,color:C.red,marginTop:10,textAlign:"center"}}>{err}</p>}
     </div>}
+
     {step===2&&<div style={{animation:"slideUp 0.25s ease"}}>
       <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Seu avatar</p>
       <div style={{display:"flex",gap:8,marginBottom:14}}>
@@ -692,13 +916,15 @@ function ScreenCreate({onDone,onBack}){
         <button onClick={()=>photoRef.current.click()} style={{flex:1,padding:"10px 0",background:C.blueLight,color:C.blue,border:`1px solid ${C.blueMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>📷 Tirar foto</button>
         <button onClick={()=>galleryRef.current.click()} style={{flex:1,padding:"10px 0",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purpleMid}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500}}>🖼️ Galeria</button>
       </div>
-      {avatarSrc?<div style={{display:"flex",justifyContent:"center",marginBottom:14}}><div style={{position:"relative"}}><AvatarBubble src={avatarSrc} size={80} ring/><button onClick={()=>setAvatarSrc(null)} style={{position:"absolute",top:-4,right:-4,width:22,height:22,borderRadius:"50%",background:C.red,color:"#fff",border:"none",cursor:"pointer",fontSize:12}}>×</button></div></div>:<div>
+      {avatarSrc?<div style={{display:"flex",justifyContent:"center",marginBottom:14}}><div style={{position:"relative"}}><AvatarBubble src={avatarSrc} size={80} ring/><button onClick={()=>setAvatarSrc(null)} style={{position:"absolute",top:-4,right:-4,width:22,height:22,borderRadius:"50%",background:C.red,color:"#fff",border:"none",cursor:"pointer",fontSize:12}}>×</button></div></div>
+      :<div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>{AVATAR_EMOJIS.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{fontSize:20,background:emoji===e?C.purpleLight:"#F5F3FB",border:`2px solid ${emoji===e?C.purple:C.cardBorder}`,borderRadius:10,width:44,height:44,cursor:"pointer"}}>{e}</button>)}</div>
         <div style={{display:"flex",gap:8,marginBottom:14}}>{AVATAR_COLORS.map(col=><button key={col} onClick={()=>setAvatarColor(col)} style={{width:36,height:36,borderRadius:"50%",background:col,border:`3px solid ${avatarColor===col?C.purple:C.cardBorder}`,cursor:"pointer"}}/>)}</div>
         <div style={{display:"flex",justifyContent:"center",marginBottom:16}}><AvatarBubble emoji={emoji} color={avatarColor} size={70} ring/></div>
       </div>}
       <Btn onClick={()=>setStep(3)}>Continuar</Btn>
     </div>}
+
     {step===3&&<div style={{animation:"slideUp 0.25s ease"}}>
       <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Crie sua senha</p>
       <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Sua senha protege todos os seus Dias de Veeda.</p>
@@ -707,14 +933,15 @@ function ScreenCreate({onDone,onBack}){
       {err&&<p style={{fontSize:13,color:C.red,margin:"0 0 14px",fontWeight:500}}>{err}</p>}
       <Btn onClick={()=>{if(pw.length<6){setErr("Mínimo 6 caracteres.");return;}if(pw!==pw2){setErr("As senhas não coincidem.");return;}setErr("");setStep(4);}}>Continuar</Btn>
     </div>}
+
     {step===4&&<div style={{animation:"slideUp 0.25s ease"}}>
       <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Código de recuperação</p>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}><strong style={{color:C.text}}>Anote agora.</strong> Este código é o único jeito de recuperar seus dados se esquecer a senha.</p>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}><strong style={{color:C.text}}>Anote agora.</strong> É o único jeito de recuperar seus dados se esquecer a senha.</p>
       <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,border:`2px solid ${C.purpleMid}`,borderRadius:16,padding:"22px",textAlign:"center",marginBottom:14}}>
         <p style={{margin:"0 0 4px",fontSize:11,color:C.textMid,fontWeight:500,letterSpacing:"1px",textTransform:"uppercase"}}>Seu código</p>
         <p style={{margin:0,fontSize:22,fontWeight:700,color:C.purple,letterSpacing:"3px",fontFamily:"monospace"}}>{code}</p>
       </div>
-      <button onClick={()=>{if(navigator.clipboard)navigator.clipboard.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);}} style={{width:"100%",padding:"11px 0",marginBottom:20,background:copied?"#E8FBF0":"#fff",color:copied?C.green:C.purple,border:`2px solid ${copied?C.green:C.purple}`,borderRadius:12,fontWeight:600,fontSize:14,cursor:"pointer",transition:"all 0.2s"}}>{copied?"✓ Código copiado!":"Copiar código"}</button>
+      <button onClick={()=>{if(navigator.clipboard)navigator.clipboard.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);}} style={{width:"100%",padding:"11px 0",marginBottom:20,background:copied?"#E8FBF0":"#fff",color:copied?C.green:C.purple,border:`2px solid ${copied?C.green:C.purple}`,borderRadius:12,fontWeight:600,fontSize:14,cursor:"pointer"}}>{copied?"✓ Código copiado!":"Copiar código"}</button>
       <CheckboxConfirm checked={confirmed} hasError={!!err&&!confirmed} onChange={v=>{setConfirmed(v);if(v)setErr("");}} label="Eu anotei meu código de recuperação em um lugar seguro."/>
       {err&&<p style={{fontSize:13,color:C.red,margin:"-10px 0 14px",fontWeight:500}}>{err}</p>}
       <Btn onClick={finish} disabled={loading}>{loading?<><Spinner/>Criando conta...</>:"Entrar no Veeda 🌿"}</Btn>
@@ -736,6 +963,93 @@ function ScreenForgot({profile,onSuccess,onBack}){
   </div>;
 }
 
+// ─── ADD CONTACT MODAL (with search) ────────
+function AddContactModal({contacts,myHandle,onAdd,onClose}){
+  const [query,setQuery]   = useState("");
+  const [step,setStep]     = useState(1);
+  const [found,setFound]   = useState(null);
+  const [err,setErr]       = useState("");
+
+  const allProfiles = useMemo(()=>loadProfiles(),[]);
+  const myH = (myHandle||"").replace(/^@/,"");
+
+  // Search results — filter by name or handle, excluding self and existing contacts
+  const searchResults = useMemo(()=>{
+    if(!query.trim()) return [];
+    const q = query.toLowerCase().trim().replace(/^@/,"");
+    return allProfiles.filter(p=>{
+      if(p.handle && p.handle.replace(/^@/,"")===myH) return false;
+      if(contacts.find(c=>c.handle&&c.handle.replace(/^@/,"")===(p.handle||"").replace(/^@/,""))) return false;
+      const nameMatch = p.name.toLowerCase().includes(q);
+      const handleMatch = (p.handle||"").replace(/^@/,"").includes(q);
+      return nameMatch||handleMatch;
+    });
+  },[query,allProfiles,myH,contacts]);
+
+  const selectProfile = p => { setFound(p); setStep(2); };
+
+  const confirm = () => {
+    if(found){
+      onAdd({
+        name:found.name,
+        handle:found.handle||nameToHandle(found.name),
+        code:(found.handle||nameToHandle(found.name)).replace(/^@/,""),
+        emoji:found.emoji||"🌿",
+        avatarColor:found.avatarColor||C.purpleLight,
+        avatarSrc:found.avatarSrc||null,
+        addedAt:Date.now(),
+      });
+    }
+  };
+
+  return <div>
+    {step===1&&<>
+      <div style={{background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
+        <p style={{margin:0,fontSize:13,color:C.purple,lineHeight:1.6}}>
+          Busque pelo <strong>nome</strong> ou <strong>@handle</strong> de alguém que usa o Veeda neste dispositivo. Para adicionar contatos de outros dispositivos, compartilhe seu @handle com eles.
+        </p>
+      </div>
+      <p style={{fontSize:12,color:C.textMid,margin:"0 0 6px"}}>Seu @handle: <strong style={{color:C.purple}}>{myHandle}</strong></p>
+      <input
+        value={query}
+        onChange={e=>{setQuery(e.target.value);setErr("");}}
+        placeholder="Buscar por nome ou @handle..."
+        autoFocus
+        style={{marginBottom:8}}
+      />
+      {/* Results */}
+      {query.trim()&&searchResults.length===0&&<p style={{fontSize:13,color:C.textLight,textAlign:"center",padding:"12px 0"}}>Nenhum usuário encontrado neste dispositivo.</p>}
+      {searchResults.map(p=>(
+        <button key={p.id} onClick={()=>selectProfile(p)} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left"}}>
+          <AvatarBubble src={p.avatarSrc} emoji={p.emoji||"🌿"} color={p.avatarColor||C.purpleLight} size={44}/>
+          <div style={{flex:1}}>
+            <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{p.name}</p>
+            <p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{p.handle||nameToHandle(p.name)}</p>
+          </div>
+          <span style={{fontSize:18,color:C.textLight}}>+</span>
+        </button>
+      ))}
+      {err&&<p style={{fontSize:13,color:C.red,marginTop:6,fontWeight:500}}>{err}</p>}
+      <div style={{marginTop:16,padding:"12px 14px",background:"#FFF8E1",borderRadius:10,border:"1px solid #FFD54F"}}>
+        <p style={{margin:0,fontSize:12,color:"#7A5800",lineHeight:1.5}}>
+          💡 Para adicionar alguém de outro dispositivo, peça o @handle deles e adicione manualmente depois.
+        </p>
+      </div>
+    </>}
+    {step===2&&found&&<>
+      <div style={{textAlign:"center",marginBottom:20}}>
+        <AvatarBubble src={found.avatarSrc} emoji={found.emoji} color={found.avatarColor||C.purpleLight} size={64} ring/>
+        <p style={{margin:"10px 0 2px",fontSize:16,fontWeight:700,color:C.text}}>{found.name}</p>
+        <p style={{margin:0,fontSize:14,color:C.purple,fontWeight:600}}>{found.handle||nameToHandle(found.name)}</p>
+        <p style={{margin:"8px 0 0",fontSize:13,color:C.green}}>✓ Encontrado neste dispositivo</p>
+      </div>
+      <Btn onClick={confirm} style={{marginBottom:10}}>Adicionar ao Meu Círculo</Btn>
+      <Btn onClick={()=>{setStep(1);setFound(null);}} variant="ghost">← Buscar outro</Btn>
+    </>}
+  </div>;
+}
+
+// ─── MOMENT CIRCLE ─ (already defined above) ─
 // ─── MAIN APP ────────────────────────────────
 function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const dataKey=`veeda_data_${profile.id}`;
@@ -749,6 +1063,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [addTags,setAddTags]=useState([]);
   const [showModal,setShowModal]=useState(false);
   const [showMusicPicker,setShowMusicPicker]=useState(false);
+  const [showDrawing,setShowDrawing]=useState(false);
   const [showEditDay,setShowEditDay]=useState(false);
   const [showFeeling,setShowFeeling]=useState(false);
   const [showAvatar,setShowAvatar]=useState(false);
@@ -764,13 +1079,18 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [pendingNotif,setPendingNotif]=useState(null);
   const [expandedMoment,setExpandedMoment]=useState(null);
   const [now,setNow]=useState(new Date());
-  const [invCode,setInvCode]=useState("");
-  const [invName,setInvName]=useState("");
   const [newGroup,setNewGroup]=useState("");
   const [lastId,setLastId]=useState(null);
-  const vidRef=useRef(),photoRef=useRef(),galleryRef=useRef(),touchX=useRef(null),lastRef=useRef(null);
+  const [hydratedData,setHydratedData]=useState(null);
 
-  // ── Store media as IndexedDB to avoid localStorage size limits ──
+  // Cached crypto key and salt for fast saves
+  const sessionKey  = useRef(null);
+  const sessionSalt = useRef(null);
+
+  const vidRef=useRef(),photoRef=useRef(),galleryRef=useRef();
+  const touchX=useRef(null),lastRef=useRef(null);
+
+  // IndexedDB for media
   const mediaDb = useRef(null);
   const openDb = () => new Promise((res,rej)=>{
     if(mediaDb.current){res(mediaDb.current);return;}
@@ -779,30 +1099,56 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     req.onsuccess=e=>{mediaDb.current=e.target.result;res(e.target.result);};
     req.onerror=()=>rej("IDB error");
   });
-  const saveMedia=async(id,dataUrl)=>{try{const db=await openDb();const tx=db.transaction("media","readwrite");tx.objectStore("media").put({id,dataUrl});}catch(e){console.warn("IDB save failed",e);}};
+  const saveMedia=async(id,dataUrl)=>{try{const db=await openDb();const tx=db.transaction("media","readwrite");tx.objectStore("media").put({id,dataUrl});}catch(e){console.warn("IDB",e);}};
   const loadMedia=async id=>{try{const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction("media","readonly");const req=tx.objectStore("media").get(id);req.onsuccess=()=>res(req.result?.dataUrl||null);req.onerror=()=>rej(null);});}catch{return null;}};
 
   useEffect(()=>{
     (async()=>{
       try{
         const enc=localStorage.getItem(dataKey);
-        const d=enc?await decryptObj(enc,password):defaultData();
-        setData(d);
+        if(enc){
+          const {key,salt,data:d}=await decryptObjFull(enc,password);
+          sessionKey.current=key; sessionSalt.current=salt;
+          setData(d);
+        } else {
+          const d=defaultData();
+          const enc2=await encryptObj(d,password);
+          // Extract key from the freshly created enc
+          const {key,salt}=await decryptObjFull(enc2,password);
+          sessionKey.current=key; sessionSalt.current=salt;
+          setData(d);
+          localStorage.setItem(dataKey,enc2);
+        }
       }catch{setData(defaultData());}
     })();
     const t=setInterval(()=>setNow(new Date()),30000);
     return()=>clearInterval(t);
   },[]);
 
-  useEffect(()=>{if(!data)return;const k=`veeda_inbox_${profile.id}`,inbox=JSON.parse(localStorage.getItem(k)||"[]");if(inbox.length>0){const notif=inbox[0];if(!(data.received||[]).find(r=>r.date===notif.date&&r.author===notif.author&&r.importedAt===notif.importedAt))setPendingNotif(notif);}},[data]);
+  // Check inbox
+  useEffect(()=>{
+    if(!data)return;
+    const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+    const keys=[`veeda_inbox_${myH}`,`veeda_inbox_${profile.id}`];
+    for(const k of keys){
+      const inbox=JSON.parse(localStorage.getItem(k)||"[]");
+      if(inbox.length>0){
+        const notif=inbox[0];
+        if(!(data.received||[]).find(r=>r.date===notif.date&&r.author===notif.author&&r.importedAt===notif.importedAt)){
+          setPendingNotif(notif); break;
+        }
+      }
+    }
+  },[data]);
+
   useEffect(()=>{if(lastId&&lastRef.current){setTimeout(()=>lastRef.current&&lastRef.current.scrollIntoView({behavior:"smooth",block:"center"}),120);setLastId(null);}},[lastId,data]);
 
-  const save=async d=>{
-    // Strip media data from moments before storing in localStorage (save only IDs)
+  // Fast save using cached key
+  const save = useCallback(async d => {
     const lightweight={...d,moments:{}};
     Object.keys(d.moments||{}).forEach(day=>{
       lightweight.moments[day]=(d.moments[day]||[]).map(m=>{
-        if((m.type==="foto"||m.type==="video")&&m.content&&m.content.startsWith("data:")){
+        if((m.type==="foto"||m.type==="video"||m.type==="arte")&&m.content&&m.content.startsWith("data:")){
           saveMedia(`${m.id}`,m.content);
           return {...m,content:"IDB:"+m.id};
         }
@@ -810,11 +1156,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       });
     });
     setData(d);
-    localStorage.setItem(dataKey,await encryptObj(lightweight,password));
-  };
+    // Use cached key for fast encryption (no PBKDF2)
+    let enc;
+    if(sessionKey.current&&sessionSalt.current){
+      enc=await encryptFast(lightweight,sessionKey.current,sessionSalt.current);
+    } else {
+      enc=await encryptObj(lightweight,password);
+    }
+    localStorage.setItem(dataKey,enc);
+  },[dataKey,password]);
 
-  // Hydrate media from IDB when data loads
-  const [hydratedData,setHydratedData]=useState(null);
+  // Hydrate media
   useEffect(()=>{
     if(!data)return;
     (async()=>{
@@ -822,9 +1174,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       for(const day of Object.keys(data.moments||{})){
         hd.moments[day]=await Promise.all((data.moments[day]||[]).map(async m=>{
           if(m.content&&m.content.startsWith("IDB:")){
-            const mediaId=m.content.slice(4);
-            const dataUrl=await loadMedia(mediaId);
-            return dataUrl?{...m,content:dataUrl}:m;
+            const url=await loadMedia(m.content.slice(4));
+            return url?{...m,content:url}:m;
           }
           return m;
         }));
@@ -834,76 +1185,90 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   },[data]);
 
   const activeData=hydratedData||data;
-
-  const resetModal=()=>{setAddContent("");setAddCaption("");setAddMedia(null);setAddTags([]);setShowModal(false);setShowMusicPicker(false);};
+  const resetModal=useCallback(()=>{setAddContent("");setAddCaption("");setAddMedia(null);setAddTags([]);setShowModal(false);setShowMusicPicker(false);},[]);
   const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
 
-  const acceptNotif=async()=>{if(!pendingNotif)return;const k=`veeda_inbox_${profile.id}`,inbox=JSON.parse(localStorage.getItem(k)||"[]");localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===pendingNotif.date&&x.author===pendingNotif.author&&x.importedAt===pendingNotif.importedAt))));await save({...data,received:[...(data.received||[]),pendingNotif]});setPendingNotif(null);setView("recebidos");setViewRec(pendingNotif);};
-  const dismissNotif=()=>{if(!pendingNotif)return;const k=`veeda_inbox_${profile.id}`,inbox=JSON.parse(localStorage.getItem(k)||"[]");localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===pendingNotif.date&&x.author===pendingNotif.author&&x.importedAt===pendingNotif.importedAt))));setPendingNotif(null);};
+  const clearInbox=notif=>{
+    const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+    [`veeda_inbox_${myH}`,`veeda_inbox_${profile.id}`].forEach(k=>{
+      const inbox=JSON.parse(localStorage.getItem(k)||"[]");
+      localStorage.setItem(k,JSON.stringify(inbox.filter(x=>!(x.date===notif.date&&x.author===notif.author&&x.importedAt===notif.importedAt))));
+    });
+  };
 
-  const addMoment=(extra={})=>{
+  const acceptNotif=async()=>{if(!pendingNotif)return;clearInbox(pendingNotif);await save({...data,received:[...(data.received||[]),pendingNotif]});setPendingNotif(null);setView("recebidos");setViewRec(pendingNotif);};
+  const dismissNotif=()=>{if(!pendingNotif)return;clearInbox(pendingNotif);setPendingNotif(null);};
+
+  const addMoment=useCallback((extra={})=>{
     const isMedia=addType==="foto"||addType==="video";
     if(isMedia&&!addMedia)return;
     if(addType==="musica"&&!extra.trackTitle&&!addContent.trim())return;
-    if(!isMedia&&addType!=="musica"&&!addContent.trim())return;
+    if(!isMedia&&addType!=="musica"&&addType!=="arte"&&!addContent.trim())return;
     let type=addType,content=isMedia?addMedia:addContent.trim();
     if(type==="link"&&isVideoLink(content))type="videolink";
     const id=Date.now();
     const m={id,ts:id,type,content,caption:addCaption.trim(),tags:addTags,...extra};
     save({...data,moments:{...data.moments,[todayStr()]:[...(data.moments[todayStr()]||[]),m]}});
     resetModal();setLastId(id);
-  };
+  },[addType,addMedia,addContent,addCaption,addTags,data,save,resetModal]);
 
-  const delMoment=(day,id)=>save({...data,moments:{...data.moments,[day]:(data.moments[day]||[]).filter(m=>m.id!==id)}});
+  const delMoment=useCallback((day,id)=>save({...data,moments:{...data.moments,[day]:(data.moments[day]||[]).filter(m=>m.id!==id)}}),[data,save]);
+
+  const updateAv=useCallback(updated=>{const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);if(idx>=0){ps[idx]={...ps[idx],emoji:updated.emoji,avatarColor:updated.avatarColor,avatarSrc:updated.avatarSrc};saveProfiles(ps);onUpdateProfile(updated);}},[onUpdateProfile]);
 
   if(!activeData)return <div style={{padding:32,textAlign:"center",fontSize:32,color:C.textMid}}>🌿</div>;
 
   const curDay=offsetDay(todayStr(),-dayOffset),isToday=dayOffset===0;
-  const moments=(activeData.moments[curDay]||[]).slice().sort((a,b)=>a.ts-b.ts);
-  const allDays=Object.keys(activeData.moments).filter(d=>(activeData.moments[d]||[]).length>0).sort((a,b)=>b.localeCompare(a));
+  const moments=useMemo(()=>(activeData.moments[curDay]||[]).slice().sort((a,b)=>a.ts-b.ts),[activeData,curDay]);
+  const allDays=useMemo(()=>Object.keys(activeData.moments).filter(d=>(activeData.moments[d]||[]).length>0).sort((a,b)=>b.localeCompare(a)),[activeData]);
   const nowKey=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
   const dayColor=DAY_COLORS.find(c=>c.label===(activeData.dayColors||{})[curDay])||DAY_COLORS[0];
   const feeling=(activeData.dayFeelings||{})[curDay];
-  const group=activeData.groupName||"Família & Amigos";
+  const group=activeData.groupName||"Meu Círculo";
   const lastMId=moments.length>0?moments[moments.length-1].id:null;
-  const upcoming=(activeData.events||[]).filter(e=>e.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date));
+  const upcoming=useMemo(()=>(activeData.events||[]).filter(e=>e.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date)),[activeData]);
 
-  const buildSlots=()=>{const byTime={};moments.forEach(m=>{const k=fmt(m.ts);if(!byTime[k])byTime[k]=[];byTime[k].push(m);});const times=new Set(Object.keys(byTime));if(isToday)times.add(nowKey);return Array.from(times).sort().map(time=>({time,moments:byTime[time]||[],isNow:isToday&&time===nowKey}));};
-  const slots=buildSlots();
-
-  const updateAv=updated=>{const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);if(idx>=0){ps[idx]={...ps[idx],emoji:updated.emoji,avatarColor:updated.avatarColor,avatarSrc:updated.avatarSrc};saveProfiles(ps);onUpdateProfile(updated);}};
+  const slots=useMemo(()=>{
+    const byTime={};
+    moments.forEach(m=>{const k=fmt(m.ts);if(!byTime[k])byTime[k]=[];byTime[k].push(m);});
+    const times=new Set(Object.keys(byTime));
+    if(isToday)times.add(nowKey);
+    return Array.from(times).sort().map(time=>({time,moments:byTime[time]||[],isNow:isToday&&time===nowKey}));
+  },[moments,isToday,nowKey]);
 
   return <div style={{maxWidth:480,margin:"0 auto",background:`linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradientEnd} 99%)`,minHeight:"100vh",transition:"background 0.4s",fontFamily:SANS}}>
     {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
     {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
-
-    {/* Moment detail overlay */}
+    {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim(),tags:addTags};save({...data,moments:{...data.moments,[todayStr()]:[...(data.moments[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddTags([]);}}/>}
     {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
 
     {/* Header */}
-    <div style={{background:C.white,borderBottom:`1px solid ${C.cardBorder}`}}>
+    <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 6px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>{getLogo()?<img src={getLogo()} alt="logo" style={{width:28,height:28,objectFit:"contain",borderRadius:6}}/>:<span style={{fontSize:18}}>🌿</span>}<span style={{fontSize:15,fontWeight:700,color:C.text}}>Veeda</span></div>
+        <span style={{fontFamily:PASSO,fontSize:18,fontWeight:700,color:C.text}}>🌿 Veeda</span>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <button onClick={()=>setShowInviteApp(true)} style={{background:C.purpleLight,border:"none",borderRadius:20,padding:"5px 12px",fontSize:12,color:C.purple,fontWeight:600,cursor:"pointer"}}>+ Convidar</button>
+          <button onClick={()=>setShowInviteApp(true)} style={{background:C.purpleLight,border:"none",borderRadius:20,padding:"5px 12px",fontSize:12,color:C.purpleLogic,fontWeight:600,cursor:"pointer"}}>+ Convidar</button>
           <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",fontSize:20,color:C.textLight,cursor:"pointer",lineHeight:1}}>⚙️</button>
         </div>
       </div>
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"10px 0 12px",borderBottom:`1px solid ${C.cardBorder}`,cursor:"pointer"}} onClick={()=>view==="hoje"&&setShowAvatar(true)}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"10px 0 12px",borderBottom:`1px solid ${C.headerBorder}`,cursor:"pointer"}} onClick={()=>view==="hoje"&&setShowAvatar(true)}>
         <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={64} ring/>
         <p style={{margin:"8px 0 0",fontSize:14,fontWeight:600,color:C.text}}>{profile.name}</p>
-        {profile.email&&<p style={{margin:"2px 0 0",fontSize:11,color:C.textLight}}>{profile.email}</p>}
-        {feeling&&<div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:4,background:C.purpleLight,borderRadius:20,padding:"3px 12px"}}><span style={{fontSize:13}}>{feeling.emoji}</span><span style={{fontSize:11,color:C.purple,fontWeight:500}}>{feeling.label}</span></div>}
+        <p style={{margin:"2px 0 0",fontSize:12,color:C.purpleLogic,fontWeight:600}}>{profile.handle||nameToHandle(profile.name)}</p>
+        {profile.email&&<p style={{margin:"1px 0 0",fontSize:11,color:C.textLight}}>{profile.email}</p>}
+        {feeling&&<div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:4,background:C.purpleLight,borderRadius:20,padding:"3px 12px"}}><span style={{fontSize:13}}>{feeling.emoji}</span><span style={{fontSize:11,color:C.purpleLogic,fontWeight:500}}>{feeling.label}</span></div>}
         {view==="hoje"&&<span style={{fontSize:11,color:C.textLight,marginTop:4}}>editar perfil</span>}
       </div>
       <div style={{display:"flex",padding:"0 8px",overflowX:"auto"}}>
-        {[["hoje","Hoje"],["grupo",group],["recebidos","Recebidos"]].map(([v,label])=><button key={v} onClick={()=>setView(v)} style={{padding:"10px 14px",fontSize:13,fontWeight:view===v?600:400,background:"none",border:"none",borderBottom:`2.5px solid ${view===v?C.purple:"transparent"}`,color:view===v?C.purple:C.textMid,cursor:"pointer",whiteSpace:"nowrap"}}>{label}</button>)}
+        {[["hoje","Hoje"],["grupo",group],["recebidos","Recebidos"]].map(([v,label])=><button key={v} onClick={()=>setView(v)} style={{padding:"10px 14px",fontSize:13,fontWeight:view===v?600:400,background:"none",border:"none",borderBottom:`2.5px solid ${view===v?C.purpleLogic:"transparent"}`,color:view===v?C.purpleLogic:C.textMid,cursor:"pointer",whiteSpace:"nowrap"}}>{label}</button>)}
       </div>
     </div>
 
     <div style={{paddingBottom:110}}>
       {/* HOJE */}
-      {view==="hoje"&&<div onTouchStart={e=>{touchX.current=e.touches[0].clientX;}} onTouchEnd={e=>{if(touchX.current===null)return;const dx=touchX.current-e.changedTouches[0].clientX;if(Math.abs(dx)>50){if(dx>0)setDayOffset(o=>o+1);else setDayOffset(o=>Math.max(0,o-1));}touchX.current=null;}}>
+      {view==="hoje"&&<div
+        onTouchStart={e=>{touchX.current=e.touches[0].clientX;}}
+        onTouchEnd={e=>{if(touchX.current===null)return;const dx=touchX.current-e.changedTouches[0].clientX;if(Math.abs(dx)>50){if(dx>0)setDayOffset(o=>o+1);else setDayOffset(o=>Math.max(0,o-1));}touchX.current=null;}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 8px 2px"}}>
           <button onClick={()=>setDayOffset(o=>o+1)} style={{background:"none",border:"none",fontSize:22,color:C.textMid,cursor:"pointer",padding:"4px 10px"}}>‹</button>
           <p style={{margin:0,fontSize:12,color:C.textLight}}>{fmtFull(curDay).split(",").slice(1).join(",").trim()}</p>
@@ -915,35 +1280,28 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           <button onClick={()=>setShowReminders(true)} style={{fontSize:12,padding:"4px 12px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:20,color:C.textMid,cursor:"pointer"}}>🔔</button>
           <button onClick={()=>setShowEvents(true)} style={{fontSize:12,padding:"4px 12px",background:"#FFF3DC",border:`1px solid ${C.amber}44`,borderRadius:20,color:C.amber,cursor:"pointer",fontWeight:500}}>📅{upcoming.length>0?` (${upcoming.length})`:""}</button>
         </div>
-        {isToday&&<p style={{textAlign:"center",fontSize:11,color:C.textLight,margin:"0 0 4px"}}>← deslize para dias anteriores</p>}
         {isToday&&upcoming.length>0&&<div style={{margin:"0 16px 8px",background:"#FFF8E1",border:`1px solid ${C.amber}55`,borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:18}}>{EVENT_TYPES.find(t=>t.id===upcoming[0].type)?.emoji||"📅"}</span>
           <div><p style={{margin:0,fontSize:13,fontWeight:600,color:C.amber}}>{upcoming[0].title}</p><p style={{margin:0,fontSize:11,color:C.textMid}}>{fmtFull(upcoming[0].date)}{upcoming[0].time?` às ${upcoming[0].time}`:""}</p></div>
         </div>}
 
-        {/* ── TIMELINE — only circles ── */}
+        {/* TIMELINE */}
         <div style={{position:"relative",padding:"16px 0 24px"}}>
           {slots.length>0&&<div style={{position:"absolute",left:"50%",top:0,bottom:0,width:3,borderRadius:3,background:`linear-gradient(to bottom,${dayColor.dot}44,${dayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`,transform:"translateX(-50%)",zIndex:0}}/>}
           {slots.length===0&&<div style={{textAlign:"center",padding:"3rem 2rem"}}><p style={{fontSize:14,color:C.textLight,margin:0}}>{isToday?"Nenhum momento ainda.":"Nenhum momento neste dia."}</p></div>}
           {slots.map((slot,i)=>{
             const isLeft=i%2===0;
             return <div key={slot.time} style={{position:"relative",display:"flex",alignItems:"flex-start",marginBottom:28,zIndex:1}}>
-              {/* Left */}
               <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-end",paddingRight:18,paddingLeft:12,gap:6}}>
                 {isLeft&&(slot.isNow
                   ?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`2px solid ${dayColor.dot}`,borderRadius:20,padding:"9px 14px",fontSize:12,color:C.purple,cursor:"pointer",fontWeight:600,lineHeight:1.4,textAlign:"center",maxWidth:140}}>registrar<br/>acontecimento</button>
                   :slot.moments.map(m=><div key={m.id} ref={m.id===lastMId&&lastId===null?lastRef:null}><MomentCircle m={m} isNew={m.id===lastMId&&lastId===null} onTap={()=>setExpandedMoment(m)}/><span style={{display:"block",textAlign:"right",fontSize:10,color:C.textLight,marginTop:2}}>{fmt(m.ts)}</span></div>)
                 )}
               </div>
-              {/* Center */}
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0,position:"relative",zIndex:2}}>
-                {slot.isNow
-                  ?<PulsingDot onClick={()=>setShowModal(true)} color={dayColor.dot}/>
-                  :<div style={{width:10,height:10,borderRadius:"50%",background:dayColor.dot,border:`2px solid ${C.white}`}}/>
-                }
+                {slot.isNow?<PulsingDot onClick={()=>setShowModal(true)} color={dayColor.dot}/>:<div style={{width:10,height:10,borderRadius:"50%",background:dayColor.dot,border:`2px solid ${C.white}`}}/>}
                 <span style={{fontSize:9,color:C.textLight,marginTop:3,whiteSpace:"nowrap"}}>{slot.time}</span>
               </div>
-              {/* Right */}
               <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-start",paddingLeft:18,paddingRight:12,gap:6}}>
                 {!isLeft&&(slot.isNow
                   ?<button onClick={()=>setShowModal(true)} style={{background:C.white,border:`2px solid ${dayColor.dot}`,borderRadius:20,padding:"9px 14px",fontSize:12,color:C.purple,cursor:"pointer",fontWeight:600,lineHeight:1.4,textAlign:"center",maxWidth:140}}>registrar<br/>acontecimento</button>
@@ -955,14 +1313,14 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         </div>
       </div>}
 
-      {/* GRUPO */}
+      {/* GRUPO (Meu Círculo) */}
       {view==="grupo"&&<div style={{padding:"20px 16px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}><p style={{margin:0,fontSize:16,fontWeight:700,color:C.text}}>{group}</p><button onClick={()=>{setNewGroup(group);setShowGroupName(true);}} style={{fontSize:12,color:C.purple,background:"none",border:"none",cursor:"pointer"}}>renomear</button></div>
-        <Btn onClick={()=>setShowInvite(true)} style={{marginBottom:20}}>+ Adicionar contato</Btn>
+        <Btn onClick={()=>setShowInvite(true)} style={{marginBottom:20}}>+ Adicionar ao Círculo</Btn>
         {(!activeData.contacts||activeData.contacts.length===0)?<div style={{textAlign:"center",padding:"2rem 0"}}><p style={{fontSize:14,color:C.textLight}}>Nenhum contato ainda.</p><button onClick={()=>setShowInviteApp(true)} style={{marginTop:12,background:"none",border:`1px solid ${C.purple}`,borderRadius:20,padding:"8px 18px",color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>Convidar alguém para o Veeda</button></div>
         :activeData.contacts.map((c,i)=><div key={i} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
           <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={42}/>
-          <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{c.name}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>ID: <span style={{fontFamily:"monospace",color:C.purple}}>{c.code}</span></p></div>
+          <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{c.name}</p><p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{c.handle}</p></div>
           <button onClick={()=>{const nc=[...activeData.contacts];nc.splice(i,1);save({...data,contacts:nc});}} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer"}}>remover</button>
         </div>)}
       </div>}
@@ -985,7 +1343,6 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           {viewRec.message&&<div style={{margin:"12px 0 0",background:C.purpleLight,borderRadius:12,padding:"12px 16px",width:"100%",boxSizing:"border-box"}}><p style={{margin:0,fontSize:14,color:C.purple,fontStyle:"italic",lineHeight:1.6}}>"{viewRec.message}"</p></div>}
           <button onClick={()=>setViewRec(null)} style={{marginTop:12,fontSize:13,color:C.textMid,background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:20,padding:"5px 16px",cursor:"pointer"}}>‹ Voltar</button>
         </div>
-        {/* Received moments also as circles */}
         <div style={{padding:"16px",display:"flex",flexWrap:"wrap",gap:12}}>
           {(viewRec.moments||[]).slice().sort((a,b)=>a.ts-b.ts).map(m=><div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
             <MomentCircle m={m} onTap={()=>setExpandedMoment(m)} size={56}/>
@@ -1003,23 +1360,31 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       <button onClick={()=>setShowModal(true)} style={{width:"100%",padding:"16px 0",background:C.purple,color:"#fff",border:"none",borderRadius:50,fontWeight:600,fontSize:15,cursor:"pointer",pointerEvents:"auto",boxShadow:"0 6px 24px rgba(144,0,255,0.30)",fontFamily:PASSO}}>+ Registrar primeiro momento</button>
     </div>}
 
-    {/* ── Modals ── */}
+    {/* Modals */}
     {showShare&&<ShareDayModal profile={profile} data={activeData} curDay={curDay} onClose={()=>setShowShare(false)} onShared={async log=>{await save({...data,sharedLog:log});}}/>}
     {showEvents&&<EventsModal data={activeData} profile={profile} onSave={events=>save({...data,events})} onClose={()=>setShowEvents(false)}/>}
     {showReminders&&<RemindersModal reminders={activeData.reminders||[]} onSave={list=>save({...data,reminders:list})} onClose={()=>setShowReminders(false)}/>}
     {showInviteApp&&<InviteModal onClose={()=>setShowInviteApp(false)}/>}
-    {showSettings&&<SettingsModal profile={profile} data={activeData} password={password} onUpdateProfile={updateAv} onSave={save} onLogout={onLogout} onClose={()=>setShowSettings(false)}/>}
-    {showMusicPicker&&<MusicPicker onClose={()=>setShowMusicPicker(false)} onSelect={r=>{setShowMusicPicker(false);addMoment({type:"musica",content:r.title,trackTitle:r.title,trackArtist:r.artist,trackAlbum:r.album,albumArt:r.art,previewUrl:r.preview,appleMusicUrl:r.appleMusicUrl,caption:addCaption.trim(),tags:addTags});}}/>}
+    {showSettings&&<SettingsModal profile={profile} data={activeData} password={password} onUpdateProfile={p=>{updateAv(p);onUpdateProfile(p);}} onSave={save} onLogout={onLogout} onClose={()=>setShowSettings(false)}/>}
+    {showMusicPicker&&<MusicPicker onClose={()=>setShowMusicPicker(false)} onSelect={r=>{setShowMusicPicker(false);const id=Date.now();const m={id,ts:id,type:"musica",content:r.title,trackTitle:r.title,trackArtist:r.artist,trackAlbum:r.album,albumArt:r.art,previewUrl:r.preview,appleMusicUrl:r.appleMusicUrl,caption:addCaption.trim(),tags:addTags};save({...data,moments:{...data.moments,[todayStr()]:[...(data.moments[todayStr()]||[]),m]}});setLastId(id);resetModal();}}/>}
 
-    {/* ── ADD MOMENT MODAL ── */}
+    {/* ADD MOMENT MODAL */}
     {showModal&&<Modal title="Registrar acontecimento" onClose={resetModal}>
+      {/* Type selector */}
       <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
-        {[["texto","✏️","texto"],["foto","📷","foto"],["video","🎬","vídeo"],["link","🔗","link"],["musica","🎵","música"]].map(([t,icon,label])=>(
-          <button key={t} onClick={()=>{setAddType(t);setAddMedia(null);setAddContent("");}} style={{padding:"6px 12px",fontSize:13,background:addType===t?TYPE_COLORS[t==="musica"?"musica":t==="foto"?"foto":t==="video"?"video":t==="link"?"link":"texto"]?.bg||C.purpleLight:"#F5F3FB",border:`1.5px solid ${addType===t?TYPE_COLORS[t==="musica"?"musica":t==="foto"?"foto":t==="video"?"video":t==="link"?"link":"texto"]?.fill||C.purple:C.cardBorder}`,borderRadius:20,cursor:"pointer",color:addType===t?TYPE_COLORS[t==="musica"?"musica":t==="foto"?"foto":t==="video"?"video":t==="link"?"link":"texto"]?.fill||C.purple:C.textMid,fontWeight:addType===t?600:400}}>{icon} {label}</button>
+        {[["texto","✏️","texto"],["foto","📷","foto"],["video","🎬","vídeo"],["link","🔗","link"],["musica","🎵","música"],["arte","🎨","arte"]].map(([t,icon,label])=>(
+          <button key={t} onClick={()=>{setAddType(t);setAddMedia(null);setAddContent("");}}
+            style={{padding:"6px 12px",fontSize:13,
+              background:addType===t?(TYPE_COLORS[t]?.bg||C.purpleLight):"#F5F3FB",
+              border:`1.5px solid ${addType===t?(TYPE_COLORS[t]?.fill||C.purple):C.cardBorder}`,
+              borderRadius:20,cursor:"pointer",
+              color:addType===t?(TYPE_COLORS[t]?.fill||C.purple):C.textMid,
+              fontWeight:addType===t?600:400}}>
+            {icon} {label}
+          </button>
         ))}
       </div>
 
-      {/* FOTO */}
       {addType==="foto"&&(!addMedia
         ?<div style={{display:"flex",gap:8,marginBottom:10}}>
           <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/>
@@ -1030,7 +1395,6 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         :<div style={{marginBottom:10,position:"relative"}}><img src={addMedia} alt="" style={{width:"100%",borderRadius:10}}/><button onClick={()=>setAddMedia(null)} style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.5)",border:"none",borderRadius:"50%",width:30,height:30,color:"#fff",cursor:"pointer",fontSize:15}}>×</button></div>
       )}
 
-      {/* VIDEO */}
       {addType==="video"&&(!addMedia
         ?<div style={{display:"flex",gap:8,marginBottom:10}}>
           <input ref={vidRef} type="file" accept="video/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)readFile(f,setAddMedia);}}/>
@@ -1041,18 +1405,28 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         :<div style={{marginBottom:10,position:"relative"}}><video src={addMedia} controls style={{width:"100%",borderRadius:10,maxHeight:240}}/><button onClick={()=>setAddMedia(null)} style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.5)",border:"none",borderRadius:"50%",width:30,height:30,color:"#fff",cursor:"pointer",fontSize:15}}>×</button></div>
       )}
 
-      {/* MÚSICA */}
       {addType==="musica"&&<div style={{marginBottom:10}}>
         <button onClick={()=>setShowMusicPicker(true)} style={{width:"100%",padding:"12px 0",background:"#E6F9F2",color:C.green,border:`1px solid ${C.green}44`,borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:600}}>🎵 Buscar música...</button>
         <p style={{fontSize:11,color:C.textLight,textAlign:"center",marginTop:6}}>Pesquisa via Apple Music. Preview de 30s incluído.</p>
       </div>}
 
-      {/* TEXTO / LINK */}
+      {addType==="arte"&&<div style={{marginBottom:10}}>
+        <button onClick={()=>{setShowModal(false);setShowDrawing(true);}} style={{width:"100%",padding:"16px 0",background:C.pinkLight,color:C.pink,border:`1.5px solid ${C.pink}55`,borderRadius:12,cursor:"pointer",fontSize:15,fontWeight:700,letterSpacing:"-0.3px"}}>
+          🎨 Abrir tela de desenho
+        </button>
+        <p style={{fontSize:11,color:C.textLight,textAlign:"center",marginTop:6}}>Pincéis, cores, colagem de imagens. Salva como arte na timeline.</p>
+      </div>}
+
       {(addType==="texto"||addType==="link")&&<textarea value={addContent} onChange={e=>setAddContent(e.target.value)} placeholder={addType==="link"?"Cole o link (YouTube, Vimeo, ou URL)...":"O que aconteceu?"} style={{width:"100%",minHeight:88,marginBottom:10,padding:"10px 12px",border:`1px solid ${C.cardBorder}`,borderRadius:10,fontSize:16,boxSizing:"border-box"}}/>}
 
-      <input value={addCaption} onChange={e=>setAddCaption(e.target.value)} placeholder="Legenda (opcional)" style={{marginBottom:14}}/>
-      <div style={{marginBottom:16}}><TagPicker selectedTags={addTags} onChange={setAddTags} customTags={activeData.customTags||[]}/></div>
-      {addType!=="musica"&&<Btn onClick={()=>addMoment()}>Adicionar momento</Btn>}
+      {addType!=="arte"&&addType!=="musica"&&<>
+        <input value={addCaption} onChange={e=>setAddCaption(e.target.value)} placeholder="Legenda (opcional)" style={{marginBottom:14}}/>
+        <div style={{marginBottom:16}}><TagPicker selectedTags={addTags} onChange={setAddTags} customTags={activeData.customTags||[]}/></div>
+        <Btn onClick={()=>addMoment()}>Adicionar momento</Btn>
+      </>}
+      {addType==="arte"&&<>
+        <input value={addCaption} onChange={e=>setAddCaption(e.target.value)} placeholder="Legenda para a arte (opcional)" style={{marginBottom:14}}/>
+      </>}
     </Modal>}
 
     {showEditDay&&<Modal title="Cor do dia" onClose={()=>setShowEditDay(false)}><div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>{DAY_COLORS.map(col=><button key={col.label} onClick={()=>{save({...data,dayColors:{...(data.dayColors||{}),[curDay]:col.label}});setShowEditDay(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",padding:8}}><div style={{width:48,height:48,borderRadius:"50%",background:col.bg,border:`3px solid ${col.dot}`,outline:dayColor.label===col.label?`3px solid ${C.purple}`:"none",outlineOffset:2}}/><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{col.label}</span></button>)}</div></Modal>}
@@ -1074,10 +1448,13 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       <Btn onClick={()=>setShowAvatar(false)}>Salvar</Btn>
     </Modal>}
 
-    {showInvite&&<Modal title="Adicionar contato" onClose={()=>setShowInvite(false)}>
-      <input value={invName} onChange={e=>setInvName(e.target.value)} placeholder="Nome" style={{marginBottom:14}}/>
-      <div style={{display:"flex",gap:8,marginBottom:16}}><input value={invCode} onChange={e=>setInvCode(e.target.value)} placeholder="ID do contato" style={{flex:1,width:"auto"}}/><button onClick={()=>{const w=["sol","lua","rio","mar","flor","paz","luz","céu","vale","nuvem"];setInvCode(`${w[Math.floor(Math.random()*w.length)]}-${Math.floor(100+Math.random()*900)}`);}} style={{padding:"0 12px",background:C.purpleLight,border:`1px solid ${C.purpleMid}`,borderRadius:8,color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>gerar</button></div>
-      <Btn onClick={()=>{if(!invName.trim()||!invCode.trim())return;save({...data,contacts:[...(data.contacts||[]),{name:invName.trim(),code:invCode.trim(),emoji:"🌿",addedAt:Date.now()}]});setInvName("");setInvCode("");setShowInvite(false);}}>Adicionar ao grupo</Btn>
+    {showInvite&&<Modal title="Adicionar ao Meu Círculo" onClose={()=>setShowInvite(false)}>
+      <AddContactModal
+        contacts={activeData.contacts||[]}
+        myHandle={profile.handle||nameToHandle(profile.name)}
+        onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);}}
+        onClose={()=>setShowInvite(false)}
+      />
     </Modal>}
 
     {showGroupName&&<Modal title="Renomear grupo" onClose={()=>setShowGroupName(false)}>
@@ -1089,7 +1466,13 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
 // ─── ROOT ────────────────────────────────────
 function Veeda(){
-  const [screen,setScreen]=useState("loading"),[ profiles,setProfiles]=useState([]),[ selProfile,setSelProfile]=useState(null),[ activeProfile,setActiveProfile]=useState(null),[ activePw,setActivePw]=useState(null),[ forgotProfile,setForgotProfile]=useState(null),[ showGuide,setShowGuide]=useState(false);
+  const [screen,setScreen]=useState("loading");
+  const [profiles,setProfiles]=useState([]);
+  const [selProfile,setSelProfile]=useState(null);
+  const [activeProfile,setActiveProfile]=useState(null);
+  const [activePw,setActivePw]=useState(null);
+  const [forgotProfile,setForgotProfile]=useState(null);
+  const [showGuide,setShowGuide]=useState(false);
 
   useEffect(()=>{
     const session=loadSession(),ps=loadProfiles();
@@ -1099,7 +1482,14 @@ function Veeda(){
   },[]);
 
   const refresh=()=>{const ps=loadProfiles();setProfiles(ps);return ps;};
-  const updateProfile=updated=>{const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);if(idx>=0){ps[idx]={...ps[idx],emoji:updated.emoji,avatarColor:updated.avatarColor,avatarSrc:updated.avatarSrc};saveProfiles(ps);setActiveProfile({...updated});}};
+  const updateProfile=updated=>{
+    const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);
+    if(idx>=0){
+      ps[idx]={...ps[idx],...updated};
+      saveProfiles(ps);
+      setActiveProfile(prev=>({...prev,...updated}));
+    }
+  };
 
   if(screen==="loading")return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,fontSize:40}}>🌿</div>;
   if(screen==="app"&&activeProfile&&activePw)return <VeedaApp profile={activeProfile} password={activePw} onLogout={()=>{clearSession();setActiveProfile(null);setActivePw(null);setScreen("splash");}} onUpdateProfile={updateProfile}/>;
@@ -1117,7 +1507,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
-    const sw=`const CACHE="veeda-v6",FILES=["./index.html"];self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES))));self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));self.addEventListener("fetch",e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));`;
+    const sw=`const CACHE="veeda-v7",FILES=["./"];self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES))));self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));self.addEventListener("fetch",e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));`;
     navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:"application/javascript"}))).catch(()=>{});
   });
 }
