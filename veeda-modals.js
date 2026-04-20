@@ -7,13 +7,28 @@
 // ═══════════════════════════════════════════════════
 // ADD CONTACT MODAL (with cross-device support)
 // ═══════════════════════════════════════════════════
-function AddContactModal({contacts,myHandle,onAdd,onClose,addToast}){
+function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard}){
   const [q,setQ]=useState("");
-  const [cardCode,setCardCode]=useState("");
-  const [tab,setTab]=useState("search"); // search | card
+  const [cardCode,setCardCode]=useState(prefillCard||"");
+  const [tab,setTab]=useState(prefillCard?"card":"search"); // search | card
   const [step,setStep]=useState(1);
   const [found,setFound]=useState(null);
   const myH=(myHandle||"").replace(/^@/,"");
+
+  // Auto-decode prefilled code from invite link
+  useEffect(()=>{
+    if(!prefillCard)return;
+    const parsed=parseProfileCard(prefillCard.trim());
+    if(parsed){
+      if(parsed.handle.replace(/^@/,"")===myH){addToast?.("Este é o seu próprio código.","warn");return;}
+      if(contacts.find(c=>(c.handle||"").replace(/^@/,"")===(parsed.handle||"").replace(/^@/,""))){
+        addToast?.(`${parsed.name} já está no seu Círculo.`,"info");return;
+      }
+      setFound(parsed);setStep(2);
+    } else {
+      addToast?.("Link de convite inválido ou corrompido.","error");
+    }
+  },[prefillCard]);
 
   const localResults=useMemo(()=>{
     const results=registrySearch(q).filter(p=>{
@@ -85,8 +100,15 @@ function AddContactModal({contacts,myHandle,onAdd,onClose,addToast}){
 // Connection Code Modal
 function ConnectionCodeModal({profile,onClose}){
   const [copied,setCopied]=useState(false);
+  const [linkCopied,setLinkCopied]=useState(false);
   const code=makeProfileCard(profile);
+  // Link "mágico" — quem abrir este link no celular é convidado a adicionar
+  // este perfil ao Meu Círculo automaticamente (sem precisar copiar/colar código).
+  const inviteLink=`${window.location.origin}${window.location.pathname}?add=${code}`;
+  const whatsMsg=`Olá! Sou ${profile.name} no Veeda. Me adiciona no Meu Círculo:\n${inviteLink}`;
   const copy=()=>{navigator.clipboard?.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);};
+  const copyLink=()=>{navigator.clipboard?.writeText(inviteLink);setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);};
+  const shareNative=()=>{navigator.share?.({title:"Veeda",text:whatsMsg}).catch(()=>{});};
   return(
     <Modal title="Meu Código de Conexão" onClose={onClose}>
       <div style={{textAlign:"center",marginBottom:16}}>
@@ -94,15 +116,23 @@ function ConnectionCodeModal({profile,onClose}){
         <p style={{margin:"8px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
         <p style={{margin:0,fontSize:12,color:C.purple}}>{profile.handle}</p>
       </div>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Compartilhe este código com quem quer que te adicione no Veeda de outro dispositivo.</p>
-      <div style={{background:C.purpleLight,borderRadius:14,padding:"16px 14px",marginBottom:14}}>
-        <p style={{margin:"0 0 8px",fontSize:10,color:C.textMid,fontWeight:600,textTransform:"uppercase",letterSpacing:"1px"}}>Seu código</p>
-        <p style={{margin:0,fontSize:11,color:C.text,wordBreak:"break-all",fontFamily:"monospace",lineHeight:1.7}}>{code}</p>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Compartilhe o <strong>link</strong> abaixo com quem você quer no seu Círculo — quando a pessoa tocar, ela já vai poder te adicionar direto.</p>
+      <div style={{background:C.greenLight,borderRadius:14,padding:"14px",marginBottom:10,border:`1px solid ${C.green}33`}}>
+        <p style={{margin:"0 0 6px",fontSize:10,color:C.green,fontWeight:600,textTransform:"uppercase",letterSpacing:"1px"}}>🔗 Link rápido</p>
+        <p style={{margin:0,fontSize:11,color:C.text,wordBreak:"break-all",lineHeight:1.5}}>{inviteLink}</p>
       </div>
-      <div style={{display:"flex",gap:8}}>
-        <Btn onClick={copy} style={{flex:1}}>{copied?"✓ Copiado!":"Copiar código"}</Btn>
-        {navigator.share&&<button onClick={()=>navigator.share({title:"Meu código Veeda",text:code})} style={{flex:1,padding:"14px 0",background:C.greenLight,color:C.green,border:`1.5px solid ${C.green}55`,borderRadius:50,fontWeight:600,fontSize:14,cursor:"pointer"}}>Compartilhar ↑</button>}
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <Btn onClick={copyLink} variant={linkCopied?"green":"primary"} style={{flex:1,fontSize:13,padding:"11px 0"}}>{linkCopied?"✓ Link copiado!":"Copiar link"}</Btn>
+        {navigator.share&&<button onClick={shareNative} style={{flex:1,padding:"11px 0",background:C.white,color:C.purple,border:`1.5px solid ${C.purple}`,borderRadius:50,fontWeight:600,fontSize:13,cursor:"pointer"}}>Compartilhar ↑</button>}
       </div>
+      <details style={{marginBottom:4}}>
+        <summary style={{fontSize:12,color:C.textMid,cursor:"pointer",padding:"6px 0"}}>Ou use o código de texto (para colar manualmente)</summary>
+        <div style={{background:C.purpleLight,borderRadius:14,padding:"14px",marginTop:8}}>
+          <p style={{margin:"0 0 8px",fontSize:10,color:C.textMid,fontWeight:600,textTransform:"uppercase",letterSpacing:"1px"}}>Seu código</p>
+          <p style={{margin:"0 0 10px",fontSize:11,color:C.text,wordBreak:"break-all",fontFamily:"monospace",lineHeight:1.7}}>{code}</p>
+          <Btn onClick={copy} variant="outline" style={{fontSize:13,padding:"10px 0"}}>{copied?"✓ Copiado!":"Copiar código"}</Btn>
+        </div>
+      </details>
     </Modal>
   );
 }
@@ -394,10 +424,9 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
         {tab==="sobre"&&<div>
           <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,borderRadius:14,padding:20,textAlign:"center",marginBottom:16}}>
             <p style={{fontFamily:PASSO,fontSize:32,fontWeight:700,color:C.purple,margin:"0 0 4px"}}>Veeda</p>
-            <p style={{fontSize:12,color:C.textMid,margin:0}}>v{APP_VERSION} — by @inoihd</p>
+            <p style={{fontSize:12,color:C.textMid,margin:0}}>v{APP_VERSION} — Dias de Vida</p>
           </div>
           <p style={{fontSize:13,color:C.textMid,lineHeight:1.7,marginBottom:16}}>Veeda nasce da crença de que a vida não cabe em um feed. Viva primeiro, registre, compartilhe depois com quem realmente importa. Seus dados ficam sempre no seu dispositivo.</p>
-          <Btn onClick={()=>{const t=window.open("https://github.com","_blank");}} variant="outline">Ver no GitHub</Btn>
         </div>}
       </Modal>
     </>
