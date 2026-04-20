@@ -17,9 +17,8 @@ function SplashScreen({onLogin,onCreate,onGuide}){
       <div style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:14}}>
         <Btn onClick={onCreate}>Criar a sua</Btn>
         <Btn onClick={onLogin} variant="secondary">Já tenho uma conta</Btn>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+        <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:4}}>
           <button onClick={onGuide} style={{background:"none",border:"none",color:"#381653",fontSize:13,cursor:"pointer",fontFamily:PASSO}}>📱 Como instalar</button>
-          <span style={{fontSize:11,color:"#381653aa",fontFamily:PASSO}}>by @inoihd</span>
         </div>
       </div>
     </div>
