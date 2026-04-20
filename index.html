@@ -41,7 +41,7 @@ const {useState,useEffect,useRef,useCallback,useMemo,useReducer} = React;
 // ═══════════════════════════════════════════════════
 // CONSTANTS & DESIGN TOKENS
 // ═══════════════════════════════════════════════════
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 const DATA_VERSION = 3; // bump when schema changes
 const PROFILES_KEY  = "veeda_profiles_v2";
 const SESSION_KEY   = "veeda_session_v2"; // localStorage (persistent)
@@ -184,11 +184,15 @@ const loadSession=()=>safeLS.get(SESSION_KEY,null);
 const saveSession=(id,pw)=>safeLS.set(SESSION_KEY,{profileId:id,pw,ts:Date.now()});
 const clearSession=()=>safeLS.del(SESSION_KEY);
 
-// Monthly snapshot — never overwritten, protects current-month data
+// Monthly snapshot — overwrites current-month snapshot on every save (so
+// the user never loses progress of the current month), but NEVER touches
+// snapshots of previous months. Combined with the data recovery fallback
+// below, this means a bad write can always be rolled back to the latest
+// good snapshot without losing the current month's history.
 const saveMonthlySnapshot=(profileId,encBlob)=>{
   const ym=new Date().toISOString().slice(0,7);
   const k=`veeda_snap_${profileId}_${ym}`;
-  if(!safeLS.raw(k)){safeLS.rawSet(k,encBlob);} // first save of month only
+  safeLS.rawSet(k,encBlob);
 };
 const getMonthlySnapshots=(profileId)=>{
   const out=[];
@@ -199,6 +203,19 @@ const getMonthlySnapshots=(profileId)=>{
     }
   }
   return out.sort((a,b)=>b.ym.localeCompare(a.ym));
+};
+// Recovery: try each monthly snapshot (newest first) until one decrypts
+const loadLatestSnapshot=async(profileId,password)=>{
+  const snaps=getMonthlySnapshots(profileId);
+  for(const s of snaps){
+    try{
+      const raw=safeLS.raw(s.key);
+      if(!raw)continue;
+      const{key,salt,data}=await decryptObj(raw,password);
+      return{key,salt,data,ym:s.ym};
+    }catch(e){continue;}
+  }
+  return null;
 };
 
 // Public registry — local device discoverable profiles
@@ -667,16 +684,30 @@ function MomentCircle({m,isNew,onTap,size=52}){
 // ═══════════════════════════════════════════════════
 function MomentDetail({m,onClose,onDelete}){
   const [playing,setPlaying]=useState(false);
+  const [saving,setSaving]=useState(false);
   const audioRef=useRef(null);
   const embed=m.type==="videolink"?getVideoEmbed(m.content):null;
   const allTags=[...DEFAULT_TAGS];
-  const canSave=(m.type==="foto"||m.type==="arte"||m.type==="video")&&m.content&&!m.content.startsWith("IDB:");
+  // Permitir salvar mesmo quando a mídia está no IndexedDB (prefixo "IDB:"),
+  // e também para notas de voz (.webm).
+  const canSave=(m.type==="foto"||m.type==="arte"||m.type==="video"||m.type==="voz")&&!!m.content;
 
-  const saveToDevice=()=>{
-    const a=document.createElement("a");
-    a.href=m.content;
-    a.download=`veeda-${m.id}.${m.type==="video"?"mp4":"png"}`;
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
+  const saveToDevice=async()=>{
+    if(!m.content)return;
+    setSaving(true);
+    try{
+      let src=m.content;
+      if(src.startsWith("IDB:")){
+        const loaded=await idbLoad(src.slice(4));
+        if(!loaded){setSaving(false);return;}
+        src=loaded;
+      }
+      const ext=m.type==="video"?"mp4":m.type==="voz"?"webm":"png";
+      const a=document.createElement("a");
+      a.href=src;
+      a.download=`veeda-${m.id}.${ext}`;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    }finally{setSaving(false);}
   };
 
   return(
@@ -729,7 +760,7 @@ function MomentDetail({m,onClose,onDelete}){
         {m.tags.map(tid=>{const t=allTags.find(x=>x.id===tid);return t?<span key={tid} style={{padding:"3px 10px",background:t.bg,color:t.color,borderRadius:20,fontSize:12,fontWeight:500}}>{t.emoji} {t.label}</span>:null;})}
       </div>}
 
-      {canSave&&<Btn onClick={saveToDevice} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>↓ Salvar no dispositivo</Btn>}
+      {canSave&&<Btn onClick={saveToDevice} disabled={saving} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>{saving?<><Spinner size={14} color={C.purple}/>Preparando…</>:"↓ Salvar no dispositivo"}</Btn>}
       <Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>
     </Modal>
   );
@@ -791,13 +822,28 @@ function TagPicker({selectedTags,onChange,customTags=[]}){
 // ═══════════════════════════════════════════════════
 // ADD CONTACT MODAL (with cross-device support)
 // ═══════════════════════════════════════════════════
-function AddContactModal({contacts,myHandle,onAdd,onClose,addToast}){
+function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard}){
   const [q,setQ]=useState("");
-  const [cardCode,setCardCode]=useState("");
-  const [tab,setTab]=useState("search"); // search | card
+  const [cardCode,setCardCode]=useState(prefillCard||"");
+  const [tab,setTab]=useState(prefillCard?"card":"search"); // search | card
   const [step,setStep]=useState(1);
   const [found,setFound]=useState(null);
   const myH=(myHandle||"").replace(/^@/,"");
+
+  // Auto-decode prefilled code from invite link
+  useEffect(()=>{
+    if(!prefillCard)return;
+    const parsed=parseProfileCard(prefillCard.trim());
+    if(parsed){
+      if(parsed.handle.replace(/^@/,"")===myH){addToast?.("Este é o seu próprio código.","warn");return;}
+      if(contacts.find(c=>(c.handle||"").replace(/^@/,"")===(parsed.handle||"").replace(/^@/,""))){
+        addToast?.(`${parsed.name} já está no seu Círculo.`,"info");return;
+      }
+      setFound(parsed);setStep(2);
+    } else {
+      addToast?.("Link de convite inválido ou corrompido.","error");
+    }
+  },[prefillCard]);
 
   const localResults=useMemo(()=>{
     const results=registrySearch(q).filter(p=>{
@@ -869,8 +915,13 @@ function AddContactModal({contacts,myHandle,onAdd,onClose,addToast}){
 // Connection Code Modal
 function ConnectionCodeModal({profile,onClose}){
   const [copied,setCopied]=useState(false);
+  const [copiedCode,setCopiedCode]=useState(false);
   const code=makeProfileCard(profile);
-  const copy=()=>{navigator.clipboard?.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);};
+  const inviteLink=`${window.location.origin}${window.location.pathname}?add=${code}`;
+  const whatsMsg=`Olá! Sou ${profile.name} no Veeda. Me adiciona no Meu Círculo:\n${inviteLink}`;
+  const copyLink=()=>{navigator.clipboard?.writeText(inviteLink);setCopied(true);setTimeout(()=>setCopied(false),2500);};
+  const copyCode=()=>{navigator.clipboard?.writeText(code);setCopiedCode(true);setTimeout(()=>setCopiedCode(false),2500);};
+  const shareNative=()=>{try{navigator.share?.({title:"Veeda",text:whatsMsg}).catch(()=>{});}catch(e){}};
   return(
     <Modal title="Meu Código de Conexão" onClose={onClose}>
       <div style={{textAlign:"center",marginBottom:16}}>
@@ -878,15 +929,22 @@ function ConnectionCodeModal({profile,onClose}){
         <p style={{margin:"8px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
         <p style={{margin:0,fontSize:12,color:C.purple}}>{profile.handle}</p>
       </div>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Compartilhe este código com quem quer que te adicione no Veeda de outro dispositivo.</p>
-      <div style={{background:C.purpleLight,borderRadius:14,padding:"16px 14px",marginBottom:14}}>
-        <p style={{margin:"0 0 8px",fontSize:10,color:C.textMid,fontWeight:600,textTransform:"uppercase",letterSpacing:"1px"}}>Seu código</p>
-        <p style={{margin:0,fontSize:11,color:C.text,wordBreak:"break-all",fontFamily:"monospace",lineHeight:1.7}}>{code}</p>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Envie este link — quem abrir já verá você no Veeda e poderá adicionar ao Círculo.</p>
+      <div style={{background:C.greenLight,border:`1.5px solid ${C.green}44`,borderRadius:14,padding:"14px",marginBottom:12}}>
+        <p style={{margin:"0 0 8px",fontSize:10,color:C.green,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px"}}>Link de convite</p>
+        <p style={{margin:0,fontSize:12,color:C.text,wordBreak:"break-all",lineHeight:1.5}}>{inviteLink}</p>
       </div>
-      <div style={{display:"flex",gap:8}}>
-        <Btn onClick={copy} style={{flex:1}}>{copied?"✓ Copiado!":"Copiar código"}</Btn>
-        {navigator.share&&<button onClick={()=>navigator.share({title:"Meu código Veeda",text:code})} style={{flex:1,padding:"14px 0",background:C.greenLight,color:C.green,border:`1.5px solid ${C.green}55`,borderRadius:50,fontWeight:600,fontSize:14,cursor:"pointer"}}>Compartilhar ↑</button>}
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <Btn onClick={copyLink} style={{flex:1}}>{copied?"✓ Link copiado!":"Copiar link"}</Btn>
+        {navigator.share&&<button onClick={shareNative} style={{flex:1,padding:"14px 0",background:C.greenLight,color:C.green,border:`1.5px solid ${C.green}55`,borderRadius:50,fontWeight:600,fontSize:14,cursor:"pointer"}}>Compartilhar ↑</button>}
       </div>
+      <details style={{marginTop:6}}>
+        <summary style={{fontSize:12,color:C.textMid,cursor:"pointer",padding:"6px 0"}}>Código em texto (fallback)</summary>
+        <div style={{background:C.purpleLight,borderRadius:12,padding:"12px",marginTop:8}}>
+          <p style={{margin:0,fontSize:10,color:C.text,wordBreak:"break-all",fontFamily:"monospace",lineHeight:1.6}}>{code}</p>
+          <button onClick={copyCode} style={{marginTop:10,width:"100%",padding:"9px 0",background:C.purple,color:"#fff",border:"none",borderRadius:30,fontSize:12,fontWeight:600,cursor:"pointer"}}>{copiedCode?"✓ Copiado":"Copiar código"}</button>
+        </div>
+      </details>
     </Modal>
   );
 }
@@ -1178,10 +1236,9 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
         {tab==="sobre"&&<div>
           <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,borderRadius:14,padding:20,textAlign:"center",marginBottom:16}}>
             <p style={{fontFamily:PASSO,fontSize:32,fontWeight:700,color:C.purple,margin:"0 0 4px"}}>Veeda</p>
-            <p style={{fontSize:12,color:C.textMid,margin:0}}>v{APP_VERSION} — by @inoihd</p>
+            <p style={{fontSize:12,color:C.textMid,margin:0}}>v{APP_VERSION} — Dias de Vida</p>
           </div>
           <p style={{fontSize:13,color:C.textMid,lineHeight:1.7,marginBottom:16}}>Veeda nasce da crença de que a vida não cabe em um feed. Viva primeiro, registre, compartilhe depois com quem realmente importa. Seus dados ficam sempre no seu dispositivo.</p>
-          <Btn onClick={()=>{const t=window.open("https://github.com","_blank");}} variant="outline">Ver no GitHub</Btn>
         </div>}
       </Modal>
     </>
@@ -1202,9 +1259,8 @@ function SplashScreen({onLogin,onCreate,onGuide}){
       <div style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:14}}>
         <Btn onClick={onCreate}>Criar a sua</Btn>
         <Btn onClick={onLogin} variant="secondary">Já tenho uma conta</Btn>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+        <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:4}}>
           <button onClick={onGuide} style={{background:"none",border:"none",color:"#381653",fontSize:13,cursor:"pointer",fontFamily:PASSO}}>📱 Como instalar</button>
-          <span style={{fontSize:11,color:"#381653aa",fontFamily:PASSO}}>by @inoihd</span>
         </div>
       </div>
     </div>
@@ -1432,7 +1488,6 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [showReminders,setShowReminders]=useState(false);
   const [showEvents,setShowEvents]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
-  const [showGuide,setShowGuide]=useState(false);
   const [viewRec,setViewRec]=useState(null);
   const [pendingNotif,setPendingNotif]=useState(null);
   const [expandedMoment,setExpandedMoment]=useState(null);
@@ -1440,6 +1495,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [lastId,setLastId]=useState(null);
   const [now,setNow]=useState(new Date());
   const [unreadCount,setUnreadCount]=useState(0);
+  const [pendingAddCode,setPendingAddCode]=useState(null);
 
   const sessionKey=useRef(null);
   const sessionSalt=useRef(null);
@@ -1451,9 +1507,21 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       try{
         const raw=safeLS.raw(dataKey);
         if(raw){
-          const{key,salt,data:d}=await decryptObj(raw,password);
-          sessionKey.current=key;sessionSalt.current=salt;
-          setData(migrateData(d));
+          try{
+            const{key,salt,data:d}=await decryptObj(raw,password);
+            sessionKey.current=key;sessionSalt.current=salt;
+            setData(migrateData(d));
+          }catch(decErr){
+            // Tenta recuperar pelo snapshot mensal mais recente
+            const snap=await loadLatestSnapshot(profile.id,password);
+            if(snap){
+              sessionKey.current=snap.key;sessionSalt.current=snap.salt;
+              setData(migrateData(snap.data));
+              addToast?.("Dados recuperados do snapshot mensal ✅","success");
+            } else {
+              throw decErr;
+            }
+          }
         } else {
           const d=EMPTY_DATA();
           const enc=await encryptObj(d,password);
@@ -1494,6 +1562,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   },[data,profile]);
 
   useEffect(()=>{if(data&&!loading)checkInbox();},[data,loading]);
+
+  // Pending add from invite link (?add=vc2_…)
+  useEffect(()=>{
+    if(!data||loading)return;
+    const pending=sessionStorage.getItem("veeda_pending_add");
+    if(pending){
+      sessionStorage.removeItem("veeda_pending_add");
+      setPendingAddCode(pending);
+      setShowInvite(true);
+    }
+  },[data,loading]);
 
   // Monthly snapshot on every save
   const save=useCallback(async d=>{
@@ -1630,7 +1709,6 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     <div style={{maxWidth:480,margin:"0 auto",background:`linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradEnd} 100%)`,minHeight:"100vh",fontFamily:SANS}}>
       <ToastContainer/>
       {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
-      {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
       {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
       {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
 
@@ -1882,8 +1960,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         <Btn onClick={()=>setShowAvatar(false)}>Salvar</Btn>
       </Modal>}
 
-      {showInvite&&<Modal title="Adicionar ao Meu Círculo" onClose={()=>setShowInvite(false)}>
-        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>setShowInvite(false)} addToast={addToast}/>
+      {showInvite&&<Modal title="Adicionar ao Meu Círculo" onClose={()=>{setShowInvite(false);setPendingAddCode(null);}}>
+        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} prefillCard={pendingAddCode} onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);setPendingAddCode(null);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>{setShowInvite(false);setPendingAddCode(null);}} addToast={addToast}/>
       </Modal>}
 
       {showGroupName&&<Modal title="Renomear" onClose={()=>setShowGroupName(false)}>
@@ -1963,8 +2041,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
     const swCode=`
-const CACHE_NAME = "veeda-v8";
-const URLS_TO_CACHE = ["./", "./index.html"];
+const CACHE_NAME = "veeda-v9";
+const URLS_TO_CACHE = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
@@ -1978,8 +2056,28 @@ self.addEventListener("activate", e => {
     ).then(() => self.clients.claim())
   );
 });
+self.addEventListener("message", e => {
+  if (e.data === "SKIP_WAITING") self.skipWaiting();
+});
 self.addEventListener("fetch", e => {
   if(e.request.method !== "GET") return;
+  const isNav = e.request.mode === "navigate" ||
+                (e.request.destination === "document") ||
+                (e.request.headers.get("accept") || "").includes("text/html");
+  if(isNav){
+    // Network-first for HTML so the user always gets the latest shell
+    e.respondWith(
+      fetch(e.request).then(resp => {
+        if(resp && resp.status === 200 && resp.type === "basic"){
+          const clone = resp.clone();
+          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        }
+        return resp;
+      }).catch(() => caches.match(e.request).then(c => c || caches.match("./index.html")))
+    );
+    return;
+  }
+  // Stale-while-revalidate for everything else
   e.respondWith(
     caches.match(e.request).then(cached => {
       const fetchPromise = fetch(e.request).then(resp => {
@@ -1988,7 +2086,7 @@ self.addEventListener("fetch", e => {
           caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         }
         return resp;
-      });
+      }).catch(() => cached);
       return cached || fetchPromise;
     })
   );
