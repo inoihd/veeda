@@ -36,7 +36,6 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [showReminders,setShowReminders]=useState(false);
   const [showEvents,setShowEvents]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
-  const [showGuide,setShowGuide]=useState(false);
   const [viewRec,setViewRec]=useState(null);
   const [pendingNotif,setPendingNotif]=useState(null);
   const [expandedMoment,setExpandedMoment]=useState(null);
@@ -44,6 +43,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [lastId,setLastId]=useState(null);
   const [now,setNow]=useState(new Date());
   const [unreadCount,setUnreadCount]=useState(0);
+  const [pendingAddCode,setPendingAddCode]=useState(null);
 
   const sessionKey=useRef(null);
   const sessionSalt=useRef(null);
@@ -55,9 +55,18 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       try{
         const raw=safeLS.raw(dataKey);
         if(raw){
-          const{key,salt,data:d}=await decryptObj(raw,password);
-          sessionKey.current=key;sessionSalt.current=salt;
-          setData(migrateData(d));
+          try{
+            const{key,salt,data:d}=await decryptObj(raw,password);
+            sessionKey.current=key;sessionSalt.current=salt;
+            setData(migrateData(d));
+          }catch(decErr){
+            const snap=await loadLatestSnapshot(profile.id,password);
+            if(snap){
+              sessionKey.current=snap.key;sessionSalt.current=snap.salt;
+              setData(migrateData(snap.data));
+              addToast?.("Dados recuperados do snapshot mensal ✅","success");
+            } else { throw decErr; }
+          }
         } else {
           const d=EMPTY_DATA();
           const enc=await encryptObj(d,password);
@@ -98,6 +107,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   },[data,profile]);
 
   useEffect(()=>{if(data&&!loading)checkInbox();},[data,loading]);
+
+  // Pending add from invite link (?add=vc2_…)
+  useEffect(()=>{
+    if(!data||loading)return;
+    const pending=sessionStorage.getItem("veeda_pending_add");
+    if(pending){
+      sessionStorage.removeItem("veeda_pending_add");
+      setPendingAddCode(pending);
+      setShowInvite(true);
+    }
+  },[data,loading]);
 
   // Monthly snapshot on every save
   const save=useCallback(async d=>{
@@ -234,7 +254,6 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     <div style={{maxWidth:480,margin:"0 auto",background:`linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradEnd} 100%)`,minHeight:"100vh",fontFamily:SANS}}>
       <ToastContainer/>
       {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
-      {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
       {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
       {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
 
@@ -486,8 +505,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         <Btn onClick={()=>setShowAvatar(false)}>Salvar</Btn>
       </Modal>}
 
-      {showInvite&&<Modal title="Adicionar ao Meu Círculo" onClose={()=>setShowInvite(false)}>
-        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>setShowInvite(false)} addToast={addToast}/>
+      {showInvite&&<Modal title="Adicionar ao Meu Círculo" onClose={()=>{setShowInvite(false);setPendingAddCode(null);}}>
+        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} prefillCard={pendingAddCode} onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);setPendingAddCode(null);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>{setShowInvite(false);setPendingAddCode(null);}} addToast={addToast}/>
       </Modal>}
 
       {showGroupName&&<Modal title="Renomear" onClose={()=>setShowGroupName(false)}>
@@ -567,8 +586,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
     const swCode=`
-const CACHE_NAME = "veeda-v8";
-const URLS_TO_CACHE = ["./", "./index.html"];
+const CACHE_NAME = "veeda-v9";
+const URLS_TO_CACHE = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
@@ -582,8 +601,26 @@ self.addEventListener("activate", e => {
     ).then(() => self.clients.claim())
   );
 });
+self.addEventListener("message", e => {
+  if (e.data === "SKIP_WAITING") self.skipWaiting();
+});
 self.addEventListener("fetch", e => {
   if(e.request.method !== "GET") return;
+  const isNav = e.request.mode === "navigate" ||
+                (e.request.destination === "document") ||
+                (e.request.headers.get("accept") || "").includes("text/html");
+  if(isNav){
+    e.respondWith(
+      fetch(e.request).then(resp => {
+        if(resp && resp.status === 200 && resp.type === "basic"){
+          const clone = resp.clone();
+          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        }
+        return resp;
+      }).catch(() => caches.match(e.request).then(c => c || caches.match("./index.html")))
+    );
+    return;
+  }
   e.respondWith(
     caches.match(e.request).then(cached => {
       const fetchPromise = fetch(e.request).then(resp => {
@@ -592,7 +629,7 @@ self.addEventListener("fetch", e => {
           caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         }
         return resp;
-      });
+      }).catch(() => cached);
       return cached || fetchPromise;
     })
   );

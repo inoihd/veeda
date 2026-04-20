@@ -227,16 +227,30 @@ function MomentCircle({m,isNew,onTap,size=52}){
 // ═══════════════════════════════════════════════════
 function MomentDetail({m,onClose,onDelete}){
   const [playing,setPlaying]=useState(false);
+  const [saving,setSaving]=useState(false);
   const audioRef=useRef(null);
   const embed=m.type==="videolink"?getVideoEmbed(m.content):null;
   const allTags=[...DEFAULT_TAGS];
-  const canSave=(m.type==="foto"||m.type==="arte"||m.type==="video")&&m.content&&!m.content.startsWith("IDB:");
+  // Permitir salvar mesmo quando o conteúdo está no IndexedDB (prefixo "IDB:")
+  const canSave=(m.type==="foto"||m.type==="arte"||m.type==="video"||m.type==="voz")&&!!m.content;
 
-  const saveToDevice=()=>{
-    const a=document.createElement("a");
-    a.href=m.content;
-    a.download=`veeda-${m.id}.${m.type==="video"?"mp4":"png"}`;
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
+  const saveToDevice=async()=>{
+    if(!m.content)return;
+    setSaving(true);
+    try{
+      let src=m.content;
+      // Se o conteúdo está no IndexedDB, resolve primeiro
+      if(src.startsWith("IDB:")){
+        const loaded=await idbLoad(src.slice(4));
+        if(!loaded){setSaving(false);return;}
+        src=loaded;
+      }
+      const ext=m.type==="video"?"mp4":m.type==="voz"?"webm":"png";
+      const a=document.createElement("a");
+      a.href=src;
+      a.download=`veeda-${m.id}.${ext}`;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    }finally{setSaving(false);}
   };
 
   return(
@@ -289,7 +303,7 @@ function MomentDetail({m,onClose,onDelete}){
         {m.tags.map(tid=>{const t=allTags.find(x=>x.id===tid);return t?<span key={tid} style={{padding:"3px 10px",background:t.bg,color:t.color,borderRadius:20,fontSize:12,fontWeight:500}}>{t.emoji} {t.label}</span>:null;})}
       </div>}
 
-      {canSave&&<Btn onClick={saveToDevice} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>↓ Salvar no dispositivo</Btn>}
+      {canSave&&<Btn onClick={saveToDevice} disabled={saving} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>{saving?<><Spinner size={14} color={C.purple}/>Preparando…</>:"↓ Salvar no dispositivo"}</Btn>}
       <Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>
     </Modal>
   );
