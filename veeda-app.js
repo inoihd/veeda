@@ -785,7 +785,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
     const swCode=`
-const CACHE_NAME = "veeda-v9";
+const CACHE_NAME = "veeda-v10";
 const URLS_TO_CACHE = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", e => {
@@ -847,4 +847,4 @@ self.addEventListener("push", e => {
     navigator.serviceWorker.register(url).catch(()=>{});
   });
 }
-</script>
+
