@@ -3,6 +3,7 @@
 // Edite este arquivo para: VeedaApp (componente principal),
 // Veeda root, ReactDOM.createRoot, Service Worker PWA
 // ═══════════════════════════════════════════════════════════
+// v1.6.0: OAuth redirect flow, cross-device sharing via URL, AcceptSharedDayModal
 // ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
@@ -281,7 +282,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
 
       {/* ── Header ── */}
-      <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,position:"sticky",top:0,zIndex:100}}>
+      <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,position:"sticky",top:0,zIndex:100,paddingTop:"env(safe-area-inset-top)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 6px"}}>
           <span style={{fontFamily:PASSO,fontSize:18,fontWeight:700,color:C.purple}}>🌿 Veeda</span>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
