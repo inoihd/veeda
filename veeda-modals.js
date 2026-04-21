@@ -12,9 +12,14 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
   const [sending, setSending] = useState(false);
 
   const myH = (myHandle || '').replace(/^@/, '');
+  const isAtLimit = contacts.length >= MAX_CONTACTS_BETA;
 
   useEffect(() => {
     if (!prefillCard) return;
+    if (isAtLimit) {
+      addToast?.(`Você atingiu o máximo de ${MAX_CONTACTS_BETA} contatos (Beta 1.0).`, 'warn');
+      return;
+    }
     const parsed = parseProfileCard(prefillCard.trim());
     if (parsed) {
       const targetHandle = parsed.handle.replace(/^@/, '');
@@ -34,6 +39,11 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
   }, [prefillCard]);
 
   const tryParseCard = () => {
+    if (isAtLimit) {
+      addToast?.(`Você atingiu o máximo de ${MAX_CONTACTS_BETA} contatos permitidos na Beta 1.0.`, 'warn');
+      return;
+    }
+    
     let raw = cardCode.trim();
     try {
       const u = new URL(raw);
@@ -64,6 +74,10 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
 
   const sendRequest = async () => {
     if (!found) return;
+    if (isAtLimit) {
+      addToast?.(`Limite atingido. Máximo ${MAX_CONTACTS_BETA} contatos na Beta.`, 'error');
+      return;
+    }
     setSending(true);
     
     const success = saveConnectionRequest(profile, found.handle);
@@ -91,6 +105,13 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
     <div>
       {step === 1 && (
         <>
+          {isAtLimit && (
+            <div style={{ background: C.redLight, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+              <p style={{ margin: 0, fontSize: 12, color: C.red, fontWeight: 600, lineHeight: 1.5 }}>
+                🔒 Limite atingido! Você tem o máximo de {MAX_CONTACTS_BETA} contatos permitidos na Beta 1.0.
+              </p>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
             {[
               ['add', '📋 Por código'],
@@ -99,6 +120,7 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
               <button
                 key={k}
                 onClick={() => setTab(k)}
+                disabled={isAtLimit}
                 style={{
                   flex: 1,
                   padding: '9px 0',
@@ -107,8 +129,9 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
                   border: 'none',
                   borderRadius: 10,
                   fontWeight: 600,
-                  cursor: 'pointer',
-                  fontSize: 12
+                  cursor: isAtLimit ? 'not-allowed' : 'pointer',
+                  fontSize: 12,
+                  opacity: isAtLimit ? 0.5 : 1
                 }}
               >
                 {l}
@@ -125,9 +148,10 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
                 value={cardCode}
                 onChange={e => setCardCode(e.target.value)}
                 placeholder="Cole aqui o link ou código vc2_…"
-                style={{ marginBottom: 12, minHeight: 72, borderRadius: 14 }}
+                disabled={isAtLimit}
+                style={{ marginBottom: 12, minHeight: 72, borderRadius: 14, opacity: isAtLimit ? 0.6 : 1 }}
               />
-              <Btn onClick={tryParseCard} disabled={!cardCode.trim()}>
+              <Btn onClick={tryParseCard} disabled={!cardCode.trim() || isAtLimit}>
                 Identificar perfil
               </Btn>
             </>
@@ -139,6 +163,7 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
                 value={q}
                 onChange={e => setQ(e.target.value)}
                 placeholder="Buscar por nome ou @handle…"
+                disabled={isAtLimit}
                 autoFocus
                 style={{ marginBottom: 8 }}
               />
@@ -166,6 +191,7 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
                     setFound(p);
                     setStep(2);
                   }}
+                  disabled={isAtLimit}
                   style={{
                     width: '100%',
                     background: C.white,
@@ -176,8 +202,9 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 12,
-                    cursor: 'pointer',
-                    textAlign: 'left'
+                    cursor: isAtLimit ? 'not-allowed' : 'pointer',
+                    textAlign: 'left',
+                    opacity: isAtLimit ? 0.5 : 1
                   }}
                 >
                   <AvatarBubble
@@ -230,8 +257,15 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
               </p>
             </div>
           </div>
-          <Btn onClick={sendRequest} disabled={sending} style={{ marginBottom: 10 }}>
-            {sending ? <><Spinner size={16} color="#fff" /> Enviando convite…</> : 'Enviar convite'}
+          {isAtLimit && (
+            <div style={{ background: C.redLight, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <p style={{ margin: 0, fontSize: 12, color: C.red, fontWeight: 600 }}>
+                ⚠️ Limite atingido! Máximo {MAX_CONTACTS_BETA} contatos na Beta 1.0
+              </p>
+            </div>
+          )}
+          <Btn onClick={sendRequest} disabled={sending || isAtLimit} style={{ marginBottom: 10 }}>
+            {isAtLimit ? '⚠️ Limite atingido' : sending ? <><Spinner size={16} color="#fff" /> Enviando convite…</> : 'Enviar convite'}
           </Btn>
           <Btn onClick={() => { setStep(1); setFound(null); setCardCode(''); }} variant="ghost">
             ← Voltar
@@ -556,6 +590,7 @@ function SettingsModal({profile, data, password, onUpdateProfile, onSave, onLogo
   const [showBackup, setShowBackup] = useState(false);
   const [showCode, setShowCode] = useState(false);
   const [showHandle, setShowHandle] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
   const [handleInput, setHandleInput] = useState((profile.handle || nameToHandle(profile.name)).replace(/^@/, ''));
   const [handleErr, setHandleErr] = useState('');
   const [tab, setTab] = useState('conta');
@@ -578,6 +613,7 @@ function SettingsModal({profile, data, password, onUpdateProfile, onSave, onLogo
     <>
       {showBackup && <BackupModal data={data} profile={profile} password={password} onClose={() => setShowBackup(false)} addToast={addToast} />}
       {showCode && <ConnectionCodeModal profile={profile} onClose={() => setShowCode(false)} />}
+      {showVersions && <VersionsModal onClose={() => setShowVersions(false)} />}
 
       <Modal title="Configurações" onClose={onClose} fullHeight>
         <div style={{ textAlign: 'center', paddingBottom: 20, marginBottom: 16, borderBottom: `1px solid ${C.headerBorder}` }}>
@@ -670,8 +706,47 @@ function SettingsModal({profile, data, password, onUpdateProfile, onSave, onLogo
             <p style={{ fontSize: 12, color: C.textMid, margin: 0 }}>v{APP_VERSION} — Dias de Vida</p>
           </div>
           <p style={{ fontSize: 13, color: C.textMid, lineHeight: 1.7, marginBottom: 16 }}>Veeda nasce da crença de que a vida não cabe em um feed. Viva primeiro, registre, compartilhe depois.</p>
+          <Btn onClick={() => setShowVersions(true)}>📋 Ver histórico de atualizações</Btn>
         </div>}
       </Modal>
     </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// VERSIONS MODAL — Histórico de atualizações
+// ═══════════════════════════════════════════════════════════
+function VersionsModal({onClose}) {
+  return (
+    <Modal title="📋 Histórico de atualizações" onClose={onClose} fullHeight>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {VERSION_HISTORY.map((v, idx) => (
+          <div key={v.version} style={{ 
+            background: idx === 0 ? C.purpleLight : C.white,
+            border: `1px solid ${idx === 0 ? C.purple + '33' : C.cardBorder}`,
+            borderRadius: 14,
+            padding: 14,
+            position: 'relative'
+          }}>
+            {idx === 0 && <span style={{ position: 'absolute', top: 10, right: 10, fontSize: 11, background: C.purple, color: C.white, padding: '3px 8px', borderRadius: 6, fontWeight: 600 }}>Atual</span>}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.text, fontFamily: PASSO }}>v{v.version}</p>
+              <p style={{ margin: 0, fontSize: 12, color: C.textLight }}>{new Date(v.date).toLocaleDateString('pt-BR')}</p>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: C.textMid, lineHeight: 1.6 }}>
+              {v.changes.map((change, cidx) => (
+                <li key={cidx} style={{ marginBottom: cidx < v.changes.length - 1 ? 6 : 0 }}>{change}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.headerBorder}`, textAlign: 'center' }}>
+        <p style={{ margin: 0, fontSize: 12, color: C.textLight, lineHeight: 1.6 }}>
+          Veeda está sempre evoluindo para oferecer a melhor experiência possível. 
+          Obrigado por acompanhar esta jornada!
+        </p>
+      </div>
+    </Modal>
   );
 }

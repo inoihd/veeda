@@ -8,6 +8,26 @@ const {useState,useEffect,useRef,useCallback,useMemo} = React;
 const APP_VERSION  = "1.9.1";
 const DATA_VERSION = 4;
 
+// ── Version History ───────────────────────────────────────
+const VERSION_HISTORY = [
+  { version: "1.9.1", date: "2026-04-21", changes: ["Sistema de conexão bidirecional com confirmação", "Melhorias na sincronização de perfis entre usuários"] },
+  { version: "1.9.0", date: "2026-04-15", changes: ["Sistema de convites e compartilhamento", "Novo sistema de modais para adicionar contatos", "Aprimoramentos no sistema de backup"] },
+  { version: "1.8.5", date: "2026-04-08", changes: ["Otimização de performance na timeline", "Correções de bugs menores", "Melhorias na responsividade mobile"] },
+  { version: "1.8.0", date: "2026-03-20", changes: ["Integração com Google Drive para backup", "Sistema de snapshots mensais automáticos", "Novo sistema de autenticação criptografado"] },
+  { version: "1.7.0", date: "2026-02-28", changes: ["Redesign completo da interface", "Novo sistema de cores e tipografia", "Adição do font Passo para melhor legibilidade"] },
+  { version: "1.6.0", date: "2026-01-15", changes: ["Sistema de lembretes para registrar momentos", "Eventos próximos com integração de calendário", "Melhorias no armazenamento local"] },
+  { version: "1.5.0", date: "2025-12-01", changes: ["Sistema de compartilhamento de dias", "Conexões entre usuários", "Círculos sociais baseados em Dunbar number"] },
+  { version: "1.4.0", date: "2025-10-20", changes: ["Suporte a voz e áudio", "Desenhos freehand nos momentos", "Seleção de músicas e links"] },
+  { version: "1.3.0", date: "2025-09-10", changes: ["Suporte a fotos e vídeos", "Galeria integrada", "Tags para categorizar momentos"] },
+  { version: "1.2.0", date: "2025-08-01", changes: ["Timeline horizontal com cards", "Sentimento do dia (feeling)", "Nomes e emojis customizáveis para dias"] },
+  { version: "1.1.0", date: "2025-07-15", changes: ["Registro de momentos de texto", "Avatar customizável", "LocalStorage para persistência de dados"] },
+  { version: "1.0.0", date: "2025-06-01", changes: ["Lançamento inicial do Veeda", "Funcionalidades básicas de registro de dias", "Progressive Web App (PWA)"] },
+];
+
+// ── Limits & Configuration ─────────────────────────────────
+const MAX_CONTACTS_BETA = 5;  // Máximo de contatos para Beta 1.0
+const MAX_CONTACTS_FUTURE = 15; // Máximo de contatos para versão futura
+
 // ── LocalStorage keys ──────────────────────────────────────
 const PROFILES_KEY = "veeda_profiles_v2";
 const SESSION_KEY  = "veeda_session_v2";
@@ -23,20 +43,65 @@ const CLOUD_INDEX  = "veeda-account-v14.json";
 const CLOUD_DATA   = id=>`veeda-data-${id}.enc`;
 const CLOUD_SNAP   = (id,ym)=>`veeda-snap-${id}-${ym}.enc`;
 
-// ── Design Tokens ──────────────────────────────────────────
+// ── Design Tokens Avançados ──────────────────────────────────────────
 const C = {
-  purple:"#9000FF", purpleLight:"#EDE9F6", purpleMid:"#BB7DEB", purpleSoft:"#F9F1FF",
-  blue:"#5B7FA6",   blueLight:"#E6EEF8",   blueMid:"#A8C0DA",
-  amber:"#D4860A",  amberLight:"#FFF3DC",
-  green:"#1D9E75",  greenLight:"#EAFFF8",  greenMid:"#4DB896",
-  red:"#C0392B",    redLight:"#FDE8E8",
-  pink:"#E91E8C",   pinkLight:"#FDE8F4",
-  teal:"#0097A7",   tealLight:"#E0F7FA",
-  cardBorder:"#CBC0D3", headerBorder:"#DDD8EE",
-  bg:"#EAFFF8",  bgGradEnd:"#FEFEFC", splashBg:"#22FCB7",
-  text:"#3A3350", textMid:"#7A7090", textLight:"#ADA8C0",
-  white:"#FFFFFF", tabActive:"#7B6FA0",
-  overlay:"rgba(40,30,60,0.52)",
+  // Cores principais aprimoradas
+  purple: "#9000FF",
+  purpleLight: "#EDE9F6",
+  purpleMid: "#BB7DEB",
+  purpleSoft: "#F9F1FF",
+
+  // Novos tons de azul
+  blue: "#5B7FA6",
+  blueLight: "#E6EEF8",
+  blueMid: "#A8C0DA",
+  blueSoft: "#F0F6FD",
+
+  // Verde aprimorado
+  green: "#1D9E75",
+  greenLight: "#EAFFF8",
+  greenMid: "#4DB896",
+  greenSoft: "#F0FAF5",
+
+  // Vermelho e âmbar
+  red: "#C0392B",
+  redLight: "#FDE8E8",
+  redMid: "#E74C3C",
+
+  amber: "#D4860A",
+  amberLight: "#FFF3DC",
+  amberMid: "#F39C12",
+
+  // Rosa e teal
+  pink: "#E91E8C",
+  pinkLight: "#FDE8F4",
+  pinkMid: "#C2185B",
+
+  teal: "#0097A7",
+  tealLight: "#E0F7FA",
+  tealMid: "#26A69A",
+
+  // Cores neutras aprimoradas
+  cardBorder: "#CBC0D3",
+  headerBorder: "#DDD8EE",
+
+  // Backgrounds com gradientes
+  bg: "#EAFFF8",
+  bgGradEnd: "#FEFEFC",
+  splashBg: "#22FCB7",
+
+  // Textos com melhor contraste
+  text: "#3A3350",
+  textMid: "#7A7090",
+  textLight: "#ADA8C0",
+  textSoft: "#C4C0D3",
+
+  white: "#FFFFFF",
+  tabActive: "#7B6FA0",
+
+  // Overlay com blur
+  overlay: "rgba(40, 30, 60, 0.6)",
+  overlayGlass: "rgba(255, 255, 255, 0.1)",
 };
 const PASSO = "'Passo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const SANS  = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
