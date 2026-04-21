@@ -104,7 +104,7 @@ function ConnectionCodeModal({profile,onClose}){
   const code=makeProfileCard(profile);
   // Link "mágico" — quem abrir este link no celular é convidado a adicionar
   // este perfil ao Meu Círculo automaticamente (sem precisar copiar/colar código).
-  const inviteLink=`${window.location.origin}${window.location.pathname}?add=${code}`;
+  const inviteLink=`${window.location.origin}${window.location.pathname}?add=${encodeURIComponent(code)}`;
   const whatsMsg=`Olá! Sou ${profile.name} no Veeda. Me adiciona no Meu Círculo:\n${inviteLink}`;
   const copy=()=>{navigator.clipboard?.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);};
   const copyLink=()=>{navigator.clipboard?.writeText(inviteLink);setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);};
@@ -468,3 +468,6 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
     </>
   );
 }
+// AcceptSharedDayModal is defined in veeda-app.js context (uses encodeSharedDay/decodeSharedDay from core)
+// ShareDayModal updated in v1.6.0: added "Via link" tab for cross-device sharing
+// See index.html for full implementation
