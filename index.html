@@ -44,7 +44,7 @@ button{font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparen
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.7.0";
+const APP_VERSION  = "1.8.0";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -578,12 +578,17 @@ const restorePreservedBackup=(key)=>{
 
 // Detectar se há conta local existente (para oferecer migração)
 const hasLocalAccounts=()=>{
-  const profiles=loadProfiles();
+  // Conta apenas perfis locais (não cloud) para evitar mostrar "Importar conta local" quando o usuário já tem conta Google
+  const profiles=loadProfiles().filter(p=>!p.cloud);
   if(profiles.length>0)return true;
-  // Órfãos: veeda_data_* sem entrada em profiles
+  // Órfãos: veeda_data_* sem entrada em profiles (excluindo blobs de perfis cloud)
+  const cloudIds=new Set(loadProfiles().filter(p=>p.cloud).map(p=>p.id));
   for(let i=0;i<localStorage.length;i++){
     const k=localStorage.key(i);
-    if(k&&k.startsWith("veeda_data_"))return true;
+    if(k&&k.startsWith("veeda_data_")){
+      const id=k.replace("veeda_data_","");
+      if(!cloudIds.has(id))return true;
+    }
   }
   return false;
 };
@@ -2584,8 +2589,15 @@ function Veeda(){
             const u=await gdriveUserInfo(at);
             setGoogleUser(u);
             const acc=await cloudAccount.load(at);
-            setCloudProfiles(acc?.profiles||[]);
-            setScreen("google_select");
+            const redirectList=acc?.profiles||[];
+            setCloudProfiles(redirectList);
+            // Usuário com 1 perfil vai direto para senha
+            if(redirectList.length===1){
+              setSelProfile({...redirectList[0],cloud:true});
+              setScreen("password");
+            }else{
+              setScreen("google_select");
+            }
           }catch(e){console.warn("OAuth redirect flow failed",e);setScreen("splash");}
           finally{setGoogleLoading(false);}
         })();
@@ -2647,7 +2659,13 @@ function Veeda(){
       const acc=await cloudAccount.load(t);
       const list=acc?.profiles||[];
       setCloudProfiles(list);
-      setScreen("google_select");
+      // Usuário com 1 perfil vai direto para senha, sem passar pela tela de seleção
+      if(list.length===1){
+        setSelProfile({...list[0],cloud:true});
+        setScreen("password");
+      }else{
+        setScreen("google_select");
+      }
     }catch(e){
       console.warn("Google login cancelado",e);
     }finally{setGoogleLoading(false);}
@@ -2708,7 +2726,7 @@ function Veeda(){
   },[]);
   const doLogoutGoogle=useCallback(()=>{
     clearGoogleAuth();
-    setGoogleUser(null);setCloudProfiles([]);
+    setGoogleUser(null);setCloudProfiles([]);setSelProfile(null);
     setScreen("splash");
   },[]);
 
@@ -2806,7 +2824,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
     const swCode=`
-const CACHE_NAME = "veeda-v12";
+const CACHE_NAME = "veeda-v13";
 const URLS_TO_CACHE = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", e => {

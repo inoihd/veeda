@@ -6,7 +6,7 @@
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.7.0";
+const APP_VERSION  = "1.8.0";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -523,8 +523,9 @@ const restorePreservedBackup=(key)=>{
 };
 
 // Detectar se há conta local existente (para oferecer migração)
+// Apenas perfis locais (p.cloud !== true) contam — evita mostrar "Importar conta local" para usuários Google
 const hasLocalAccounts=()=>{
-  const profiles=loadProfiles();
+  const profiles=loadProfiles().filter(p=>!p.cloud);
   if(profiles.length>0)return true;
   // Órfãos: veeda_data_* sem entrada em profiles
   for(let i=0;i<localStorage.length;i++){
