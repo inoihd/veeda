@@ -33,6 +33,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   const [showEvents, setShowEvents] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [viewRec, setViewRec] = useState(null);
+  const [viewProfile, setViewProfile] = useState(null);
   const [pendingNotif, setPendingNotif] = useState(null);
   const [expandedMoment, setExpandedMoment] = useState(null);
   const [newGroup, setNewGroup] = useState('');
@@ -479,7 +480,25 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
           {(activeData.received || []).length === 0 ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>💌</div><p style={{fontSize: 14, color: C.textLight}}>Nenhum Dia de Veeda recebido ainda.</p></div> : (activeData.received || []).slice().sort((a, b) => b.importedAt - a.importedAt).map((r, i) => (
             <div key={i} onClick={() => setViewRec(r)} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12}}>
               <AvatarBubble src={r.avatarSrc} emoji={r.emoji || '🌿'} color={r.avatarColor || C.purpleLight} size={44} ring />
-              <div style={{flex: 1}}><p style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.text}}>{r.author}</p><p style={{margin: 0, fontSize: 12, color: C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length !== 1 ? 's' : ''}{r.feeling ? ` · ${r.feeling.emoji}` : ''}</p></div>
+              <div style={{flex: 1}}>
+                <p
+                  style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.purple, cursor: 'pointer'}}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setViewProfile({
+                      name: r.author,
+                      handle: r.handle,
+                      emoji: r.emoji,
+                      avatarColor: r.avatarColor,
+                      avatarSrc: r.avatarSrc,
+                      id: r.authorId
+                    });
+                  }}
+                >
+                  {r.author}
+                </p>
+                <p style={{margin: 0, fontSize: 12, color: C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length !== 1 ? 's' : ''}{r.feeling ? ` · ${r.feeling.emoji}` : ''}</p>
+              </div>
               <span style={{color: C.textLight, fontSize: 22}}>›</span>
             </div>
           ))}
@@ -526,6 +545,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
       {showReminders && <RemindersModal reminders={activeData.reminders || []} onSave={list => save({...data, reminders: list})} onClose={() => setShowReminders(false)} />}
       {showInviteApp && <InviteModal onClose={() => setShowInviteApp(false)} />}
       {showSettings && <SettingsModal profile={profile} data={activeData} password={password} onUpdateProfile={p => { updateAv(p); onUpdateProfile(p); }} onSave={save} onLogout={onLogout} onClose={() => setShowSettings(false)} addToast={addToast} />}
+      {viewProfile && <ProfileModal profile={viewProfile} myProfile={profile} contacts={activeData.contacts || []} receivedDays={activeData.received || []} onClose={() => setViewProfile(null)} addToast={addToast} />}
       {showMusicPicker && <MusicPicker onClose={() => setShowMusicPicker(false)} onSelect={r => { setShowMusicPicker(false); const id = Date.now(); const m = {id, ts: id, type: 'musica', content: r.title, trackTitle: r.title, trackArtist: r.artist, trackAlbum: r.album, albumArt: r.art, previewUrl: r.preview, appleMusicUrl: r.appleMusicUrl, caption: addCaption.trim() || undefined, location: addLocation || undefined}; save({...data, moments: {...(data.moments || {}), [todayStr()]: [...((data.moments || {})[todayStr()] || []), m]}}); setLastId(id); resetModal(); }} />}
 
       {showModal && (
