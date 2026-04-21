@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════
 // VEEDA MAIN APP — veeda-app.js
-// v1.9.0 - Timeline corrigida + Sistema de convites
+// v1.9.1 - Confirmação bidirecional de conexão
 // ═══════════════════════════════════════════════════════════
 
 function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
@@ -124,6 +124,41 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
 
   useEffect(() => {
     if (!data || loading) return;
+    const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
+    const confirmations = getConnectionConfirmations(myH);
+    
+    if (confirmations.length > 0) {
+      confirmations.forEach(async (confirmation) => {
+        const exists = (data.contacts || []).find(c => 
+          (c.handle || '').replace(/^@/, '') === confirmation.fromHandle.replace(/^@/, '')
+        );
+        
+        if (!exists) {
+          const newContact = {
+            name: confirmation.fromName,
+            handle: confirmation.fromHandle,
+            code: confirmation.fromHandle.replace(/^@/, ''),
+            emoji: confirmation.fromEmoji || '🌿',
+            avatarColor: confirmation.fromAvatarColor || C.purpleLight,
+            avatarSrc: confirmation.fromAvatarSrc,
+            addedAt: confirmation.confirmedAt
+          };
+          
+          await save({
+            ...data,
+            contacts: [...(data.contacts || []), newContact]
+          });
+          
+          addToast?.(`${confirmation.fromName} aceitou seu convite! 🤝`, 'success');
+        }
+        
+        clearConnectionConfirmation(myH, confirmation.fromId);
+      });
+    }
+  }, [data, loading, profile, save, addToast]);
+
+  useEffect(() => {
+    if (!data || loading) return;
     const pending = sessionStorage.getItem('veeda_pending_add');
     if (pending) {
       sessionStorage.removeItem('veeda_pending_add');
@@ -244,10 +279,44 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   const acceptConnection = useCallback((request) => {
     const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
     const accepted = acceptConnectionRequest(myH, request.fromId);
+    
     if (accepted) {
-      const newContact = { name: request.fromName, handle: request.fromHandle, code: request.fromHandle.replace(/^@/, ''), emoji: request.fromEmoji || '🌿', avatarColor: request.fromAvatarColor || C.purpleLight, avatarSrc: request.fromAvatarSrc, addedAt: Date.now() };
+      const newContact = { 
+        name: request.fromName, 
+        handle: request.fromHandle, 
+        code: request.fromHandle.replace(/^@/, ''), 
+        emoji: request.fromEmoji || '🌿', 
+        avatarColor: request.fromAvatarColor || C.purpleLight, 
+        avatarSrc: request.fromAvatarSrc, 
+        addedAt: Date.now() 
+      };
+      
       save({...data, contacts: [...(data.contacts || []), newContact]});
-      setPendingConnections(prev => prev.filter(r => r.fromId !== request.fromId));
+      
+      const senderProfile = {
+        id: request.fromId,
+        name: request.fromName,
+        handle: request.fromHandle,
+        emoji: request.fromEmoji,
+        avatarColor: request.fromAvatarColor,
+        avatarSrc: request.fromAvatarSrc
+      };
+      
+      const myProfile = {
+        id: profile.id,
+        name: profile.name,
+        handle: profile.handle,
+        emoji: profile.emoji,
+        avatarColor: profile.avatarColor,
+        avatarSrc: profile.avatarSrc
+      };
+      
+      confirmConnectionToSender(senderProfile, myProfile);
+      
+      setPendingConnections(prev => 
+        prev.filter(r => r.fromId !== request.fromId)
+      );
+      
       addToast?.(`${request.fromName} adicionado ao seu Círculo! 🤝`, 'success');
     }
   }, [data, profile, save, addToast]);
