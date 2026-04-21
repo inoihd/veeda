@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -36,21 +37,34 @@ button{font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparen
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="text/babel">
-const {useState,useEffect,useRef,useCallback,useMemo,useReducer} = React;
+// ═══════════════════════════════════════════════════════════
+// VEEDA CORE — veeda-core.js
+// Edite este arquivo para: constantes, tokens, crypto, storage,
+// helpers de data/handle, Google Drive, IndexedDB, notificações
+// ═══════════════════════════════════════════════════════════
+const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
-// ═══════════════════════════════════════════════════
-// CONSTANTS & DESIGN TOKENS
-// ═══════════════════════════════════════════════════
-const APP_VERSION = "1.3.0";
-const DATA_VERSION = 3; // bump when schema changes
-const PROFILES_KEY  = "veeda_profiles_v2";
-const SESSION_KEY   = "veeda_session_v2"; // localStorage (persistent)
-const REGISTRY_KEY  = "veeda_public_registry"; // cross-device handle registry
-const GDRIVE_KEY    = "veeda_gdrive_token";
+// ── App metadata ───────────────────────────────────────────
+const APP_VERSION  = "1.4.0";
+const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
+
+// ── LocalStorage keys ──────────────────────────────────────
+const PROFILES_KEY = "veeda_profiles_v2";
+const SESSION_KEY  = "veeda_session_v2"; // persiste entre aberturas de app
+const REGISTRY_KEY = "veeda_public_registry";
+const GDRIVE_KEY   = "veeda_gdrive_token";
+const GOOGLE_USER_KEY = "veeda_google_user";   // {sub,email,name,picture,ts}
+const MIGRATION_KEY   = "veeda_migration_v14"; // {status,ts,backupId}
+const PRESERVE_PREFIX = "veeda_preserved_";    // NUNCA apagamos estas keys
 const GOOGLE_CLIENT_ID = "377556817223-t88d5ejs7sopv5fftg96j0bq9gdpt18f.apps.googleusercontent.com";
-const GDRIVE_SCOPE  = "https://www.googleapis.com/auth/drive.appdata";
-const GDRIVE_FILE   = "veeda-backup-v2.enc";
+// Scopes: appdata (armazenar blobs cifrados) + openid/email/profile (identidade)
+const GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata openid email profile";
+const GDRIVE_FILE  = "veeda-backup-v2.enc";        // legacy: blob único (v1.2+)
+const CLOUD_INDEX  = "veeda-account-v14.json";     // index cloud (v1.4+) — plaintext com lista de perfis
+const CLOUD_DATA   = id=>`veeda-data-${id}.enc`;   // blob cifrado por perfil
+const CLOUD_SNAP   = (id,ym)=>`veeda-snap-${id}-${ym}.enc`;
 
+// ── Design Tokens ──────────────────────────────────────────
 const C = {
   purple:"#9000FF", purpleLight:"#EDE9F6", purpleMid:"#BB7DEB", purpleSoft:"#F9F1FF",
   blue:"#5B7FA6",   blueLight:"#E6EEF8",   blueMid:"#A8C0DA",
@@ -59,28 +73,25 @@ const C = {
   red:"#C0392B",    redLight:"#FDE8E8",
   pink:"#E91E8C",   pinkLight:"#FDE8F4",
   teal:"#0097A7",   tealLight:"#E0F7FA",
-  cardBorder:"#CBC0D3",
-  headerBorder:"#DDD8EE",
-  bg:"#EAFFF8",     bgGradEnd:"#FEFEFC",
-  splashBg:"#22FCB7",
-  text:"#3A3350",   textMid:"#7A7090",     textLight:"#ADA8C0",
-  white:"#FFFFFF",
-  tabActive:"#7B6FA0",
+  cardBorder:"#CBC0D3", headerBorder:"#DDD8EE",
+  bg:"#EAFFF8",  bgGradEnd:"#FEFEFC", splashBg:"#22FCB7",
+  text:"#3A3350", textMid:"#7A7090", textLight:"#ADA8C0",
+  white:"#FFFFFF", tabActive:"#7B6FA0",
   overlay:"rgba(40,30,60,0.52)",
 };
-
 const PASSO = "'Passo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const SANS  = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
-// Inject Passo font
+// Inject Passo font (graceful: fallback to system if unavailable)
 (()=>{
   if(document.getElementById("passo-font"))return;
   const l=document.createElement("link");
-  l.id="passo-font";l.rel="stylesheet";
+  l.id="passo-font"; l.rel="stylesheet";
   l.href="https://fonts.googleapis.com/css2?family=Passo:wght@400;600;700&display=swap";
   document.head.appendChild(l);
 })();
 
+// ── Data constants ─────────────────────────────────────────
 const DAY_COLORS=[
   {label:"Lavanda",bg:"#F7F5FC",dot:"#B8AEDD"},{label:"Pêssego",bg:"#FDF5F0",dot:"#E8B89A"},
   {label:"Menta",bg:"#F0FAF5",dot:"#8FD1B0"},{label:"Céu",bg:"#F0F6FD",dot:"#9ABEDD"},
@@ -109,22 +120,19 @@ const DEFAULT_TAGS=[
   {id:"saude",emoji:"🏃",label:"Saúde",bg:"#E6F0FD",color:"#5B7FA6"},
   {id:"amigos",emoji:"🤝",label:"Amigos",bg:"#EDE9F6",color:"#7B6FA0"},
 ];
-
 const TYPE_META={
-  texto:  {icon:"✏️", fill:C.purple,  bg:C.purpleLight},
-  foto:   {icon:"📷", fill:C.blue,    bg:C.blueLight},
-  video:  {icon:"🎬", fill:C.blue,    bg:C.blueLight},
-  link:   {icon:"🔗", fill:C.blue,    bg:C.blueLight},
-  videolink:{icon:"▶️",fill:C.blue,   bg:C.blueLight},
-  musica: {icon:"🎵", fill:C.green,   bg:C.greenLight},
-  arte:   {icon:"🎨", fill:C.pink,    bg:C.pinkLight},
-  voz:    {icon:"🎙️", fill:C.teal,    bg:C.tealLight},
-  evento: {icon:"📅", fill:C.amber,   bg:C.amberLight},
+  texto:   {icon:"✏️",fill:C.purple,bg:C.purpleLight},
+  foto:    {icon:"📷",fill:C.blue,  bg:C.blueLight},
+  video:   {icon:"🎬",fill:C.blue,  bg:C.blueLight},
+  link:    {icon:"🔗",fill:C.blue,  bg:C.blueLight},
+  videolink:{icon:"▶️",fill:C.blue, bg:C.blueLight},
+  musica:  {icon:"🎵",fill:C.green, bg:C.greenLight},
+  arte:    {icon:"🎨",fill:C.pink,  bg:C.pinkLight},
+  voz:     {icon:"🎙️",fill:C.teal,  bg:C.tealLight},
+  evento:  {icon:"📅",fill:C.amber, bg:C.amberLight},
 };
 
-// ═══════════════════════════════════════════════════
-// CRYPTO (PBKDF2 key caching for fast saves)
-// ═══════════════════════════════════════════════════
+// ── Crypto (PBKDF2 key caching) ────────────────────────────
 const _keyCache=new Map();
 const _deriveKey=async(pw,salt)=>{
   const km=await crypto.subtle.importKey("raw",new TextEncoder().encode(pw),"PBKDF2",false,["deriveKey"]);
@@ -165,9 +173,7 @@ const genCode=()=>{
   return `${s.slice(0,4)}-${s.slice(4,8)}-${s.slice(8,12)}-${s.slice(12,16)}`;
 };
 
-// ═══════════════════════════════════════════════════
-// STORAGE & PERSISTENCE
-// ═══════════════════════════════════════════════════
+// ── Safe localStorage wrapper ──────────────────────────────
 const safeLS={
   get:(k,fb=null)=>{try{const v=localStorage.getItem(k);return v!=null?JSON.parse(v):fb;}catch{return fb;}},
   set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));return true;}catch{return false;}},
@@ -176,19 +182,20 @@ const safeLS={
   del:(k)=>{try{localStorage.removeItem(k);}catch{}},
 };
 
+// ── Profiles ───────────────────────────────────────────────
 const loadProfiles=()=>safeLS.get(PROFILES_KEY,[]);
 const saveProfiles=ps=>safeLS.set(PROFILES_KEY,ps);
 
-// Persistent session (survives tab close — stays until explicit logout)
+// ── Session (persiste entre fechamentos do app) ─────────────
 const loadSession=()=>safeLS.get(SESSION_KEY,null);
 const saveSession=(id,pw)=>safeLS.set(SESSION_KEY,{profileId:id,pw,ts:Date.now()});
 const clearSession=()=>safeLS.del(SESSION_KEY);
 
-// Monthly snapshot — overwrites current-month snapshot on every save (so
-// the user never loses progress of the current month), but NEVER touches
-// snapshots of previous months. Combined with the data recovery fallback
-// below, this means a bad write can always be rolled back to the latest
-// good snapshot without losing the current month's history.
+// ── Monthly snapshot ──────────────────────────────────────
+// Sobrescreve o snapshot do mês corrente a cada save (para refletir o estado
+// mais recente), mas NUNCA toca em snapshots de meses anteriores — assim
+// o usuário nunca perde o histórico do mês atual até fazer backup, e nada
+// do passado é apagado.
 const saveMonthlySnapshot=(profileId,encBlob)=>{
   const ym=new Date().toISOString().slice(0,7);
   const k=`veeda_snap_${profileId}_${ym}`;
@@ -198,13 +205,11 @@ const getMonthlySnapshots=(profileId)=>{
   const out=[];
   for(let i=0;i<localStorage.length;i++){
     const k=localStorage.key(i);
-    if(k&&k.startsWith(`veeda_snap_${profileId}_`)){
-      out.push({key:k,ym:k.split("_").pop()});
-    }
+    if(k&&k.startsWith(`veeda_snap_${profileId}_`)){out.push({key:k,ym:k.split("_").pop()});}
   }
   return out.sort((a,b)=>b.ym.localeCompare(a.ym));
 };
-// Recovery: try each monthly snapshot (newest first) until one decrypts
+// Recovery: tenta decifrar snapshots (mais recentes primeiro) até achar um válido
 const loadLatestSnapshot=async(profileId,password)=>{
   const snaps=getMonthlySnapshots(profileId);
   for(const s of snaps){
@@ -218,11 +223,10 @@ const loadLatestSnapshot=async(profileId,password)=>{
   return null;
 };
 
-// Public registry — local device discoverable profiles
+// ── Public registry (busca local cross-profile) ────────────
 const registryAdd=(profile)=>{
   const reg=safeLS.get(REGISTRY_KEY,[]);
-  const exists=reg.find(p=>p.handle===profile.handle);
-  if(!exists){
+  if(!reg.find(p=>p.handle===profile.handle)){
     reg.push({id:profile.id,name:profile.name,handle:profile.handle,emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,ts:Date.now()});
     safeLS.set(REGISTRY_KEY,reg);
   }
@@ -236,48 +240,41 @@ const registryUpdate=(profile)=>{
 const registrySearch=(q)=>{
   if(!q.trim())return[];
   const clean=q.toLowerCase().replace(/^@/,"");
-  return safeLS.get(REGISTRY_KEY,[]).filter(p=>{
-    const nm=p.name.toLowerCase();
-    const hd=(p.handle||"").replace(/^@/,"");
-    return nm.includes(clean)||hd.includes(clean);
-  });
+  return safeLS.get(REGISTRY_KEY,[]).filter(p=>p.name.toLowerCase().includes(clean)||(p.handle||"").replace(/^@/,"").includes(clean));
 };
 
-// Profile card (cross-device sharing)
+// ── Profile card (código cross-device) ────────────────────
 const makeProfileCard=(profile)=>{
   const pub={n:profile.name,h:(profile.handle||"").replace(/^@/,""),e:profile.emoji||"🌿",c:profile.avatarColor||C.purpleLight};
   return "vc2_"+btoa(unescape(encodeURIComponent(JSON.stringify(pub))));
 };
 const parseProfileCard=(code)=>{
   try{
-    const trimmed=code.trim();
-    if(!trimmed.startsWith("vc2_"))return null;
-    const pub=JSON.parse(decodeURIComponent(escape(atob(trimmed.slice(4)))));
+    const t=code.trim();
+    if(!t.startsWith("vc2_"))return null;
+    const pub=JSON.parse(decodeURIComponent(escape(atob(t.slice(4)))));
     if(!pub.h||!pub.n)return null;
     return{name:pub.n,handle:"@"+pub.h,emoji:pub.e||"🌿",avatarColor:pub.c||C.purpleLight,avatarSrc:null,fromCard:true};
   }catch{return null;}
 };
 
-// Data migration
+// ── Data schema ────────────────────────────────────────────
 const EMPTY_DATA=()=>({
   _v:DATA_VERSION,moments:{},received:[],contacts:[],
   groupName:"Meu Círculo",dayColors:{},dayFeelings:{},
   reminders:[],sharedLog:{},events:[],customTags:[],
-  suggestions:[],notifications:[],settings:{locationEnabled:false,notificationsEnabled:false},
+  suggestions:[],notifications:[],
+  settings:{locationEnabled:false,notificationsEnabled:false},
 });
 const migrateData=(d)=>{
   if(!d)return EMPTY_DATA();
-  const v=d._v||1;
   let out={...EMPTY_DATA(),...d,_v:DATA_VERSION};
-  // v1→v2: rename groupName
-  if(v<2&&out.groupName==="Família & Amigos")out.groupName="Meu Círculo";
-  // v2→v3: add notifications array
-  if(v<3){out.notifications=[];out.settings={locationEnabled:false,notificationsEnabled:false,...(out.settings||{})};}
-  out._v=DATA_VERSION;
+  if((d._v||1)<2&&out.groupName==="Família & Amigos")out.groupName="Meu Círculo";
+  if((d._v||1)<3){out.notifications=[];out.settings={locationEnabled:false,notificationsEnabled:false,...(out.settings||{})};}
   return out;
 };
 
-// Handle utils
+// ── Handle utils ───────────────────────────────────────────
 const sanitizeHandle=str=>str.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9_]/g,"").slice(0,20);
 const nameToHandle=name=>"@"+sanitizeHandle(name);
 const isHandleAvailable=(handle,excludeId)=>{
@@ -285,12 +282,19 @@ const isHandleAvailable=(handle,excludeId)=>{
   return!loadProfiles().find(p=>p.id!==excludeId&&(p.handle||"").replace(/^@/,"")==h);
 };
 
-// ═══════════════════════════════════════════════════
-// GOOGLE DRIVE
-// ═══════════════════════════════════════════════════
+// ── Google Auth / Drive ────────────────────────────────────
+// Fluxo OAuth2 implicit. Usa popup + poll na window.location.hash.
 const gdriveAuth=()=>new Promise((res,rej)=>{
-  const params=new URLSearchParams({client_id:GOOGLE_CLIENT_ID,redirect_uri:window.location.origin+window.location.pathname,response_type:"token",scope:GDRIVE_SCOPE,state:Math.random().toString(36).slice(2)});
-  const popup=window.open(`https://accounts.google.com/o/oauth2/v2/auth?${params}`,"gauth","width=500,height=600");
+  const params=new URLSearchParams({
+    client_id:GOOGLE_CLIENT_ID,
+    redirect_uri:window.location.origin+window.location.pathname,
+    response_type:"token",
+    scope:GDRIVE_SCOPE,
+    include_granted_scopes:"true",
+    prompt:"consent",
+    state:Math.random().toString(36).slice(2),
+  });
+  const popup=window.open(`https://accounts.google.com/o/oauth2/v2/auth?${params}`,"gauth","width=500,height=620");
   const t=setInterval(()=>{
     try{
       if(!popup||popup.closed){clearInterval(t);rej(new Error("Janela fechada."));return;}
@@ -298,50 +302,237 @@ const gdriveAuth=()=>new Promise((res,rej)=>{
       if(hash&&hash.includes("access_token")){
         clearInterval(t);popup.close();
         const p=new URLSearchParams(hash.slice(1));
-        const token={access_token:p.get("access_token"),ts:Date.now()};
-        safeLS.set(GDRIVE_KEY,token);res(token.access_token);
+        const token={
+          access_token:p.get("access_token"),
+          expires_in:parseInt(p.get("expires_in")||"3600",10),
+          scope:p.get("scope"),
+          ts:Date.now(),
+        };
+        safeLS.set(GDRIVE_KEY,token);
+        res(token.access_token);
       }
     }catch{}
   },500);
 });
-const gdriveFindFile=async t=>{const r=await fetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${GDRIVE_FILE}'&fields=files(id)`,{headers:{Authorization:`Bearer ${t}`}});const d=await r.json();return d.files?.[0]?.id||null;};
-const gdriveUpload=async(enc,t)=>{
-  const id=await gdriveFindFile(t);
-  const meta=JSON.stringify({name:GDRIVE_FILE,parents:["appDataFolder"]}),b="vb";
-  const body=`--${b}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${b}\r\nContent-Type: text/plain\r\n\r\n${enc}\r\n--${b}--`;
-  await fetch(id?`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`:`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`,{method:id?"PATCH":"POST",headers:{Authorization:`Bearer ${t}`,"Content-Type":`multipart/related; boundary=${b}`},body});
-};
-const gdriveDownload=async t=>{const id=await gdriveFindFile(t);if(!id)return null;const r=await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:`Bearer ${t}`}});return r.ok?r.text():null;};
 
-// ═══════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════
-const getVideoEmbed=url=>{
-  const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);if(yt)return`https://www.youtube.com/embed/${yt[1]}`;
-  const v=url.match(/vimeo\.com\/(\d+)/);if(v)return`https://player.vimeo.com/video/${v[1]}`;
-  return null;
+// Token helpers — retorna token cacheado ainda válido, ou null
+const getCachedToken=()=>{
+  const t=safeLS.get(GDRIVE_KEY,null);
+  if(!t?.access_token)return null;
+  const exp=(t.ts||0)+(t.expires_in||3600)*1000-60000; // -1min de margem
+  if(Date.now()>exp)return null;
+  return t.access_token;
 };
-const isVideoLink=url=>!!getVideoEmbed(url);
-const fmt=ts=>new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-const todayStr=()=>new Date().toISOString().slice(0,10);
-const offsetDay=(d,n)=>{const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
-const fmtLabel=d=>{const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
-const fmtFull=d=>{const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};
+const clearGoogleAuth=()=>{safeLS.del(GDRIVE_KEY);safeLS.del(GOOGLE_USER_KEY);};
 
-// Web Notifications
-const requestNotifPermission=async()=>{
-  if(!("Notification" in window))return false;
-  if(Notification.permission==="granted")return true;
-  const r=await Notification.requestPermission();
-  return r==="granted";
+// UserInfo: identifica a conta Google (sub é o ID estável)
+const gdriveUserInfo=async t=>{
+  const r=await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:`Bearer ${t}`}});
+  if(!r.ok)return null;
+  const u=await r.json();
+  const info={sub:u.sub,email:u.email,name:u.name,picture:u.picture,ts:Date.now()};
+  safeLS.set(GOOGLE_USER_KEY,info);
+  return info;
 };
-const showNativeNotif=(title,body,icon="🌿")=>{
-  if(Notification.permission==="granted"){
-    try{new Notification(title,{body,icon:"/favicon.ico",badge:"/favicon.ico"});}catch{}
+const getCachedUser=()=>safeLS.get(GOOGLE_USER_KEY,null);
+
+// Drive low-level — nome do arquivo é parametrizado
+const _driveFind=async(name,t)=>{
+  const r=await fetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${encodeURIComponent(name)}'&fields=files(id,modifiedTime,size)`,{headers:{Authorization:`Bearer ${t}`}});
+  if(!r.ok)throw new Error("drive_find_failed");
+  const d=await r.json();
+  return d.files?.[0]||null;
+};
+const driveUpload=async(name,content,t,mime="text/plain")=>{
+  const found=await _driveFind(name,t);
+  const id=found?.id;
+  const meta=JSON.stringify({name,parents:["appDataFolder"]});
+  const b="vb_"+Math.random().toString(36).slice(2,10);
+  const body=`--${b}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${b}\r\nContent-Type: ${mime}\r\n\r\n${content}\r\n--${b}--`;
+  const url=id?`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart&fields=id,modifiedTime`:`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime`;
+  const r=await fetch(url,{method:id?"PATCH":"POST",headers:{Authorization:`Bearer ${t}`,"Content-Type":`multipart/related; boundary=${b}`},body});
+  if(!r.ok)throw new Error("drive_upload_failed");
+  return r.json();
+};
+const driveDownload=async(name,t)=>{
+  const found=await _driveFind(name,t);
+  if(!found)return null;
+  const r=await fetch(`https://www.googleapis.com/drive/v3/files/${found.id}?alt=media`,{headers:{Authorization:`Bearer ${t}`}});
+  return r.ok?{content:await r.text(),modifiedTime:found.modifiedTime}:null;
+};
+const driveList=async t=>{
+  const r=await fetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,modifiedTime,size)&pageSize=200`,{headers:{Authorization:`Bearer ${t}`}});
+  if(!r.ok)return[];
+  const d=await r.json();return d.files||[];
+};
+const driveDelete=async(name,t)=>{
+  const found=await _driveFind(name,t);
+  if(!found)return false;
+  const r=await fetch(`https://www.googleapis.com/drive/v3/files/${found.id}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`}});
+  return r.ok;
+};
+
+// Legacy shims — mantidos para não quebrar tela de Backup antigo (v1.3)
+const gdriveFindFile=async t=>{const f=await _driveFind(GDRIVE_FILE,t);return f?.id||null;};
+const gdriveUpload  =async(enc,t)=>driveUpload(GDRIVE_FILE,enc,t);
+const gdriveDownload=async t=>{const d=await driveDownload(GDRIVE_FILE,t);return d?.content||null;};
+
+// ── Camada cloudAccount / cloudData / cloudSync ────────────
+// cloudAccount: metadata plain-text no Drive (lista de perfis, sem dados sensíveis)
+//   { v:1, owner:{sub,email}, profiles:[{id,name,handle,emoji,avatarColor,avatarSrc,handleLower,createdAt,updatedAt}], updatedAt }
+// cloudData(id): blob cifrado com a senha do usuário, mesma estrutura do veeda_data_<id> local
+// cloudSnap(id,ym): snapshot mensal cifrado
+
+const cloudAccount={
+  async load(t){
+    try{
+      const r=await driveDownload(CLOUD_INDEX,t);
+      if(!r)return null;
+      return JSON.parse(r.content);
+    }catch(e){console.warn("cloudAccount.load failed",e);return null;}
+  },
+  async save(acc,t){
+    acc.updatedAt=Date.now();
+    await driveUpload(CLOUD_INDEX,JSON.stringify(acc),t,"application/json");
+  },
+  empty:(owner)=>({v:1,owner,profiles:[],updatedAt:0}),
+  mergeProfile(acc,profile){
+    const idx=(acc.profiles||[]).findIndex(p=>p.id===profile.id);
+    // Incluímos passwordHash e recoveryHash pois são hashes SHA-256 de senhas
+    // (não dá pra reverter) — necessários para login cross-device. O blob de
+    // dados real já está cifrado com chave derivada da senha via PBKDF2 150k
+    // iterações, então ter os hashes aqui não enfraquece a segurança.
+    const slim={
+      id:profile.id,name:profile.name,handle:profile.handle,
+      handleLower:(profile.handle||"").replace(/^@/,"").toLowerCase(),
+      emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,
+      passwordHash:profile.passwordHash,recoveryHash:profile.recoveryHash,
+      email:profile.email||"",googleSub:profile.googleSub||null,
+      cloud:true,
+      createdAt:profile.createdAt,updatedAt:Date.now(),
+    };
+    if(idx>=0)acc.profiles[idx]={...acc.profiles[idx],...slim};
+    else acc.profiles.push(slim);
+    return acc;
+  },
+};
+
+const cloudData={
+  async load(profileId,t){
+    const r=await driveDownload(CLOUD_DATA(profileId),t);
+    if(!r)return null;
+    return{content:r.content,modifiedTime:r.modifiedTime};
+  },
+  async save(profileId,encBlob,t){
+    return driveUpload(CLOUD_DATA(profileId),encBlob,t);
+  },
+  async saveSnap(profileId,ym,encBlob,t){
+    return driveUpload(CLOUD_SNAP(profileId,ym),encBlob,t);
+  },
+};
+
+// cloudSync.pushDebounced — empurra o blob ao Drive sem bloquear a UI.
+// - Coalesce: só o último valor por profileId é enviado após PUSH_DEBOUNCE_MS.
+// - Retry off-line: se falhar, marca pendente para retry no próximo save/foco.
+const PUSH_DEBOUNCE_MS=2000;
+const _pushTimers=new Map();      // profileId -> timeoutId
+const _pendingBlobs=new Map();    // profileId -> enc blob
+
+const cloudSync={
+  async tokenOrNull(){return getCachedToken();},
+  queuePush(profileId,encBlob){
+    _pendingBlobs.set(profileId,encBlob);
+    clearTimeout(_pushTimers.get(profileId));
+    const tid=setTimeout(()=>cloudSync.flushPush(profileId),PUSH_DEBOUNCE_MS);
+    _pushTimers.set(profileId,tid);
+  },
+  async flushPush(profileId){
+    const blob=_pendingBlobs.get(profileId);
+    if(!blob)return;
+    const t=await cloudSync.tokenOrNull();
+    if(!t)return; // offline ou sem sessão Google; tenta no próximo save
+    try{
+      await cloudData.save(profileId,blob,t);
+      _pendingBlobs.delete(profileId);
+    }catch(e){console.warn("cloud push failed",e);}
+  },
+  async flushAll(){for(const id of[..._pendingBlobs.keys()])await cloudSync.flushPush(id);},
+  // pullOnBoot: compara Drive vs local; se Drive maior/mais recente, substitui local.
+  async pullOnBoot(profileId,password,t){
+    try{
+      const remote=await cloudData.load(profileId,t);
+      if(!remote)return{used:"local"};
+      const localRaw=safeLS.raw(`veeda_data_${profileId}`);
+      if(!localRaw){
+        safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
+        return{used:"remote",reason:"no_local"};
+      }
+      // Se idênticos, nada a fazer
+      if(localRaw===remote.content)return{used:"equal"};
+      // Tenta decifrar ambos e escolher o com moments mais recente
+      try{
+        const[{data:dl},{data:dr}]=await Promise.all([decryptObj(localRaw,password),decryptObj(remote.content,password)]);
+        const ll=dl?.lastSaved||0,rr=dr?.lastSaved||0;
+        if(rr>ll){
+          safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
+          return{used:"remote",reason:"newer"};
+        }
+        return{used:"local",reason:"newer_or_equal"};
+      }catch(e){return{used:"local",reason:"decrypt_failed"};}
+    }catch(e){console.warn("cloudSync.pullOnBoot failed",e);return{used:"local",reason:"error"};}
+  },
+};
+
+// ── Preservação de dados (regra de ouro do app) ────────────
+// preserveBeforeMigration: cópia read-only dos dados antigos com carimbo de tempo.
+// Estas chaves nunca são apagadas automaticamente — só o usuário pode limpá-las.
+const preserveBeforeMigration=(label)=>{
+  const ts=Date.now();
+  const bkpKey=`${PRESERVE_PREFIX}${label}_${ts}`;
+  const payload={ts,label,snapshot:{}};
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(!k||k.startsWith(PRESERVE_PREFIX))continue;
+    if(k.startsWith("veeda_"))payload.snapshot[k]=localStorage.getItem(k);
   }
+  try{safeLS.rawSet(bkpKey,JSON.stringify(payload));return bkpKey;}
+  catch(e){console.warn("preserve failed",e);return null;}
+};
+const listPreservedBackups=()=>{
+  const out=[];
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith(PRESERVE_PREFIX)){
+      try{const p=JSON.parse(localStorage.getItem(k));out.push({key:k,ts:p.ts,label:p.label,size:Object.keys(p.snapshot||{}).length});}catch{}
+    }
+  }
+  return out.sort((a,b)=>b.ts-a.ts);
+};
+const restorePreservedBackup=(key)=>{
+  try{
+    const p=JSON.parse(localStorage.getItem(key));
+    if(!p?.snapshot)return false;
+    for(const[k,v]of Object.entries(p.snapshot)){localStorage.setItem(k,v);}
+    return true;
+  }catch{return false;}
 };
 
-// IndexedDB for media blobs
+// Detectar se há conta local existente (para oferecer migração)
+const hasLocalAccounts=()=>{
+  const profiles=loadProfiles();
+  if(profiles.length>0)return true;
+  // Órfãos: veeda_data_* sem entrada em profiles
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith("veeda_data_"))return true;
+  }
+  return false;
+};
+
+const getMigrationState=()=>safeLS.get(MIGRATION_KEY,{status:"pending"});
+const setMigrationState=(s)=>safeLS.set(MIGRATION_KEY,{...getMigrationState(),...s,ts:Date.now()});
+
+// ── IndexedDB for media blobs ──────────────────────────────
 const _idb={db:null};
 const openIDB=()=>new Promise((res,rej)=>{
   if(_idb.db){res(_idb.db);return;}
@@ -353,9 +544,34 @@ const openIDB=()=>new Promise((res,rej)=>{
 const idbSave=async(id,dataUrl)=>{try{const db=await openIDB();db.transaction("media","readwrite").objectStore("media").put({id,dataUrl});}catch{}};
 const idbLoad=async id=>{try{const db=await openIDB();return new Promise(res=>{const req=db.transaction("media","readonly").objectStore("media").get(id);req.onsuccess=()=>res(req.result?.dataUrl||null);req.onerror=()=>res(null);});}catch{return null;}};
 
-// ═══════════════════════════════════════════════════
-// SHARED UI COMPONENTS
-// ═══════════════════════════════════════════════════
+// ── Notifications ──────────────────────────────────────────
+const requestNotifPermission=async()=>{
+  if(!("Notification" in window))return false;
+  if(Notification.permission==="granted")return true;
+  return(await Notification.requestPermission())==="granted";
+};
+const showNativeNotif=(title,body)=>{
+  if(Notification.permission==="granted"){try{new Notification(title,{body,icon:"./icon-192.png"});}catch{}}
+};
+
+// ── Date helpers ───────────────────────────────────────────
+const getVideoEmbed=url=>{
+  const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);if(yt)return`https://www.youtube.com/embed/${yt[1]}`;
+  const v=url.match(/vimeo\.com\/(\d+)/);if(v)return`https://player.vimeo.com/video/${v[1]}`;
+  return null;
+};
+const isVideoLink=url=>!!getVideoEmbed(url);
+const fmt=ts=>new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const offsetDay=(d,n)=>{const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
+const fmtLabel=d=>{const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
+const fmtFull=d=>{const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};
+// ═══════════════════════════════════════════════════════════
+// VEEDA UI PRIMITIVES — veeda-ui.js
+// Edite este arquivo para: AvatarBubble, Modal, Btn, Spinner,
+// Toast, SkeletonLine, PulsingDot, CheckboxConfirm, useToast
+// ═══════════════════════════════════════════════════════════
+
 function AvatarBubble({src,emoji,color,size=38,ring=false}){
   const border=ring?`3px solid ${C.purpleMid}`:`1.5px solid ${C.cardBorder}`;
   if(src)return<img src={src} alt="av" style={{width:size,height:size,borderRadius:"50%",objectFit:"cover",border,flexShrink:0,display:"block"}}/>;
@@ -389,15 +605,15 @@ function Modal({onClose,title,children,fullHeight=false}){
 
 function Btn({onClick,children,style={},disabled=false,variant="primary",type="button"}){
   const tapped=useRef(false);
-  const base={width:"100%",padding:"15px 0",border:"none",borderRadius:50,fontFamily:PASSO,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.55:1,transition:"transform .12s,opacity .12s",WebkitTapHighlightColor:"transparent",display:"flex",alignItems:"center",justifyContent:"center",gap:6};
+  const base={width:"100%",padding:"15px 0",border:"none",borderRadius:50,fontFamily:PASSO,fontWeight:600,fontSize:15,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.55:1,transition:"transform .12s,opacity .12s",WebkitTapHighlightColor:"transparent",display:"flex",alignItems:"center",justifyContent:"center",gap:6,touchAction:"manipulation"};
   const vars={
-    primary:{background:C.purple,color:C.white},
-    outline:{background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},
+    primary:  {background:C.purple,  color:C.white},
+    outline:  {background:"transparent",color:C.purple,border:`2px solid ${C.purple}`},
     secondary:{background:C.purpleMid,color:C.purpleSoft},
-    ghost:{background:"none",border:"none",color:C.textMid,fontSize:13,padding:"8px 0",fontFamily:SANS,borderRadius:8},
-    danger:{background:C.red,color:C.white},
-    green:{background:C.green,color:C.white},
-    teal:{background:C.teal,color:C.white},
+    ghost:    {background:"none",border:"none",color:C.textMid,fontSize:13,padding:"8px 0",fontFamily:SANS,borderRadius:8},
+    danger:   {background:C.red,    color:C.white},
+    green:    {background:C.green,  color:C.white},
+    teal:     {background:C.teal,   color:C.white},
   };
   const fire=useCallback(e=>{
     if(disabled)return;
@@ -429,12 +645,12 @@ function PulsingDot({onClick,color}){
 
 function Toast({msg,type="info",onDone}){
   useEffect(()=>{const t=setTimeout(onDone,3200);return()=>clearTimeout(t);},[]);
-  const bg={info:C.purpleLight,success:C.greenLight,error:C.redLight,warn:C.amberLight}[type]||C.purpleLight;
-  const co={info:C.purple,success:C.green,error:C.red,warn:C.amber}[type]||C.purple;
+  const bg  ={info:C.purpleLight,success:C.greenLight,error:C.redLight,warn:C.amberLight}[type]||C.purpleLight;
+  const col ={info:C.purple,     success:C.green,     error:C.red,    warn:C.amber}[type]||C.purple;
   return(
     <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:600,maxWidth:340,width:"calc(100% - 32px)",animation:"notifDrop .35s cubic-bezier(.22,1,.36,1)"}}>
-      <div style={{background:bg,border:`1.5px solid ${co}44`,borderRadius:14,padding:"12px 16px",boxShadow:"0 8px 24px rgba(0,0,0,.14)"}}>
-        <p style={{margin:0,fontSize:13,color:co,fontWeight:500,lineHeight:1.5}}>{msg}</p>
+      <div style={{background:bg,border:`1.5px solid ${col}44`,borderRadius:14,padding:"12px 16px",boxShadow:"0 8px 24px rgba(0,0,0,.14)"}}>
+        <p style={{margin:0,fontSize:13,color:col,fontWeight:500,lineHeight:1.5}}>{msg}</p>
       </div>
     </div>
   );
@@ -459,7 +675,11 @@ function CheckboxConfirm({checked,hasError,onChange,label}){
     </label>
   );
 }
-
+// ═══════════════════════════════════════════════════════════
+// VEEDA MEDIA COMPONENTS — veeda-media.js
+// Edite este arquivo para: DrawingCanvas, VoiceRecorder,
+// LocationPicker, MomentCircle, MomentDetail, MusicPicker, TagPicker
+// ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════
 // DRAWING CANVAS (Arte)
 // ═══════════════════════════════════════════════════
@@ -688,8 +908,7 @@ function MomentDetail({m,onClose,onDelete}){
   const audioRef=useRef(null);
   const embed=m.type==="videolink"?getVideoEmbed(m.content):null;
   const allTags=[...DEFAULT_TAGS];
-  // Permitir salvar mesmo quando a mídia está no IndexedDB (prefixo "IDB:"),
-  // e também para notas de voz (.webm).
+  // Permitir salvar mesmo quando o conteúdo está no IndexedDB (prefixo "IDB:")
   const canSave=(m.type==="foto"||m.type==="arte"||m.type==="video"||m.type==="voz")&&!!m.content;
 
   const saveToDevice=async()=>{
@@ -697,6 +916,7 @@ function MomentDetail({m,onClose,onDelete}){
     setSaving(true);
     try{
       let src=m.content;
+      // Se o conteúdo está no IndexedDB, resolve primeiro
       if(src.startsWith("IDB:")){
         const loaded=await idbLoad(src.slice(4));
         if(!loaded){setSaving(false);return;}
@@ -818,7 +1038,12 @@ function TagPicker({selectedTags,onChange,customTags=[]}){
     </div>
   );
 }
-
+// ═══════════════════════════════════════════════════════════
+// VEEDA MODALS — veeda-modals.js
+// Edite este arquivo para: AddContactModal, ConnectionCodeModal,
+// ReceivedNotif, InviteModal, ShareDayModal, EventsModal,
+// RemindersModal, BackupModal, SettingsModal
+// ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════
 // ADD CONTACT MODAL (with cross-device support)
 // ═══════════════════════════════════════════════════
@@ -915,13 +1140,15 @@ function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard})
 // Connection Code Modal
 function ConnectionCodeModal({profile,onClose}){
   const [copied,setCopied]=useState(false);
-  const [copiedCode,setCopiedCode]=useState(false);
+  const [linkCopied,setLinkCopied]=useState(false);
   const code=makeProfileCard(profile);
+  // Link "mágico" — quem abrir este link no celular é convidado a adicionar
+  // este perfil ao Meu Círculo automaticamente (sem precisar copiar/colar código).
   const inviteLink=`${window.location.origin}${window.location.pathname}?add=${code}`;
   const whatsMsg=`Olá! Sou ${profile.name} no Veeda. Me adiciona no Meu Círculo:\n${inviteLink}`;
-  const copyLink=()=>{navigator.clipboard?.writeText(inviteLink);setCopied(true);setTimeout(()=>setCopied(false),2500);};
-  const copyCode=()=>{navigator.clipboard?.writeText(code);setCopiedCode(true);setTimeout(()=>setCopiedCode(false),2500);};
-  const shareNative=()=>{try{navigator.share?.({title:"Veeda",text:whatsMsg}).catch(()=>{});}catch(e){}};
+  const copy=()=>{navigator.clipboard?.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);};
+  const copyLink=()=>{navigator.clipboard?.writeText(inviteLink);setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);};
+  const shareNative=()=>{navigator.share?.({title:"Veeda",text:whatsMsg}).catch(()=>{});};
   return(
     <Modal title="Meu Código de Conexão" onClose={onClose}>
       <div style={{textAlign:"center",marginBottom:16}}>
@@ -929,20 +1156,21 @@ function ConnectionCodeModal({profile,onClose}){
         <p style={{margin:"8px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
         <p style={{margin:0,fontSize:12,color:C.purple}}>{profile.handle}</p>
       </div>
-      <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Envie este link — quem abrir já verá você no Veeda e poderá adicionar ao Círculo.</p>
-      <div style={{background:C.greenLight,border:`1.5px solid ${C.green}44`,borderRadius:14,padding:"14px",marginBottom:12}}>
-        <p style={{margin:"0 0 8px",fontSize:10,color:C.green,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px"}}>Link de convite</p>
-        <p style={{margin:0,fontSize:12,color:C.text,wordBreak:"break-all",lineHeight:1.5}}>{inviteLink}</p>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Compartilhe o <strong>link</strong> abaixo com quem você quer no seu Círculo — quando a pessoa tocar, ela já vai poder te adicionar direto.</p>
+      <div style={{background:C.greenLight,borderRadius:14,padding:"14px",marginBottom:10,border:`1px solid ${C.green}33`}}>
+        <p style={{margin:"0 0 6px",fontSize:10,color:C.green,fontWeight:600,textTransform:"uppercase",letterSpacing:"1px"}}>🔗 Link rápido</p>
+        <p style={{margin:0,fontSize:11,color:C.text,wordBreak:"break-all",lineHeight:1.5}}>{inviteLink}</p>
       </div>
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <Btn onClick={copyLink} style={{flex:1}}>{copied?"✓ Link copiado!":"Copiar link"}</Btn>
-        {navigator.share&&<button onClick={shareNative} style={{flex:1,padding:"14px 0",background:C.greenLight,color:C.green,border:`1.5px solid ${C.green}55`,borderRadius:50,fontWeight:600,fontSize:14,cursor:"pointer"}}>Compartilhar ↑</button>}
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <Btn onClick={copyLink} variant={linkCopied?"green":"primary"} style={{flex:1,fontSize:13,padding:"11px 0"}}>{linkCopied?"✓ Link copiado!":"Copiar link"}</Btn>
+        {navigator.share&&<button onClick={shareNative} style={{flex:1,padding:"11px 0",background:C.white,color:C.purple,border:`1.5px solid ${C.purple}`,borderRadius:50,fontWeight:600,fontSize:13,cursor:"pointer"}}>Compartilhar ↑</button>}
       </div>
-      <details style={{marginTop:6}}>
-        <summary style={{fontSize:12,color:C.textMid,cursor:"pointer",padding:"6px 0"}}>Código em texto (fallback)</summary>
-        <div style={{background:C.purpleLight,borderRadius:12,padding:"12px",marginTop:8}}>
-          <p style={{margin:0,fontSize:10,color:C.text,wordBreak:"break-all",fontFamily:"monospace",lineHeight:1.6}}>{code}</p>
-          <button onClick={copyCode} style={{marginTop:10,width:"100%",padding:"9px 0",background:C.purple,color:"#fff",border:"none",borderRadius:30,fontSize:12,fontWeight:600,cursor:"pointer"}}>{copiedCode?"✓ Copiado":"Copiar código"}</button>
+      <details style={{marginBottom:4}}>
+        <summary style={{fontSize:12,color:C.textMid,cursor:"pointer",padding:"6px 0"}}>Ou use o código de texto (para colar manualmente)</summary>
+        <div style={{background:C.purpleLight,borderRadius:14,padding:"14px",marginTop:8}}>
+          <p style={{margin:"0 0 8px",fontSize:10,color:C.textMid,fontWeight:600,textTransform:"uppercase",letterSpacing:"1px"}}>Seu código</p>
+          <p style={{margin:"0 0 10px",fontSize:11,color:C.text,wordBreak:"break-all",fontFamily:"monospace",lineHeight:1.7}}>{code}</p>
+          <Btn onClick={copy} variant="outline" style={{fontSize:13,padding:"10px 0"}}>{copied?"✓ Copiado!":"Copiar código"}</Btn>
         </div>
       </details>
     </Modal>
@@ -1182,6 +1410,32 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
         </div>
 
         {tab==="conta"&&<div>
+          {/* ── Conta Google / Nuvem ── */}
+          {(profile.cloud||getCachedUser())&&<div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px 16px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+              {getCachedUser()?.picture?<img src={getCachedUser().picture} alt="" style={{width:36,height:36,borderRadius:"50%"}}/>:<div style={{width:36,height:36,borderRadius:"50%",background:C.purpleLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>☁️</div>}
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontSize:11,color:C.textMid,fontWeight:600,letterSpacing:".3px",textTransform:"uppercase"}}>Conta Google {profile.cloud?"· Nuvem ativa":""}</p>
+                <p style={{margin:"2px 0 0",fontSize:13,color:C.text,fontWeight:500}}>{getCachedUser()?.email||profile.email||"—"}</p>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {profile.cloud&&<button onClick={async()=>{
+                const t=await cloudSync.tokenOrNull();
+                if(!t){addToast?.("Faça login no Google novamente.","error");return;}
+                await cloudSync.flushAll();
+                const enc=safeLS.raw(`veeda_data_${profile.id}`);
+                if(enc){try{await cloudData.save(profile.id,enc,t);addToast?.("Sincronizado com a nuvem ☁️","success");}catch{addToast?.("Falha ao sincronizar.","error");}}
+              }} style={{flex:1,minWidth:120,padding:"9px 12px",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purple}44`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:600}}>☁️ Sincronizar agora</button>}
+              <button onClick={()=>{
+                clearGoogleAuth();
+                addToast?.("Google desconectado. Seus dados locais continuam salvos.","info");
+                onLogout();onClose();
+              }} style={{flex:1,minWidth:120,padding:"9px 12px",background:"#fff",color:C.textMid,border:`1px solid ${C.cardBorder}`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:600}}>Sair do Google</button>
+            </div>
+            <p style={{margin:"10px 0 0",fontSize:11,color:C.textLight,lineHeight:1.5}}>{profile.cloud?"Seus dias são enviados cifrados ao Google Drive (pasta privada do app). Só você, com sua senha, consegue ler.":"Este perfil é local. Entre com o Google para habilitar a nuvem."}</p>
+          </div>}
+
           {showHandle?(
             <div style={{marginBottom:14}}>
               <label style={{fontSize:12,color:C.textMid,display:"block",marginBottom:6}}>Novo @handle</label>
@@ -1218,9 +1472,19 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
             <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Seus dados são salvos automaticamente a cada ação e protegidos por snapshots mensais. Nenhum dado do mês atual é perdido sem confirmação.</p>
           </div>
           <div style={{background:C.greenLight,borderRadius:14,padding:16,marginBottom:16,border:`1px solid ${C.green}44`}}>
-            <p style={{margin:"0 0 6px",fontSize:13,fontWeight:600,color:C.green}}>✅ Dados protegidos localmente</p>
-            <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Todos os seus {totalMoments} momentos estão seguros no seu dispositivo. Use o Backup para proteger também em caso de troca de celular.</p>
+            <p style={{margin:"0 0 6px",fontSize:13,fontWeight:600,color:C.green}}>✅ Dados protegidos {profile.cloud?"local + nuvem":"localmente"}</p>
+            <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Todos os seus {totalMoments} momentos estão seguros{profile.cloud?" no seu dispositivo e na sua conta Google (cifrados).":" no seu dispositivo. Use o Backup para proteger também em caso de troca de celular."}</p>
           </div>
+          {/* Backups preservados (regra de ouro: nunca apagamos sem confirmação) */}
+          {(()=>{const bkps=listPreservedBackups();if(!bkps.length)return null;return(
+            <div style={{background:C.amberLight,borderRadius:14,padding:16,marginBottom:16,border:`1px solid ${C.amber}44`}}>
+              <p style={{margin:"0 0 6px",fontSize:13,fontWeight:600,color:C.amber}}>📦 {bkps.length} backup(s) preservado(s) de versões anteriores</p>
+              <p style={{margin:"0 0 10px",fontSize:12,color:C.textMid,lineHeight:1.6}}>Toda vez que o app fez uma migração importante (ex.: ativação da nuvem), uma cópia dos dados antigos foi guardada localmente. Estes backups nunca são apagados automaticamente.</p>
+              {bkps.slice(0,3).map(b=>(
+                <div key={b.key} style={{fontSize:11,color:C.textMid,padding:"4px 0",borderTop:`1px dashed ${C.amber}33`}}>{new Date(b.ts).toLocaleString("pt-BR")} · {b.label} · {b.size} chave(s)</div>
+              ))}
+            </div>
+          );})()}
           <Btn onClick={()=>setShowBackup(true)}>Gerenciar Backup</Btn>
         </div>}
 
@@ -1244,25 +1508,118 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
     </>
   );
 }
-
+// ═══════════════════════════════════════════════════════════
+// VEEDA AUTH SCREENS — veeda-auth.js
+// Edite este arquivo para: SplashScreen, InstallGuide,
+// ScreenSelect, ScreenPassword, ScreenCreate, ScreenForgot
+// ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════
-// SPLASH SCREEN
+// SPLASH SCREEN — v1.4: Google é o caminho principal
 // ═══════════════════════════════════════════════════
-function SplashScreen({onLogin,onCreate,onGuide}){
+function SplashScreen({onGoogle,onRecover,onGuide,loading,hasLocal}){
   return(
     <div style={{minHeight:"100vh",background:C.splashBg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 34px 50px"}}>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%",gap:20}}>
         <p style={{fontFamily:PASSO,fontSize:64,fontWeight:700,color:C.purple,lineHeight:1,letterSpacing:"-3px",margin:0}}>Veeda</p>
         <p style={{fontFamily:PASSO,fontSize:17,color:C.purple,textAlign:"center",margin:0}}>Viva primeiro, compartilhe depois.</p>
-        <p style={{fontFamily:SANS,fontSize:14,color:"#381653",textAlign:"center",lineHeight:1.65,maxWidth:300,margin:0}}>Viva experiências, registre na hora e compartilhe com quem realmente importa.</p>
+        <p style={{fontFamily:SANS,fontSize:14,color:"#381653",textAlign:"center",lineHeight:1.65,maxWidth:300,margin:0}}>Seus dias ficam salvos na sua conta Google — acesse de qualquer dispositivo.</p>
       </div>
-      <div style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:14}}>
-        <Btn onClick={onCreate}>Criar a sua</Btn>
-        <Btn onClick={onLogin} variant="secondary">Já tenho uma conta</Btn>
-        <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:4}}>
+      <div style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
+        <button onClick={onGoogle} disabled={loading} style={{width:"100%",padding:"14px 0",background:"#fff",border:"1.5px solid #dadce0",borderRadius:50,cursor:loading?"wait":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,fontFamily:SANS,fontSize:15,fontWeight:500,color:"#3c4043",boxShadow:"0 1px 2px rgba(60,64,67,.12)",opacity:loading?.6:1}}>
+          {loading?<Spinner size={18} color={C.purple}/>:<svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.56 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26a5.4 5.4 0 0 1-3.06.87 5.4 5.4 0 0 1-5.07-3.73H.95v2.34A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.93 10.7a5.41 5.41 0 0 1 0-3.4V4.96H.95a9 9 0 0 0 0 8.08l2.98-2.34z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58A9 9 0 0 0 9 0 9 9 0 0 0 .95 4.96l2.98 2.34A5.4 5.4 0 0 1 9 3.58z"/></svg>}
+          {loading?"Conectando…":"Entrar com Google"}
+        </button>
+        {hasLocal&&(
+          <button onClick={onRecover} style={{width:"100%",padding:"11px 0",background:"rgba(255,255,255,.55)",border:`1px solid ${C.purple}44`,borderRadius:50,cursor:"pointer",fontFamily:PASSO,fontSize:13,fontWeight:600,color:"#381653"}}>
+            Recuperar conta deste dispositivo
+          </button>
+        )}
+        <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:6}}>
           <button onClick={onGuide} style={{background:"none",border:"none",color:"#381653",fontSize:13,cursor:"pointer",fontFamily:PASSO}}>📱 Como instalar</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// GOOGLE SELECT — após login, lista os perfis que já
+// estão no Drive do usuário Google
+// ═══════════════════════════════════════════════════
+function ScreenGoogleSelect({googleUser,profiles,onSelect,onCreateNew,onImportLocal,onLogout,hasLocal}){
+  return(
+    <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24,padding:"12px 14px",background:C.white,borderRadius:14,border:`1px solid ${C.cardBorder}`}}>
+        {googleUser.picture?<img src={googleUser.picture} alt="" style={{width:40,height:40,borderRadius:"50%"}}/>:<AvatarBubble emoji="👤" size={40}/>}
+        <div style={{flex:1}}>
+          <p style={{margin:0,fontSize:13,color:C.textMid}}>Entrou como</p>
+          <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{googleUser.email}</p>
+        </div>
+        <button onClick={onLogout} style={{background:"none",border:"none",color:C.textMid,fontSize:12,cursor:"pointer",textDecoration:"underline"}}>Sair</button>
+      </div>
+
+      <p style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Bem-vindo ao Veeda</p>
+
+      {profiles.length===0?(
+        <div>
+          <p style={{fontSize:14,color:C.textMid,marginBottom:20,lineHeight:1.6}}>Você ainda não tem nenhum perfil na sua conta Veeda.</p>
+          <Btn onClick={onCreateNew} style={{marginBottom:12}}>Criar meu primeiro perfil 🌿</Btn>
+          {hasLocal&&(
+            <Btn onClick={onImportLocal} variant="outline">Importar conta local deste dispositivo</Btn>
+          )}
+        </div>
+      ):(
+        <>
+          <p style={{fontSize:14,color:C.textMid,marginBottom:24}}>Selecione o perfil para entrar</p>
+          {profiles.map(p=>(
+            <button key={p.id} onClick={()=>onSelect(p)} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"16px",marginBottom:10,display:"flex",alignItems:"center",gap:14,cursor:"pointer",textAlign:"left",boxShadow:"0 2px 8px rgba(0,0,0,.05)"}}>
+              <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/>
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p>
+                <p style={{margin:0,fontSize:12,color:C.textLight}}>{p.handle||"perfil"}</p>
+              </div>
+              <span style={{fontSize:22,color:C.textLight}}>›</span>
+            </button>
+          ))}
+          <Btn onClick={onCreateNew} variant="outline" style={{marginTop:8}}>+ Novo perfil</Btn>
+          {hasLocal&&(
+            <Btn onClick={onImportLocal} variant="ghost" style={{marginTop:6}}>Importar perfil local deste dispositivo</Btn>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// IMPORT LOCAL — migra perfis locais pro Drive
+// ═══════════════════════════════════════════════════
+function ScreenGoogleImport({localProfiles,onCancel,onImport,importing,result}){
+  const [selected,setSelected]=useState(localProfiles.map(p=>p.id));
+  const toggle=id=>setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  return(
+    <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
+      <Btn onClick={onCancel} variant="ghost" style={{width:"auto",marginBottom:16}}>‹ Voltar</Btn>
+      <p style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Importar conta local</p>
+      <p style={{fontSize:13,color:C.textMid,lineHeight:1.6,marginBottom:18}}>Encontramos {localProfiles.length} perfil(is) salvo(s) neste dispositivo. Escolha quais enviar pra sua conta Google. Uma cópia de segurança dos dados originais será mantida neste navegador.</p>
+      {localProfiles.map(p=>(
+        <label key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:selected.includes(p.id)?"#E8FBF0":C.white,border:`1.5px solid ${selected.includes(p.id)?C.green:C.cardBorder}`,borderRadius:14,marginBottom:10,cursor:"pointer"}}>
+          <input type="checkbox" checked={selected.includes(p.id)} onChange={()=>toggle(p.id)} style={{width:18,height:18}}/>
+          <AvatarBubble src={p.avatarSrc} emoji={p.emoji||"🌿"} color={p.avatarColor||C.purpleLight} size={38}/>
+          <div style={{flex:1}}>
+            <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{p.name||"(sem nome)"}</p>
+            <p style={{margin:0,fontSize:12,color:C.textLight}}>{p.handle||p.email||"perfil local"}</p>
+          </div>
+        </label>
+      ))}
+      {result&&(
+        <div style={{background:result.ok?C.greenLight:C.redLight,border:`1px solid ${result.ok?C.green:C.red}44`,borderRadius:10,padding:"10px 12px",marginTop:10}}>
+          <p style={{margin:0,fontSize:13,color:result.ok?C.green:C.red}}>{result.msg}</p>
+        </div>
+      )}
+      <Btn onClick={()=>onImport(selected)} disabled={importing||selected.length===0} style={{marginTop:16}}>
+        {importing?<><Spinner size={16} color="#fff"/>Enviando {selected.length} perfil(is)…</>:`Importar ${selected.length} perfil(is)`}
+      </Btn>
     </div>
   );
 }
@@ -1336,11 +1693,15 @@ function ScreenPassword({profile,onSuccess,onBack,onForgot}){
   );
 }
 
-function ScreenCreate({onDone,onBack}){
+function ScreenCreate({onDone,onBack,googleUser}){
+  const gName=googleUser?.name||"";
+  const gEmail=googleUser?.email||"";
   const [step,setStep]=useState(1);
-  const [email,setEmail]=useState("");const [name,setName]=useState("");
-  const [handle,setHandle]=useState("");const [handleManual,setHandleManual]=useState(false);const [handleErr,setHandleErr]=useState("");
-  const [emoji,setEmoji]=useState("🌿");const [avatarColor,setAvatarColor]=useState(C.purpleLight);const [avatarSrc,setAvatarSrc]=useState(null);
+  const [name,setName]=useState(gName);
+  const [handle,setHandle]=useState(sanitizeHandle(gName||gEmail.split("@")[0]||""));
+  const [handleManual,setHandleManual]=useState(false);const [handleErr,setHandleErr]=useState("");
+  const [emoji,setEmoji]=useState("🌿");const [avatarColor,setAvatarColor]=useState(C.purpleLight);
+  const [avatarSrc,setAvatarSrc]=useState(googleUser?.picture||null);
   const [pw,setPw]=useState("");const [pw2,setPw2]=useState("");
   const [code]=useState(genCode);const [confirmed,setConfirmed]=useState(false);const [copied,setCopied]=useState(false);
   const [loading,setLoading]=useState(false);const [err,setErr]=useState("");
@@ -1354,10 +1715,18 @@ function ScreenCreate({onDone,onBack}){
     if(!confirmed){setErr("Confirme que salvou o código.");return;}
     setLoading(true);
     try{
-      const h="@"+(handle||sanitizeHandle(name)||sanitizeHandle(email.split("@")[0]));
+      const h="@"+(handle||sanitizeHandle(name)||sanitizeHandle(gEmail.split("@")[0]));
       if(!isHandleAvailable(h,null)){setErr("Este @handle já está em uso. Escolha outro.");setLoading(false);return;}
       const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString();
-      const profile={id,name,email,handle:h,emoji,avatarColor,avatarSrc,passwordHash,recoveryHash,createdAt:Date.now()};
+      const profile={
+        id,name,
+        email:gEmail,
+        googleSub:googleUser?.sub||null,
+        handle:h,emoji,avatarColor,avatarSrc,
+        passwordHash,recoveryHash,
+        createdAt:Date.now(),
+        cloud:!!googleUser
+      };
       const ps=loadProfiles();ps.push(profile);saveProfiles(ps);
       registryAdd(profile);
       const enc=await encryptObj(EMPTY_DATA(),pw);
@@ -1373,10 +1742,8 @@ function ScreenCreate({onDone,onBack}){
       <div style={{display:"flex",gap:6,marginBottom:24}}>{[1,2,3,4].map(n=><div key={n} style={{flex:1,height:4,borderRadius:4,background:step>=n?C.purple:C.cardBorder,transition:"background .3s"}}/>)}</div>
 
       {step===1&&<div style={{animation:"fadeIn .25s ease"}}>
-        <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Crie sua conta Veeda</p>
-        <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Seu e-mail identifica sua conta. Não enviamos e-mails, é só para identificação.</p>
-        <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>E-mail</label>
-        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="seu@email.com" style={{marginBottom:14}}/>
+        <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Crie seu perfil Veeda</p>
+        <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>{gEmail?<>Conectado como <strong>{gEmail}</strong>. Escolha um nome e um @handle únicos para o seu perfil.</>:"Escolha um nome e um @handle únicos para o seu perfil."}</p>
         <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome no Veeda</label>
         <input value={name} onChange={e=>setName(e.target.value)} placeholder="Como quer ser chamado" style={{marginBottom:14}}/>
         <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>@handle <span style={{fontWeight:400,color:C.textLight}}>(único, pode personalizar)</span></label>
@@ -1387,7 +1754,6 @@ function ScreenCreate({onDone,onBack}){
         {handleErr&&<p style={{fontSize:12,color:C.red,margin:"-16px 0 12px",fontWeight:500}}>{handleErr}</p>}
         {handle&&!handleErr&&<p style={{fontSize:12,color:C.green,margin:"-14px 0 14px"}}>✓ @{handle}</p>}
         <Btn onClick={()=>{
-          if(!email.includes("@")){setErr("E-mail inválido.");return;}
           if(!name.trim()){setErr("Informe seu nome.");return;}
           const h=handle||sanitizeHandle(name);
           if(h.length<3){setHandleErr("Handle muito curto (mín. 3 car.).");return;}
@@ -1454,7 +1820,11 @@ function ScreenForgot({profile,onSuccess,onBack}){
     </div>
   );
 }
-
+// ═══════════════════════════════════════════════════════════
+// VEEDA MAIN APP — veeda-app.js
+// Edite este arquivo para: VeedaApp (componente principal),
+// Veeda root, ReactDOM.createRoot, Service Worker PWA
+// ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
@@ -1505,6 +1875,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   useEffect(()=>{
     (async()=>{
       try{
+        // 1) Se temos token Google e este perfil está marcado como cloud,
+        //    tenta sincronizar do Drive ANTES de carregar o local.
+        const gTok=await cloudSync.tokenOrNull();
+        if(gTok&&profile.cloud){
+          try{
+            const res=await cloudSync.pullOnBoot(profile.id,password,gTok);
+            if(res?.used==="remote"){
+              addToast?.("Dados sincronizados da nuvem ☁️","success");
+            }
+          }catch(e){console.warn("pullOnBoot failed",e);}
+        }
         const raw=safeLS.raw(dataKey);
         if(raw){
           try{
@@ -1512,15 +1893,12 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
             sessionKey.current=key;sessionSalt.current=salt;
             setData(migrateData(d));
           }catch(decErr){
-            // Tenta recuperar pelo snapshot mensal mais recente
             const snap=await loadLatestSnapshot(profile.id,password);
             if(snap){
               sessionKey.current=snap.key;sessionSalt.current=snap.salt;
               setData(migrateData(snap.data));
               addToast?.("Dados recuperados do snapshot mensal ✅","success");
-            } else {
-              throw decErr;
-            }
+            } else { throw decErr; }
           }
         } else {
           const d=EMPTY_DATA();
@@ -1530,6 +1908,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           setData(d);
           safeLS.rawSet(dataKey,enc);
           saveMonthlySnapshot(profile.id,enc);
+          // Primeiro save na nuvem (se conectado)
+          if(gTok&&profile.cloud){cloudSync.queuePush(profile.id,enc);}
         }
       }catch{setData(EMPTY_DATA());}
       setLoading(false);
@@ -1574,9 +1954,9 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     }
   },[data,loading]);
 
-  // Monthly snapshot on every save
+  // Monthly snapshot on every save + queue cloud push
   const save=useCallback(async d=>{
-    const lightweight={...d,moments:{}};
+    const lightweight={...d,moments:{},lastSaved:Date.now()};
     Object.keys(d.moments||{}).forEach(day=>{
       lightweight.moments[day]=(d.moments[day]||[]).map(m=>{
         if((m.type==="foto"||m.type==="video"||m.type==="arte")&&m.content?.startsWith("data:")){
@@ -1586,7 +1966,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         return m;
       });
     });
-    setData(d);
+    setData({...d,lastSaved:lightweight.lastSaved});
     let enc;
     if(sessionKey.current&&sessionSalt.current){
       enc=await encryptFast(lightweight,sessionKey.current,sessionSalt.current);
@@ -1595,7 +1975,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     }
     safeLS.rawSet(dataKey,enc);
     saveMonthlySnapshot(profile.id,enc);
-  },[dataKey,password,profile.id]);
+    // Cloud push (debounced): só se o perfil é cloud-enabled
+    if(profile.cloud){cloudSync.queuePush(profile.id,enc);}
+  },[dataKey,password,profile.id,profile.cloud]);
+
+  // Flush cloud push on tab hide / unload (caso o debounce ainda esteja pendente)
+  useEffect(()=>{
+    const flush=()=>{if(profile.cloud)cloudSync.flushAll();};
+    window.addEventListener("pagehide",flush);
+    window.addEventListener("beforeunload",flush);
+    return()=>{window.removeEventListener("pagehide",flush);window.removeEventListener("beforeunload",flush);};
+  },[profile.cloud]);
 
   // Hydrate IDB media
   useEffect(()=>{
@@ -1973,17 +2363,24 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 }
 
 // ═══════════════════════════════════════════════════
-// ROOT COMPONENT
+// ROOT COMPONENT — v1.4: Google é o caminho principal
 // ═══════════════════════════════════════════════════
 function Veeda(){
   const [screen,setScreen]=useState("loading");
-  const [profiles,setProfiles]=useState([]);
+  const [profiles,setProfiles]=useState([]);        // perfis locais
+  const [cloudProfiles,setCloudProfiles]=useState([]); // perfis do Drive (lista índice)
   const [selProfile,setSelProfile]=useState(null);
   const [activeProfile,setActiveProfile]=useState(null);
   const [activePw,setActivePw]=useState(null);
   const [forgotProfile,setForgotProfile]=useState(null);
   const [showGuide,setShowGuide]=useState(false);
+  const [googleUser,setGoogleUser]=useState(null);
+  const [googleLoading,setGoogleLoading]=useState(false);
+  const [importResult,setImportResult]=useState(null);
+  const [importing,setImporting]=useState(false);
+  const [hasLocal,setHasLocal]=useState(false);
 
+  // ── Boot: URL intents + sessão persistente ────
   useEffect(()=>{
     // Check URL for add contact intent (?add=vc2_...)
     const params=new URLSearchParams(window.location.search);
@@ -1992,23 +2389,131 @@ function Veeda(){
       sessionStorage.setItem("veeda_pending_add",addCode);
       window.history.replaceState({},"",window.location.pathname);
     }
-    // Load persistent session
-    const session=loadSession();
-    const ps=loadProfiles();
-    setProfiles(ps);
-    if(session?.profileId&&session?.pw){
-      const p=ps.find(x=>x.id===session.profileId);
-      if(p){setActiveProfile(p);setActivePw(session.pw);setScreen("app");return;}
-    }
-    setScreen("splash");
+
+    (async()=>{
+      const ps=loadProfiles();
+      setProfiles(ps);
+      setHasLocal(hasLocalAccounts());
+      // Restaura usuário Google cacheado (para UI, o token é checado à parte)
+      const cachedU=getCachedUser();
+      if(cachedU)setGoogleUser(cachedU);
+
+      // Sessão persistente — se o perfil ativo for cloud e temos token, ótimo.
+      const session=loadSession();
+      if(session?.profileId&&session?.pw){
+        const p=ps.find(x=>x.id===session.profileId);
+        if(p){
+          // Se o perfil é cloud mas token expirou, cai no splash pro reauth
+          if(p.cloud&&!(await cloudSync.tokenOrNull())){
+            setScreen("splash");
+            return;
+          }
+          setActiveProfile(p);setActivePw(session.pw);setScreen("app");
+          return;
+        }
+      }
+      setScreen("splash");
+    })();
   },[]);
 
-  const refresh=()=>{const ps=loadProfiles();setProfiles(ps);return ps;};
+  const refresh=()=>{const ps=loadProfiles();setProfiles(ps);setHasLocal(hasLocalAccounts());return ps;};
 
   const updateProfile=updated=>{
     const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);
-    if(idx>=0){ps[idx]={...ps[idx],...updated};saveProfiles(ps);registryUpdate(ps[idx]);setActiveProfile(prev=>({...prev,...updated}));}
+    if(idx>=0){
+      ps[idx]={...ps[idx],...updated};
+      saveProfiles(ps);
+      registryUpdate(ps[idx]);
+      setActiveProfile(prev=>({...prev,...updated}));
+      // Se cloud, propaga alterações de perfil no índice da nuvem
+      (async()=>{
+        const t=await cloudSync.tokenOrNull();
+        if(t&&ps[idx].cloud){
+          try{
+            const acc=(await cloudAccount.load(t))||cloudAccount.empty(googleUser||{});
+            cloudAccount.mergeProfile(acc,ps[idx]);
+            await cloudAccount.save(acc,t);
+          }catch(e){console.warn("cloudAccount update failed",e);}
+        }
+      })();
+    }
   };
+
+  // ── Google login: abre popup → pega token → user info → lista perfis cloud
+  const doGoogleLogin=useCallback(async()=>{
+    setGoogleLoading(true);
+    try{
+      await gdriveAuth();
+      const t=getCachedToken();
+      const u=await gdriveUserInfo(t);
+      setGoogleUser(u);
+      const acc=await cloudAccount.load(t);
+      const list=acc?.profiles||[];
+      setCloudProfiles(list);
+      setScreen("google_select");
+    }catch(e){
+      console.warn("Google login cancelado",e);
+    }finally{setGoogleLoading(false);}
+  },[]);
+
+  // ── Refresh cloud profile list sem re-login
+  const refreshCloudProfiles=useCallback(async()=>{
+    const t=await cloudSync.tokenOrNull();
+    if(!t)return[];
+    const acc=await cloudAccount.load(t);
+    const list=acc?.profiles||[];
+    setCloudProfiles(list);
+    return list;
+  },[]);
+
+  // ── Import de perfis locais para a nuvem
+  const doImport=useCallback(async(ids)=>{
+    setImporting(true);setImportResult(null);
+    try{
+      const t=await cloudSync.tokenOrNull();
+      if(!t){setImportResult({ok:false,msg:"Sessão Google expirou. Faça login novamente."});setImporting(false);return;}
+      // 1) Cria um backup read-only ANTES de qualquer alteração
+      preserveBeforeMigration("pre_google_import");
+      const ps=loadProfiles();
+      const acc=(await cloudAccount.load(t))||cloudAccount.empty(googleUser||{});
+      let sent=0;
+      for(const id of ids){
+        const p=ps.find(x=>x.id===id);
+        if(!p)continue;
+        // Marca como cloud (preservando todos os outros campos)
+        p.cloud=true;p.googleSub=googleUser?.sub||p.googleSub||null;p.email=p.email||googleUser?.email||"";
+        // Envia o blob cifrado atual (se existir)
+        const enc=safeLS.raw(`veeda_data_${id}`);
+        if(enc){await cloudData.save(id,enc,t);}
+        // Atualiza índice
+        cloudAccount.mergeProfile(acc,p);
+        sent++;
+      }
+      await cloudAccount.save(acc,t);
+      // Persiste a atualização `cloud:true` nos perfis locais
+      saveProfiles(ps);
+      setMigrationState({status:"imported",count:sent});
+      setImportResult({ok:true,msg:`${sent} perfil(is) importado(s) com sucesso. Seu backup local foi preservado.`});
+      setCloudProfiles(acc.profiles||[]);
+      // Depois de 1.2s, volta pra tela de seleção
+      setTimeout(()=>{setImportResult(null);setScreen("google_select");},1200);
+    }catch(e){
+      console.warn("import failed",e);
+      setImportResult({ok:false,msg:"Falha ao importar. Seus dados locais permanecem intactos."});
+    }finally{setImporting(false);}
+  },[googleUser]);
+
+  // ── Logout: limpa sessão + Google (preserva dados locais!)
+  const doLogoutApp=useCallback(()=>{
+    clearSession();
+    setActiveProfile(null);setActivePw(null);
+    setScreen("splash");
+  },[]);
+  const doLogoutGoogle=useCallback(()=>{
+    clearGoogleAuth();
+    setGoogleUser(null);setCloudProfiles([]);
+    setScreen("splash");
+  },[]);
 
   if(screen==="loading")return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.splashBg}}><Spinner size={36} color={C.purple}/></div>;
 
@@ -2016,19 +2521,80 @@ function Veeda(){
     <VeedaApp
       profile={activeProfile}
       password={activePw}
-      onLogout={()=>{clearSession();setActiveProfile(null);setActivePw(null);setScreen("splash");}}
+      onLogout={doLogoutApp}
       onUpdateProfile={updateProfile}
     />
   );
   if(screen==="forgot"&&forgotProfile)return<ScreenForgot profile={forgotProfile} onBack={()=>setScreen("password")} onSuccess={pw=>{const ps=loadProfiles();const p=ps.find(x=>x.id===forgotProfile.id);saveSession(p.id,pw);setActiveProfile(p);setActivePw(pw);setForgotProfile(null);setScreen("app");}}/>;
-  if(screen==="password"&&selProfile)return<ScreenPassword profile={selProfile} onBack={()=>setScreen("select")} onForgot={()=>{setForgotProfile(selProfile);setScreen("forgot");}} onSuccess={pw=>{saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");}}/>;
+  if(screen==="password"&&selProfile)return<ScreenPassword profile={selProfile} onBack={()=>setScreen(selProfile.cloud?"google_select":"select")} onForgot={()=>{setForgotProfile(selProfile);setScreen("forgot");}} onSuccess={async pw=>{
+    // Para perfis cloud, baixa o blob antes de entrar (caso o local não exista neste dispositivo)
+    if(selProfile.cloud){
+      const t=await cloudSync.tokenOrNull();
+      if(t){
+        try{
+          const remote=await cloudData.load(selProfile.id,t);
+          if(remote&&!safeLS.raw(`veeda_data_${selProfile.id}`)){
+            safeLS.rawSet(`veeda_data_${selProfile.id}`,remote.content);
+          }
+        }catch(e){console.warn("pull on login failed",e);}
+      }
+      // Garante que o perfil existe também no localStorage para o VeedaApp
+      const localPs=loadProfiles();
+      if(!localPs.find(p=>p.id===selProfile.id)){
+        localPs.push(selProfile);saveProfiles(localPs);
+      }
+    }
+    saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");
+  }}/>;
+  if(screen==="google_create")return<ScreenCreate
+    googleUser={googleUser}
+    onBack={()=>setScreen("google_select")}
+    onDone={async(profile,pw)=>{
+      // Upload inicial pra nuvem
+      try{
+        const t=await cloudSync.tokenOrNull();
+        if(t){
+          const acc=(await cloudAccount.load(t))||cloudAccount.empty(googleUser||{});
+          cloudAccount.mergeProfile(acc,profile);
+          await cloudAccount.save(acc,t);
+          const enc=safeLS.raw(`veeda_data_${profile.id}`);
+          if(enc)await cloudData.save(profile.id,enc,t);
+        }
+      }catch(e){console.warn("initial cloud save failed",e);}
+      refresh();
+      saveSession(profile.id,pw);
+      setActiveProfile(profile);setActivePw(pw);setScreen("app");
+    }}
+  />;
+  if(screen==="google_import")return<ScreenGoogleImport
+    localProfiles={profiles}
+    importing={importing}
+    result={importResult}
+    onCancel={()=>setScreen("google_select")}
+    onImport={doImport}
+  />;
+  if(screen==="google_select")return<ScreenGoogleSelect
+    googleUser={googleUser}
+    profiles={cloudProfiles}
+    hasLocal={hasLocal}
+    onSelect={p=>{setSelProfile({...p,cloud:true});setScreen("password");}}
+    onCreateNew={()=>setScreen("google_create")}
+    onImportLocal={()=>setScreen("google_import")}
+    onLogout={doLogoutGoogle}
+  />;
   if(screen==="create")return<ScreenCreate onBack={()=>setScreen("splash")} onDone={(profile,pw)=>{refresh();saveSession(profile.id,pw);setActiveProfile(profile);setActivePw(pw);setScreen("app");}}/>;
   if(screen==="select")return<ScreenSelect profiles={profiles} onSelect={p=>{setSelProfile(p);setScreen("password");}} onNew={()=>setScreen("create")} onBack={()=>setScreen("splash")}/>;
 
   return(
     <>
       {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
-      <SplashScreen onLogin={()=>setScreen("select")} onCreate={()=>setScreen("create")} onGuide={()=>setShowGuide(true)}/>
+      <SplashScreen
+        onGoogle={doGoogleLogin}
+        onRecover={()=>setScreen("select")}
+        onGuide={()=>setShowGuide(true)}
+        loading={googleLoading}
+        hasLocal={hasLocal}
+      />
     </>
   );
 }
@@ -2065,7 +2631,6 @@ self.addEventListener("fetch", e => {
                 (e.request.destination === "document") ||
                 (e.request.headers.get("accept") || "").includes("text/html");
   if(isNav){
-    // Network-first for HTML so the user always gets the latest shell
     e.respondWith(
       fetch(e.request).then(resp => {
         if(resp && resp.status === 200 && resp.type === "basic"){
@@ -2077,7 +2642,6 @@ self.addEventListener("fetch", e => {
     );
     return;
   }
-  // Stale-while-revalidate for everything else
   e.respondWith(
     caches.match(e.request).then(cached => {
       const fetchPromise = fetch(e.request).then(resp => {
@@ -2106,5 +2670,6 @@ self.addEventListener("push", e => {
   });
 }
 </script>
+
 </body>
 </html>

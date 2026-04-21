@@ -53,6 +53,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   useEffect(()=>{
     (async()=>{
       try{
+        // 1) Se temos token Google e este perfil está marcado como cloud,
+        //    tenta sincronizar do Drive ANTES de carregar o local.
+        const gTok=await cloudSync.tokenOrNull();
+        if(gTok&&profile.cloud){
+          try{
+            const res=await cloudSync.pullOnBoot(profile.id,password,gTok);
+            if(res?.used==="remote"){
+              addToast?.("Dados sincronizados da nuvem ☁️","success");
+            }
+          }catch(e){console.warn("pullOnBoot failed",e);}
+        }
         const raw=safeLS.raw(dataKey);
         if(raw){
           try{
@@ -75,6 +86,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           setData(d);
           safeLS.rawSet(dataKey,enc);
           saveMonthlySnapshot(profile.id,enc);
+          // Primeiro save na nuvem (se conectado)
+          if(gTok&&profile.cloud){cloudSync.queuePush(profile.id,enc);}
         }
       }catch{setData(EMPTY_DATA());}
       setLoading(false);
@@ -119,9 +132,9 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     }
   },[data,loading]);
 
-  // Monthly snapshot on every save
+  // Monthly snapshot on every save + queue cloud push
   const save=useCallback(async d=>{
-    const lightweight={...d,moments:{}};
+    const lightweight={...d,moments:{},lastSaved:Date.now()};
     Object.keys(d.moments||{}).forEach(day=>{
       lightweight.moments[day]=(d.moments[day]||[]).map(m=>{
         if((m.type==="foto"||m.type==="video"||m.type==="arte")&&m.content?.startsWith("data:")){
@@ -131,7 +144,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         return m;
       });
     });
-    setData(d);
+    setData({...d,lastSaved:lightweight.lastSaved});
     let enc;
     if(sessionKey.current&&sessionSalt.current){
       enc=await encryptFast(lightweight,sessionKey.current,sessionSalt.current);
@@ -140,7 +153,17 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     }
     safeLS.rawSet(dataKey,enc);
     saveMonthlySnapshot(profile.id,enc);
-  },[dataKey,password,profile.id]);
+    // Cloud push (debounced): só se o perfil é cloud-enabled
+    if(profile.cloud){cloudSync.queuePush(profile.id,enc);}
+  },[dataKey,password,profile.id,profile.cloud]);
+
+  // Flush cloud push on tab hide / unload (caso o debounce ainda esteja pendente)
+  useEffect(()=>{
+    const flush=()=>{if(profile.cloud)cloudSync.flushAll();};
+    window.addEventListener("pagehide",flush);
+    window.addEventListener("beforeunload",flush);
+    return()=>{window.removeEventListener("pagehide",flush);window.removeEventListener("beforeunload",flush);};
+  },[profile.cloud]);
 
   // Hydrate IDB media
   useEffect(()=>{
@@ -518,17 +541,24 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 }
 
 // ═══════════════════════════════════════════════════
-// ROOT COMPONENT
+// ROOT COMPONENT — v1.4: Google é o caminho principal
 // ═══════════════════════════════════════════════════
 function Veeda(){
   const [screen,setScreen]=useState("loading");
-  const [profiles,setProfiles]=useState([]);
+  const [profiles,setProfiles]=useState([]);        // perfis locais
+  const [cloudProfiles,setCloudProfiles]=useState([]); // perfis do Drive (lista índice)
   const [selProfile,setSelProfile]=useState(null);
   const [activeProfile,setActiveProfile]=useState(null);
   const [activePw,setActivePw]=useState(null);
   const [forgotProfile,setForgotProfile]=useState(null);
   const [showGuide,setShowGuide]=useState(false);
+  const [googleUser,setGoogleUser]=useState(null);
+  const [googleLoading,setGoogleLoading]=useState(false);
+  const [importResult,setImportResult]=useState(null);
+  const [importing,setImporting]=useState(false);
+  const [hasLocal,setHasLocal]=useState(false);
 
+  // ── Boot: URL intents + sessão persistente ────
   useEffect(()=>{
     // Check URL for add contact intent (?add=vc2_...)
     const params=new URLSearchParams(window.location.search);
@@ -537,23 +567,131 @@ function Veeda(){
       sessionStorage.setItem("veeda_pending_add",addCode);
       window.history.replaceState({},"",window.location.pathname);
     }
-    // Load persistent session
-    const session=loadSession();
-    const ps=loadProfiles();
-    setProfiles(ps);
-    if(session?.profileId&&session?.pw){
-      const p=ps.find(x=>x.id===session.profileId);
-      if(p){setActiveProfile(p);setActivePw(session.pw);setScreen("app");return;}
-    }
-    setScreen("splash");
+
+    (async()=>{
+      const ps=loadProfiles();
+      setProfiles(ps);
+      setHasLocal(hasLocalAccounts());
+      // Restaura usuário Google cacheado (para UI, o token é checado à parte)
+      const cachedU=getCachedUser();
+      if(cachedU)setGoogleUser(cachedU);
+
+      // Sessão persistente — se o perfil ativo for cloud e temos token, ótimo.
+      const session=loadSession();
+      if(session?.profileId&&session?.pw){
+        const p=ps.find(x=>x.id===session.profileId);
+        if(p){
+          // Se o perfil é cloud mas token expirou, cai no splash pro reauth
+          if(p.cloud&&!(await cloudSync.tokenOrNull())){
+            setScreen("splash");
+            return;
+          }
+          setActiveProfile(p);setActivePw(session.pw);setScreen("app");
+          return;
+        }
+      }
+      setScreen("splash");
+    })();
   },[]);
 
-  const refresh=()=>{const ps=loadProfiles();setProfiles(ps);return ps;};
+  const refresh=()=>{const ps=loadProfiles();setProfiles(ps);setHasLocal(hasLocalAccounts());return ps;};
 
   const updateProfile=updated=>{
     const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);
-    if(idx>=0){ps[idx]={...ps[idx],...updated};saveProfiles(ps);registryUpdate(ps[idx]);setActiveProfile(prev=>({...prev,...updated}));}
+    if(idx>=0){
+      ps[idx]={...ps[idx],...updated};
+      saveProfiles(ps);
+      registryUpdate(ps[idx]);
+      setActiveProfile(prev=>({...prev,...updated}));
+      // Se cloud, propaga alterações de perfil no índice da nuvem
+      (async()=>{
+        const t=await cloudSync.tokenOrNull();
+        if(t&&ps[idx].cloud){
+          try{
+            const acc=(await cloudAccount.load(t))||cloudAccount.empty(googleUser||{});
+            cloudAccount.mergeProfile(acc,ps[idx]);
+            await cloudAccount.save(acc,t);
+          }catch(e){console.warn("cloudAccount update failed",e);}
+        }
+      })();
+    }
   };
+
+  // ── Google login: abre popup → pega token → user info → lista perfis cloud
+  const doGoogleLogin=useCallback(async()=>{
+    setGoogleLoading(true);
+    try{
+      await gdriveAuth();
+      const t=getCachedToken();
+      const u=await gdriveUserInfo(t);
+      setGoogleUser(u);
+      const acc=await cloudAccount.load(t);
+      const list=acc?.profiles||[];
+      setCloudProfiles(list);
+      setScreen("google_select");
+    }catch(e){
+      console.warn("Google login cancelado",e);
+    }finally{setGoogleLoading(false);}
+  },[]);
+
+  // ── Refresh cloud profile list sem re-login
+  const refreshCloudProfiles=useCallback(async()=>{
+    const t=await cloudSync.tokenOrNull();
+    if(!t)return[];
+    const acc=await cloudAccount.load(t);
+    const list=acc?.profiles||[];
+    setCloudProfiles(list);
+    return list;
+  },[]);
+
+  // ── Import de perfis locais para a nuvem
+  const doImport=useCallback(async(ids)=>{
+    setImporting(true);setImportResult(null);
+    try{
+      const t=await cloudSync.tokenOrNull();
+      if(!t){setImportResult({ok:false,msg:"Sessão Google expirou. Faça login novamente."});setImporting(false);return;}
+      // 1) Cria um backup read-only ANTES de qualquer alteração
+      preserveBeforeMigration("pre_google_import");
+      const ps=loadProfiles();
+      const acc=(await cloudAccount.load(t))||cloudAccount.empty(googleUser||{});
+      let sent=0;
+      for(const id of ids){
+        const p=ps.find(x=>x.id===id);
+        if(!p)continue;
+        // Marca como cloud (preservando todos os outros campos)
+        p.cloud=true;p.googleSub=googleUser?.sub||p.googleSub||null;p.email=p.email||googleUser?.email||"";
+        // Envia o blob cifrado atual (se existir)
+        const enc=safeLS.raw(`veeda_data_${id}`);
+        if(enc){await cloudData.save(id,enc,t);}
+        // Atualiza índice
+        cloudAccount.mergeProfile(acc,p);
+        sent++;
+      }
+      await cloudAccount.save(acc,t);
+      // Persiste a atualização `cloud:true` nos perfis locais
+      saveProfiles(ps);
+      setMigrationState({status:"imported",count:sent});
+      setImportResult({ok:true,msg:`${sent} perfil(is) importado(s) com sucesso. Seu backup local foi preservado.`});
+      setCloudProfiles(acc.profiles||[]);
+      // Depois de 1.2s, volta pra tela de seleção
+      setTimeout(()=>{setImportResult(null);setScreen("google_select");},1200);
+    }catch(e){
+      console.warn("import failed",e);
+      setImportResult({ok:false,msg:"Falha ao importar. Seus dados locais permanecem intactos."});
+    }finally{setImporting(false);}
+  },[googleUser]);
+
+  // ── Logout: limpa sessão + Google (preserva dados locais!)
+  const doLogoutApp=useCallback(()=>{
+    clearSession();
+    setActiveProfile(null);setActivePw(null);
+    setScreen("splash");
+  },[]);
+  const doLogoutGoogle=useCallback(()=>{
+    clearGoogleAuth();
+    setGoogleUser(null);setCloudProfiles([]);
+    setScreen("splash");
+  },[]);
 
   if(screen==="loading")return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.splashBg}}><Spinner size={36} color={C.purple}/></div>;
 
@@ -561,19 +699,80 @@ function Veeda(){
     <VeedaApp
       profile={activeProfile}
       password={activePw}
-      onLogout={()=>{clearSession();setActiveProfile(null);setActivePw(null);setScreen("splash");}}
+      onLogout={doLogoutApp}
       onUpdateProfile={updateProfile}
     />
   );
   if(screen==="forgot"&&forgotProfile)return<ScreenForgot profile={forgotProfile} onBack={()=>setScreen("password")} onSuccess={pw=>{const ps=loadProfiles();const p=ps.find(x=>x.id===forgotProfile.id);saveSession(p.id,pw);setActiveProfile(p);setActivePw(pw);setForgotProfile(null);setScreen("app");}}/>;
-  if(screen==="password"&&selProfile)return<ScreenPassword profile={selProfile} onBack={()=>setScreen("select")} onForgot={()=>{setForgotProfile(selProfile);setScreen("forgot");}} onSuccess={pw=>{saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");}}/>;
+  if(screen==="password"&&selProfile)return<ScreenPassword profile={selProfile} onBack={()=>setScreen(selProfile.cloud?"google_select":"select")} onForgot={()=>{setForgotProfile(selProfile);setScreen("forgot");}} onSuccess={async pw=>{
+    // Para perfis cloud, baixa o blob antes de entrar (caso o local não exista neste dispositivo)
+    if(selProfile.cloud){
+      const t=await cloudSync.tokenOrNull();
+      if(t){
+        try{
+          const remote=await cloudData.load(selProfile.id,t);
+          if(remote&&!safeLS.raw(`veeda_data_${selProfile.id}`)){
+            safeLS.rawSet(`veeda_data_${selProfile.id}`,remote.content);
+          }
+        }catch(e){console.warn("pull on login failed",e);}
+      }
+      // Garante que o perfil existe também no localStorage para o VeedaApp
+      const localPs=loadProfiles();
+      if(!localPs.find(p=>p.id===selProfile.id)){
+        localPs.push(selProfile);saveProfiles(localPs);
+      }
+    }
+    saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");
+  }}/>;
+  if(screen==="google_create")return<ScreenCreate
+    googleUser={googleUser}
+    onBack={()=>setScreen("google_select")}
+    onDone={async(profile,pw)=>{
+      // Upload inicial pra nuvem
+      try{
+        const t=await cloudSync.tokenOrNull();
+        if(t){
+          const acc=(await cloudAccount.load(t))||cloudAccount.empty(googleUser||{});
+          cloudAccount.mergeProfile(acc,profile);
+          await cloudAccount.save(acc,t);
+          const enc=safeLS.raw(`veeda_data_${profile.id}`);
+          if(enc)await cloudData.save(profile.id,enc,t);
+        }
+      }catch(e){console.warn("initial cloud save failed",e);}
+      refresh();
+      saveSession(profile.id,pw);
+      setActiveProfile(profile);setActivePw(pw);setScreen("app");
+    }}
+  />;
+  if(screen==="google_import")return<ScreenGoogleImport
+    localProfiles={profiles}
+    importing={importing}
+    result={importResult}
+    onCancel={()=>setScreen("google_select")}
+    onImport={doImport}
+  />;
+  if(screen==="google_select")return<ScreenGoogleSelect
+    googleUser={googleUser}
+    profiles={cloudProfiles}
+    hasLocal={hasLocal}
+    onSelect={p=>{setSelProfile({...p,cloud:true});setScreen("password");}}
+    onCreateNew={()=>setScreen("google_create")}
+    onImportLocal={()=>setScreen("google_import")}
+    onLogout={doLogoutGoogle}
+  />;
   if(screen==="create")return<ScreenCreate onBack={()=>setScreen("splash")} onDone={(profile,pw)=>{refresh();saveSession(profile.id,pw);setActiveProfile(profile);setActivePw(pw);setScreen("app");}}/>;
   if(screen==="select")return<ScreenSelect profiles={profiles} onSelect={p=>{setSelProfile(p);setScreen("password");}} onNew={()=>setScreen("create")} onBack={()=>setScreen("splash")}/>;
 
   return(
     <>
       {showGuide&&<InstallGuide onClose={()=>setShowGuide(false)}/>}
-      <SplashScreen onLogin={()=>setScreen("select")} onCreate={()=>setScreen("create")} onGuide={()=>setShowGuide(true)}/>
+      <SplashScreen
+        onGoogle={doGoogleLogin}
+        onRecover={()=>setScreen("select")}
+        onGuide={()=>setShowGuide(true)}
+        loading={googleLoading}
+        hasLocal={hasLocal}
+      />
     </>
   );
 }

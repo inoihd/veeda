@@ -370,6 +370,32 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
         </div>
 
         {tab==="conta"&&<div>
+          {/* ── Conta Google / Nuvem ── */}
+          {(profile.cloud||getCachedUser())&&<div style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px 16px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+              {getCachedUser()?.picture?<img src={getCachedUser().picture} alt="" style={{width:36,height:36,borderRadius:"50%"}}/>:<div style={{width:36,height:36,borderRadius:"50%",background:C.purpleLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>☁️</div>}
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontSize:11,color:C.textMid,fontWeight:600,letterSpacing:".3px",textTransform:"uppercase"}}>Conta Google {profile.cloud?"· Nuvem ativa":""}</p>
+                <p style={{margin:"2px 0 0",fontSize:13,color:C.text,fontWeight:500}}>{getCachedUser()?.email||profile.email||"—"}</p>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {profile.cloud&&<button onClick={async()=>{
+                const t=await cloudSync.tokenOrNull();
+                if(!t){addToast?.("Faça login no Google novamente.","error");return;}
+                await cloudSync.flushAll();
+                const enc=safeLS.raw(`veeda_data_${profile.id}`);
+                if(enc){try{await cloudData.save(profile.id,enc,t);addToast?.("Sincronizado com a nuvem ☁️","success");}catch{addToast?.("Falha ao sincronizar.","error");}}
+              }} style={{flex:1,minWidth:120,padding:"9px 12px",background:C.purpleLight,color:C.purple,border:`1px solid ${C.purple}44`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:600}}>☁️ Sincronizar agora</button>}
+              <button onClick={()=>{
+                clearGoogleAuth();
+                addToast?.("Google desconectado. Seus dados locais continuam salvos.","info");
+                onLogout();onClose();
+              }} style={{flex:1,minWidth:120,padding:"9px 12px",background:"#fff",color:C.textMid,border:`1px solid ${C.cardBorder}`,borderRadius:10,cursor:"pointer",fontSize:12,fontWeight:600}}>Sair do Google</button>
+            </div>
+            <p style={{margin:"10px 0 0",fontSize:11,color:C.textLight,lineHeight:1.5}}>{profile.cloud?"Seus dias são enviados cifrados ao Google Drive (pasta privada do app). Só você, com sua senha, consegue ler.":"Este perfil é local. Entre com o Google para habilitar a nuvem."}</p>
+          </div>}
+
           {showHandle?(
             <div style={{marginBottom:14}}>
               <label style={{fontSize:12,color:C.textMid,display:"block",marginBottom:6}}>Novo @handle</label>
@@ -406,9 +432,19 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
             <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Seus dados são salvos automaticamente a cada ação e protegidos por snapshots mensais. Nenhum dado do mês atual é perdido sem confirmação.</p>
           </div>
           <div style={{background:C.greenLight,borderRadius:14,padding:16,marginBottom:16,border:`1px solid ${C.green}44`}}>
-            <p style={{margin:"0 0 6px",fontSize:13,fontWeight:600,color:C.green}}>✅ Dados protegidos localmente</p>
-            <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Todos os seus {totalMoments} momentos estão seguros no seu dispositivo. Use o Backup para proteger também em caso de troca de celular.</p>
+            <p style={{margin:"0 0 6px",fontSize:13,fontWeight:600,color:C.green}}>✅ Dados protegidos {profile.cloud?"local + nuvem":"localmente"}</p>
+            <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Todos os seus {totalMoments} momentos estão seguros{profile.cloud?" no seu dispositivo e na sua conta Google (cifrados).":" no seu dispositivo. Use o Backup para proteger também em caso de troca de celular."}</p>
           </div>
+          {/* Backups preservados (regra de ouro: nunca apagamos sem confirmação) */}
+          {(()=>{const bkps=listPreservedBackups();if(!bkps.length)return null;return(
+            <div style={{background:C.amberLight,borderRadius:14,padding:16,marginBottom:16,border:`1px solid ${C.amber}44`}}>
+              <p style={{margin:"0 0 6px",fontSize:13,fontWeight:600,color:C.amber}}>📦 {bkps.length} backup(s) preservado(s) de versões anteriores</p>
+              <p style={{margin:"0 0 10px",fontSize:12,color:C.textMid,lineHeight:1.6}}>Toda vez que o app fez uma migração importante (ex.: ativação da nuvem), uma cópia dos dados antigos foi guardada localmente. Estes backups nunca são apagados automaticamente.</p>
+              {bkps.slice(0,3).map(b=>(
+                <div key={b.key} style={{fontSize:11,color:C.textMid,padding:"4px 0",borderTop:`1px dashed ${C.amber}33`}}>{new Date(b.ts).toLocaleString("pt-BR")} · {b.label} · {b.size} chave(s)</div>
+              ))}
+            </div>
+          );})()}
           <Btn onClick={()=>setShowBackup(true)}>Gerenciar Backup</Btn>
         </div>}
 
