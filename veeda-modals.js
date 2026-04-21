@@ -114,7 +114,7 @@ function ConnectionCodeModal({profile,onClose}){
       <div style={{textAlign:"center",marginBottom:16}}>
         <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={60} ring/>
         <p style={{margin:"8px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
-        <p style={{margin:0,fontSize:12,color:C.purple}}>{profile.handle}</p>
+        <p style={{margin:0,fontSize:12,color:C.purple}}>{profile.handle||nameToHandle(profile.name)}</p>
       </div>
       <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Compartilhe o <strong>link</strong> abaixo com quem você quer no seu Círculo — quando a pessoa tocar, ela já vai poder te adicionar direto.</p>
       <div style={{background:C.greenLight,borderRadius:14,padding:"14px",marginBottom:10,border:`1px solid ${C.green}33`}}>

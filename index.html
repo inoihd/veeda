@@ -44,7 +44,7 @@ button{font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparen
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.6.0";
+const APP_VERSION  = "1.7.0";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -244,7 +244,8 @@ const registrySearch=(q)=>{
 
 // ── Profile card (código cross-device) ────────────────────
 const makeProfileCard=(profile)=>{
-  const pub={n:profile.name,h:(profile.handle||"").replace(/^@/,""),e:profile.emoji||"🌿",c:profile.avatarColor||C.purpleLight};
+  const h=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+  const pub={n:profile.name,h,e:profile.emoji||"🌿",c:profile.avatarColor||C.purpleLight};
   return "vc2_"+btoa(unescape(encodeURIComponent(JSON.stringify(pub))));
 };
 const parseProfileCard=(code)=>{
@@ -1212,7 +1213,7 @@ function ConnectionCodeModal({profile,onClose}){
       <div style={{textAlign:"center",marginBottom:16}}>
         <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={60} ring/>
         <p style={{margin:"8px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
-        <p style={{margin:0,fontSize:12,color:C.purple}}>{profile.handle}</p>
+        <p style={{margin:0,fontSize:12,color:C.purple}}>{profile.handle||nameToHandle(profile.name)}</p>
       </div>
       <p style={{fontSize:13,color:C.textMid,marginBottom:14,lineHeight:1.6}}>Compartilhe o <strong>link</strong> abaixo com quem você quer no seu Círculo — quando a pessoa tocar, ela já vai poder te adicionar direto.</p>
       <div style={{background:C.greenLight,borderRadius:14,padding:"14px",marginBottom:10,border:`1px solid ${C.green}33`}}>
@@ -2739,6 +2740,8 @@ function Veeda(){
       if(!localPs.find(p=>p.id===selProfile.id)){
         localPs.push(selProfile);saveProfiles(localPs);
       }
+      // Garante que o perfil está no registro público (necessário para busca de usuários)
+      registryAdd(selProfile);
     }
     saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");
   }}/>;
@@ -2803,7 +2806,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
     const swCode=`
-const CACHE_NAME = "veeda-v11";
+const CACHE_NAME = "veeda-v12";
 const URLS_TO_CACHE = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", e => {

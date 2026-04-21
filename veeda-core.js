@@ -6,7 +6,7 @@
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.6.0";
+const APP_VERSION  = "1.7.0";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -206,7 +206,8 @@ const registrySearch=(q)=>{
 
 // ── Profile card (código cross-device) ────────────────────
 const makeProfileCard=(profile)=>{
-  const pub={n:profile.name,h:(profile.handle||"").replace(/^@/,""),e:profile.emoji||"🌿",c:profile.avatarColor||C.purpleLight};
+  const h=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+  const pub={n:profile.name,h,e:profile.emoji||"🌿",c:profile.avatarColor||C.purpleLight};
   return "vc2_"+btoa(unescape(encodeURIComponent(JSON.stringify(pub))));
 };
 const parseProfileCard=(code)=>{

@@ -722,6 +722,8 @@ function Veeda(){
       if(!localPs.find(p=>p.id===selProfile.id)){
         localPs.push(selProfile);saveProfiles(localPs);
       }
+      // Garante que o perfil está no registro público (necessário para busca de usuários)
+      registryAdd(selProfile);
     }
     saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");
   }}/>;
