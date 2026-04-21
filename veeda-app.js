@@ -559,16 +559,52 @@ function Veeda(){
   const [importing,setImporting]=useState(false);
   const [hasLocal,setHasLocal]=useState(false);
 
-  // ── Boot: URL intents + sessão persistente ────
+  // ── Boot: URL intents + OAuth redirect callback + sessão persistente ────
   useEffect(()=>{
-    // Check URL for add contact intent (?add=vc2_...)
+    // 1. Parse URL params — salva intents no sessionStorage antes de qualquer redirect
     const params=new URLSearchParams(window.location.search);
     const addCode=params.get("add");
-    if(addCode){
-      sessionStorage.setItem("veeda_pending_add",addCode);
-      window.history.replaceState({},"",window.location.pathname);
+    if(addCode)sessionStorage.setItem("veeda_pending_add",addCode);
+    const dayCode=params.get("day");
+    if(dayCode)sessionStorage.setItem("veeda_pending_day",dayCode);
+    if(addCode||dayCode)window.history.replaceState({},"",window.location.pathname);
+
+    // 2. Verifica se estamos voltando de um redirect OAuth (token no hash da URL)
+    const hash=window.location.hash;
+    if(hash&&hash.includes("access_token")){
+      const hp=new URLSearchParams(hash.slice(1));
+      const at=hp.get("access_token");
+      if(at){
+        const token={access_token:at,expires_in:parseInt(hp.get("expires_in")||"3600",10),scope:hp.get("scope"),ts:Date.now()};
+        safeLS.set(GDRIVE_KEY,token);
+        // Limpa o hash da URL sem recarregar
+        window.history.replaceState({},"",window.location.pathname+window.location.search);
+        // Continua o fluxo Google Login com o token recém-obtido
+        setGoogleLoading(true);
+        setProfiles(loadProfiles());
+        setHasLocal(hasLocalAccounts());
+        (async()=>{
+          try{
+            const u=await gdriveUserInfo(at);
+            setGoogleUser(u);
+            const acc=await cloudAccount.load(at);
+            const redirectList=acc?.profiles||[];
+            setCloudProfiles(redirectList);
+            // Usuário com 1 perfil vai direto para senha
+            if(redirectList.length===1){
+              setSelProfile({...redirectList[0],cloud:true});
+              setScreen("password");
+            }else{
+              setScreen("google_select");
+            }
+          }catch(e){console.warn("OAuth redirect flow failed",e);setScreen("splash");}
+          finally{setGoogleLoading(false);}
+        })();
+        return; // não executa o boot normal
+      }
     }
 
+    // 3. Boot normal
     (async()=>{
       const ps=loadProfiles();
       setProfiles(ps);
@@ -629,7 +665,13 @@ function Veeda(){
       const acc=await cloudAccount.load(t);
       const list=acc?.profiles||[];
       setCloudProfiles(list);
-      setScreen("google_select");
+      // Usuário com 1 perfil vai direto para senha, sem passar pela tela de seleção
+      if(list.length===1){
+        setSelProfile({...list[0],cloud:true});
+        setScreen("password");
+      }else{
+        setScreen("google_select");
+      }
     }catch(e){
       console.warn("Google login cancelado",e);
     }finally{setGoogleLoading(false);}
@@ -850,4 +892,3 @@ self.addEventListener("push", e => {
     navigator.serviceWorker.register(url).catch(()=>{});
   });
 }
-
