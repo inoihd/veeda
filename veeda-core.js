@@ -6,7 +6,7 @@
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.4.0";
+const APP_VERSION  = "1.6.0";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -219,6 +219,29 @@ const parseProfileCard=(code)=>{
   }catch{return null;}
 };
 
+// ── Shared Day URL encoding (cross-device sharing) ────────
+const encodeSharedDay=(profile,moments,curDay,feeling,message)=>{
+  const safeMoments=(moments||[]).map(m=>{
+    if((m.type==="foto"||m.type==="video"||m.type==="arte")&&
+       (m.content?.startsWith("data:")||m.content?.startsWith("IDB:"))){
+      return{...m,content:null,_hasMedia:true};
+    }
+    if(m.type==="voz"){return{...m,content:null,_hasMedia:true};}
+    return m;
+  });
+  const payload={v:1,date:curDay,author:profile.name,handle:profile.handle||nameToHandle(profile.name),emoji:profile.emoji||"🌿",avatarColor:profile.avatarColor||C.purpleLight,feeling:feeling||null,moments:safeMoments,message:(message||"").trim(),sharedAt:Date.now()};
+  try{return"vd1_"+btoa(unescape(encodeURIComponent(JSON.stringify(payload))));}
+  catch{return null;}
+};
+const decodeSharedDay=(encoded)=>{
+  try{
+    if(!encoded||!encoded.startsWith("vd1_"))return null;
+    const d=JSON.parse(decodeURIComponent(escape(atob(encoded.slice(4)))));
+    if(!d.date||!d.author||!d.handle)return null;
+    return{...d,importedAt:Date.now()};
+  }catch{return null;}
+};
+
 // ── Data schema ────────────────────────────────────────────
 const EMPTY_DATA=()=>({
   _v:DATA_VERSION,moments:{},received:[],contacts:[],
@@ -244,18 +267,38 @@ const isHandleAvailable=(handle,excludeId)=>{
 };
 
 // ── Google Auth / Drive ────────────────────────────────────
-// Fluxo OAuth2 implicit. Usa popup + poll na window.location.hash.
-const gdriveAuth=()=>new Promise((res,rej)=>{
+// Fluxo OAuth2 implicit.
+// Modo popup: para browsers normais (desktop/mobile browser aberto).
+// Modo redirect: para PWA standalone (iOS bloqueia popups em apps instalados)
+//   ou quando o popup é bloqueado. A página navega para o Google e retorna com
+//   o token no hash — o boot handler em Veeda() faz o parse.
+const _buildOAuthUrl=()=>{
   const params=new URLSearchParams({
     client_id:GOOGLE_CLIENT_ID,
     redirect_uri:window.location.origin+window.location.pathname,
     response_type:"token",
     scope:GDRIVE_SCOPE,
     include_granted_scopes:"true",
-    prompt:"consent",
+    prompt:"select_account",
     state:Math.random().toString(36).slice(2),
   });
-  const popup=window.open(`https://accounts.google.com/o/oauth2/v2/auth?${params}`,"gauth","width=500,height=620");
+  return`https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+};
+const _isPWAStandalone=()=>
+  (window.matchMedia?.("(display-mode: standalone)").matches)||
+  (window.navigator.standalone===true);
+
+const gdriveAuth=()=>new Promise((res,rej)=>{
+  const authUrl=_buildOAuthUrl();
+  if(_isPWAStandalone()){
+    window.location.href=authUrl;
+    return;
+  }
+  const popup=window.open(authUrl,"gauth","width=500,height=620");
+  if(!popup||popup.closed){
+    window.location.href=authUrl;
+    return;
+  }
   const t=setInterval(()=>{
     try{
       if(!popup||popup.closed){clearInterval(t);rej(new Error("Janela fechada."));return;}
