@@ -1,11 +1,11 @@
 // ═══════════════════════════════════════════════════════════
 // VEEDA CORE — veeda-core.js
-// v1.9.0 - Sistema de conexão bidirecional com aceitação
+// v1.9.1 - Sistema de conexão bidirecional com confirmação
 // ═══════════════════════════════════════════════════════════
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.9.0";
+const APP_VERSION  = "1.9.1";
 const DATA_VERSION = 4;
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -177,19 +177,28 @@ const loadLatestSnapshot=async(profileId,password)=>{
   return null;
 };
 
-// ── Connection Requests (SISTEMA DE CONVITES - NOVO) ───────
+// ── Connection Requests (SISTEMA DE CONVITES) ──────────────
 const saveConnectionRequest = (fromProfile, toHandle) => {
   const key = `veeda_conn_requests_${toHandle.replace(/^@/, '')}`;
   const requests = safeLS.get(key, []);
   
-  if (!requests.find(r => r.fromId === fromProfile.id)) {
+  const safeProfile = {
+    id: fromProfile.id,
+    name: fromProfile.name || 'Usuário',
+    handle: fromProfile.handle || nameToHandle(fromProfile.name || 'usuario'),
+    emoji: fromProfile.emoji || '🌿',
+    avatarColor: fromProfile.avatarColor || C.purpleLight,
+    avatarSrc: fromProfile.avatarSrc || null
+  };
+  
+  if (!requests.find(r => r.fromId === safeProfile.id)) {
     requests.push({
-      fromId: fromProfile.id,
-      fromName: fromProfile.name,
-      fromHandle: fromProfile.handle,
-      fromEmoji: fromProfile.emoji,
-      fromAvatarColor: fromProfile.avatarColor,
-      fromAvatarSrc: fromProfile.avatarSrc || null,
+      fromId: safeProfile.id,
+      fromName: safeProfile.name,
+      fromHandle: safeProfile.handle,
+      fromEmoji: safeProfile.emoji,
+      fromAvatarColor: safeProfile.avatarColor,
+      fromAvatarSrc: safeProfile.avatarSrc,
       requestedAt: Date.now(),
       status: 'pending'
     });
@@ -227,6 +236,48 @@ const rejectConnectionRequest = (handle, fromId) => {
   const key = `veeda_conn_requests_${handle.replace(/^@/, '')}`;
   const requests = safeLS.get(key, []);
   const filtered = requests.filter(r => r.fromId !== fromId);
+  safeLS.set(key, filtered);
+};
+
+// ── Connection Confirmations (CONFIRMAÇÃO BIDIRECIONAL) ────
+const confirmConnectionToSender = (fromProfile, toProfile) => {
+  const senderHandle = fromProfile.handle.replace(/^@/, '');
+  const key = `veeda_connection_confirmed_${senderHandle}`;
+  const confirmations = safeLS.get(key, []);
+  
+  const safeProfile = {
+    id: toProfile.id,
+    name: toProfile.name || 'Usuário',
+    handle: toProfile.handle || nameToHandle(toProfile.name || 'usuario'),
+    emoji: toProfile.emoji || '🌿',
+    avatarColor: toProfile.avatarColor || C.purpleLight,
+    avatarSrc: toProfile.avatarSrc || null
+  };
+  
+  if (!confirmations.find(c => c.fromId === safeProfile.id)) {
+    confirmations.push({
+      fromId: safeProfile.id,
+      fromName: safeProfile.name,
+      fromHandle: safeProfile.handle,
+      fromEmoji: safeProfile.emoji,
+      fromAvatarColor: safeProfile.avatarColor,
+      fromAvatarSrc: safeProfile.avatarSrc,
+      confirmedAt: Date.now()
+    });
+    safeLS.set(key, confirmations);
+    return true;
+  }
+  return false;
+};
+
+const getConnectionConfirmations = (handle) => {
+  return safeLS.get(`veeda_connection_confirmed_${handle.replace(/^@/, '')}`, []);
+};
+
+const clearConnectionConfirmation = (handle, fromId) => {
+  const key = `veeda_connection_confirmed_${handle.replace(/^@/, '')}`;
+  const confirmations = safeLS.get(key, []);
+  const filtered = confirmations.filter(c => c.fromId !== fromId);
   safeLS.set(key, filtered);
 };
 
