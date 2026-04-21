@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -14,7 +13,7 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 html,body{height:100%;overflow-x:hidden;overscroll-behavior:none;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#EAFFF8;color:#3A3350;-webkit-text-size-adjust:100%;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#EAFFF8;color:#3A3350;-webkit-text-size-adjust:100%;padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);}
 input,textarea,select{font-family:inherit;font-size:16px;border:1px solid #CBC0D3;border-radius:50px;padding:14px 18px;color:#3A3350;width:100%;background:#fff;outline:none;-webkit-appearance:none;transition:border-color .15s;}
 input:focus,textarea:focus{border-color:#9000FF;border-width:2px;}
 textarea{border-radius:14px;padding:12px 14px;resize:none;}
@@ -45,7 +44,7 @@ button{font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparen
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.4.0";
+const APP_VERSION  = "1.6.0";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -258,6 +257,43 @@ const parseProfileCard=(code)=>{
   }catch{return null;}
 };
 
+// ── Shared Day URL encoding (cross-device sharing) ────────
+// Serializa um dia para URL — fotos/vídeos viram placeholder de texto.
+// O receptor abre o link, o app decodifica e oferece "Aceitar dia".
+const encodeSharedDay=(profile,moments,curDay,feeling,message)=>{
+  const safeMoments=(moments||[]).map(m=>{
+    // Blobs binários não cabem em URL — substituímos por placeholder
+    if((m.type==="foto"||m.type==="video"||m.type==="arte")&&
+       (m.content?.startsWith("data:")||m.content?.startsWith("IDB:"))){
+      return{...m,content:null,_hasMedia:true};
+    }
+    if(m.type==="voz"){return{...m,content:null,_hasMedia:true};}
+    return m;
+  });
+  const payload={
+    v:1,
+    date:curDay,
+    author:profile.name,
+    handle:profile.handle||nameToHandle(profile.name),
+    emoji:profile.emoji||"🌿",
+    avatarColor:profile.avatarColor||C.purpleLight,
+    feeling:feeling||null,
+    moments:safeMoments,
+    message:(message||"").trim(),
+    sharedAt:Date.now(),
+  };
+  try{return"vd1_"+btoa(unescape(encodeURIComponent(JSON.stringify(payload))));}
+  catch{return null;}
+};
+const decodeSharedDay=(encoded)=>{
+  try{
+    if(!encoded||!encoded.startsWith("vd1_"))return null;
+    const d=JSON.parse(decodeURIComponent(escape(atob(encoded.slice(4)))));
+    if(!d.date||!d.author||!d.handle)return null;
+    return{...d,importedAt:Date.now()};
+  }catch{return null;}
+};
+
 // ── Data schema ────────────────────────────────────────────
 const EMPTY_DATA=()=>({
   _v:DATA_VERSION,moments:{},received:[],contacts:[],
@@ -283,18 +319,40 @@ const isHandleAvailable=(handle,excludeId)=>{
 };
 
 // ── Google Auth / Drive ────────────────────────────────────
-// Fluxo OAuth2 implicit. Usa popup + poll na window.location.hash.
-const gdriveAuth=()=>new Promise((res,rej)=>{
+// Fluxo OAuth2 implicit.
+// Modo popup: para browsers normais (desktop/mobile browser aberto).
+// Modo redirect: para PWA standalone (iOS bloqueia popups em apps instalados)
+//   ou quando o popup é bloqueado. A página navega para o Google e retorna com
+//   o token no hash — o boot handler em Veeda() faz o parse.
+const _buildOAuthUrl=()=>{
   const params=new URLSearchParams({
     client_id:GOOGLE_CLIENT_ID,
     redirect_uri:window.location.origin+window.location.pathname,
     response_type:"token",
     scope:GDRIVE_SCOPE,
     include_granted_scopes:"true",
-    prompt:"consent",
+    prompt:"select_account",
     state:Math.random().toString(36).slice(2),
   });
-  const popup=window.open(`https://accounts.google.com/o/oauth2/v2/auth?${params}`,"gauth","width=500,height=620");
+  return`https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+};
+const _isPWAStandalone=()=>
+  (window.matchMedia?.("(display-mode: standalone)").matches)||
+  (window.navigator.standalone===true);
+
+const gdriveAuth=()=>new Promise((res,rej)=>{
+  const authUrl=_buildOAuthUrl();
+  if(_isPWAStandalone()){
+    // Em PWA não há popup — faz redirect completo da página
+    window.location.href=authUrl;
+    return; // promise nunca resolve; a página navega
+  }
+  const popup=window.open(authUrl,"gauth","width=500,height=620");
+  if(!popup||popup.closed){
+    // Popup bloqueado pelo browser — fallback para redirect
+    window.location.href=authUrl;
+    return;
+  }
   const t=setInterval(()=>{
     try{
       if(!popup||popup.closed){clearInterval(t);rej(new Error("Janela fechada."));return;}
@@ -1144,7 +1202,7 @@ function ConnectionCodeModal({profile,onClose}){
   const code=makeProfileCard(profile);
   // Link "mágico" — quem abrir este link no celular é convidado a adicionar
   // este perfil ao Meu Círculo automaticamente (sem precisar copiar/colar código).
-  const inviteLink=`${window.location.origin}${window.location.pathname}?add=${code}`;
+  const inviteLink=`${window.location.origin}${window.location.pathname}?add=${encodeURIComponent(code)}`;
   const whatsMsg=`Olá! Sou ${profile.name} no Veeda. Me adiciona no Meu Círculo:\n${inviteLink}`;
   const copy=()=>{navigator.clipboard?.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2500);};
   const copyLink=()=>{navigator.clipboard?.writeText(inviteLink);setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);};
@@ -1231,23 +1289,31 @@ function InviteModal({onClose}){
 // SHARE DAY MODAL
 // ═══════════════════════════════════════════════════
 function ShareDayModal({profile,data,curDay,onClose,onShared,addToast}){
+  const [tab,setTab]=useState("local");
   const [sel,setSel]=useState([]);const [msg,setMsg]=useState("");const [loading,setLoading]=useState(false);const [done,setDone]=useState(false);
+  const [linkCopied,setLinkCopied]=useState(false);
   const contacts=data.contacts||[];
   const moments=(data.moments||{})[curDay]||[];
   const already=(data.sharedLog||{})[curDay]||[];
   const available=contacts.filter(c=>!already.includes(c.code));
   const toggle=code=>setSel(p=>p.includes(code)?p.filter(x=>x!==code):[...p,code]);
+  const feeling=(data.dayFeelings||{})[curDay];
 
+  // ── Gera link cross-device ─────────────────────────
+  const sharedCode=useMemo(()=>encodeSharedDay(profile,moments,curDay,feeling,msg),[profile,moments,curDay,feeling,msg]);
+  const sharedLink=sharedCode?`${window.location.origin}${window.location.pathname}?day=${encodeURIComponent(sharedCode)}`:null;
+  const whatsShareMsg=sharedLink?`${profile.name} quer compartilhar o dia ${fmtFull(curDay)} com você no Veeda 🌿\n\n${sharedLink}`:"";
+
+  const copyShareLink=()=>{if(sharedLink){navigator.clipboard?.writeText(sharedLink);setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);}};
+
+  // ── Compartilhamento local (mesmo device) ──────────
   const doShare=async()=>{
     if(!sel.length)return;setLoading(true);
-    const payload={date:curDay,author:profile.name,handle:profile.handle||nameToHandle(profile.name),emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling:(data.dayFeelings||{})[curDay],message:msg.trim(),importedAt:Date.now()};
+    const payload={date:curDay,author:profile.name,handle:profile.handle||nameToHandle(profile.name),emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling,message:msg.trim(),importedAt:Date.now()};
     sel.forEach(handle=>{
       const k=`veeda_inbox_${handle.replace(/^@/,"")}`;
-      const ex=safeLS.get(k,[]);
-      ex.push(payload);
-      safeLS.set(k,ex);
+      const ex=safeLS.get(k,[]);ex.push(payload);safeLS.set(k,ex);
     });
-    // Show native notification if on same device
     showNativeNotif("Veeda",`${profile.name} compartilhou o dia com você! 🌿`);
     await onShared({...(data.sharedLog||{}),[curDay]:[...already,...sel]});
     addToast?.("Dia compartilhado com sucesso! 🌿","success");
@@ -1258,24 +1324,113 @@ function ShareDayModal({profile,data,curDay,onClose,onShared,addToast}){
 
   return(
     <Modal title="Compartilhar meu Dia de Veeda" onClose={onClose}>
-      {moments.length===0?<p style={{fontSize:14,color:C.textMid,textAlign:"center",padding:"20px 0"}}>Nenhum momento registrado hoje ainda.</p>:(
+      {moments.length===0
+        ?<p style={{fontSize:14,color:C.textMid,textAlign:"center",padding:"20px 0"}}>Nenhum momento registrado hoje ainda.</p>
+        :(
         <>
-          <p style={{fontSize:13,color:C.textMid,marginBottom:14}}>{moments.length} momento{moments.length!==1?"s":""} · {fmtFull(curDay)}</p>
-          {available.length===0&&<div style={{background:C.amberLight,borderRadius:12,padding:"12px 14px",marginBottom:14}}><p style={{fontSize:13,color:"#7A5800",margin:0}}>Você já compartilhou hoje com todos os seus contatos.</p></div>}
-          {available.map(c=>(
-            <button key={c.code} onClick={()=>toggle(c.code)} style={{width:"100%",background:sel.includes(c.code)?C.purpleLight:C.white,border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left"}}>
-              <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={38}/>
-              <span style={{fontSize:14,fontWeight:500,color:C.text,flex:1}}>{c.name}</span>
-              <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,background:sel.includes(c.code)?C.purple:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#fff"}}>{sel.includes(c.code)?"✓":""}</div>
-            </button>
-          ))}
-          <div style={{marginTop:16,marginBottom:16}}>
-            <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:8}}>Mensagem (opcional)</label>
-            <textarea value={msg} onChange={e=>setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{width:"100%",minHeight:72,borderRadius:12}}/>
+          <p style={{fontSize:13,color:C.textMid,marginBottom:12}}>{moments.length} momento{moments.length!==1?"s":""} · {fmtFull(curDay)}</p>
+          {/* Tabs */}
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            {[["local","👥 Meu Círculo"],["link","🔗 Via link"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"9px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:13}}>{l}</button>
+            ))}
           </div>
-          <Btn onClick={doShare} disabled={loading||!sel.length}>{loading?<><Spinner size={16} color="#fff"/>Compartilhando…</>:"Compartilhar linha do tempo"}</Btn>
+
+          {/* ── Tab: compartilhar com contatos locais ── */}
+          {tab==="local"&&<>
+            {available.length===0
+              ?<div style={{background:C.amberLight,borderRadius:12,padding:"12px 14px",marginBottom:14}}><p style={{fontSize:13,color:"#7A5800",margin:0}}>Você já compartilhou hoje com todos os seus contatos. Use "Via link" para compartilhar com alguém de outro dispositivo.</p></div>
+              :available.map(c=>(
+                <button key={c.code} onClick={()=>toggle(c.code)} style={{width:"100%",background:sel.includes(c.code)?C.purpleLight:C.white,border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left"}}>
+                  <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={38}/>
+                  <span style={{fontSize:14,fontWeight:500,color:C.text,flex:1}}>{c.name}</span>
+                  <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${sel.includes(c.code)?C.purple:C.cardBorder}`,background:sel.includes(c.code)?C.purple:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#fff"}}>{sel.includes(c.code)?"✓":""}</div>
+                </button>
+              ))
+            }
+            <div style={{marginTop:12,marginBottom:14}}>
+              <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:8}}>Mensagem (opcional)</label>
+              <textarea value={msg} onChange={e=>setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{width:"100%",minHeight:64,borderRadius:12}}/>
+            </div>
+            <Btn onClick={doShare} disabled={loading||!sel.length}>{loading?<><Spinner size={16} color="#fff"/>Compartilhando…</>:"Compartilhar linha do tempo"}</Btn>
+          </>}
+
+          {/* ── Tab: link cross-device ── */}
+          {tab==="link"&&<>
+            <div style={{background:C.purpleLight,borderRadius:14,padding:14,marginBottom:12}}>
+              <p style={{margin:"0 0 6px",fontSize:12,fontWeight:600,color:C.purple}}>Como funciona:</p>
+              <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Gere um link com os momentos do dia e envie para qualquer pessoa. Quem receber toca no link e aceita o dia no próprio Veeda — funciona entre celulares diferentes. Fotos e vídeos não são incluídos no link (apenas textos, links e músicas).</p>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:8}}>Mensagem (opcional)</label>
+              <textarea value={msg} onChange={e=>setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{width:"100%",minHeight:64,borderRadius:12}}/>
+            </div>
+            {sharedLink&&(
+              <div style={{background:C.greenLight,borderRadius:14,padding:12,marginBottom:12,border:`1px solid ${C.green}33`}}>
+                <p style={{margin:"0 0 4px",fontSize:10,fontWeight:600,color:C.green,textTransform:"uppercase",letterSpacing:"1px"}}>🔗 Link gerado</p>
+                <p style={{margin:0,fontSize:11,color:C.textMid,wordBreak:"break-all",lineHeight:1.5}}>{sharedLink.slice(0,80)}…</p>
+              </div>
+            )}
+            <div style={{display:"flex",gap:8,marginBottom:8}}>
+              <Btn onClick={copyShareLink} variant={linkCopied?"green":"primary"} style={{flex:1,fontSize:13,padding:"11px 0"}}>{linkCopied?"✓ Copiado!":"Copiar link"}</Btn>
+              {navigator.share&&sharedLink&&<button onClick={()=>navigator.share({title:"Meu dia no Veeda 🌿",text:whatsShareMsg}).catch(()=>{})} style={{flex:1,padding:"11px 0",background:C.white,color:C.purple,border:`1.5px solid ${C.purple}`,borderRadius:50,fontWeight:600,fontSize:13,cursor:"pointer"}}>Compartilhar ↑</button>}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {[{l:"WhatsApp",c:"#25D366",bg:"#E8FBF0",u:`https://wa.me/?text=${encodeURIComponent(whatsShareMsg)}`},{l:"SMS",c:C.blue,bg:C.blueLight,u:`sms:?body=${encodeURIComponent(whatsShareMsg)}`}].map(o=>(
+                <a key={o.l} href={o.u} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"11px 0",background:o.bg,borderRadius:12,textDecoration:"none",border:`1px solid ${o.c}22`,fontSize:13,fontWeight:600,color:o.c}}>{o.l}</a>
+              ))}
+            </div>
+          </>}
         </>
       )}
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// ACCEPT SHARED DAY MODAL (cross-device receive)
+// ═══════════════════════════════════════════════════
+function AcceptSharedDayModal({shared,onAccept,onClose}){
+  if(!shared)return null;
+  const {author,handle,emoji,avatarColor,feeling,moments,message,date}=shared;
+  const textMoments=(moments||[]).filter(m=>m.type==="texto"||m.type==="link"||m.type==="videolink"||m.type==="musica");
+  const mediaMoments=(moments||[]).filter(m=>m._hasMedia);
+  return(
+    <Modal title="Dia compartilhado com você 🌿" onClose={onClose} fullHeight>
+      {/* Sender info */}
+      <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:C.purpleLight,borderRadius:14,marginBottom:16}}>
+        <AvatarBubble emoji={emoji||"🌿"} color={avatarColor||C.purpleLight} size={48} ring/>
+        <div>
+          <p style={{margin:0,fontSize:15,fontWeight:700,color:C.text}}>{author}</p>
+          <p style={{margin:0,fontSize:12,color:C.purple,fontWeight:600}}>{handle}</p>
+          <p style={{margin:0,fontSize:11,color:C.textLight,marginTop:2}}>{fmtFull(date)}</p>
+        </div>
+        {feeling&&<div style={{marginLeft:"auto",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <span style={{fontSize:20}}>{feeling.emoji}</span>
+          <span style={{fontSize:10,color:C.textMid}}>{feeling.label}</span>
+        </div>}
+      </div>
+      {message&&<div style={{background:C.white,borderRadius:12,padding:"12px 14px",marginBottom:14,border:`1px solid ${C.cardBorder}`}}>
+        <p style={{margin:0,fontSize:13,color:C.textMid,fontStyle:"italic"}}>"{message}"</p>
+      </div>}
+      {/* Moments preview */}
+      {textMoments.length>0&&<div style={{marginBottom:14}}>
+        <p style={{fontSize:12,fontWeight:600,color:C.textMid,marginBottom:8}}>Momentos do dia</p>
+        {textMoments.slice(0,5).map((m,i)=>(
+          <div key={i} style={{background:C.white,borderRadius:12,padding:"10px 12px",marginBottom:8,border:`1px solid ${C.cardBorder}`}}>
+            <span style={{fontSize:11,color:C.textLight,marginRight:6}}>{TYPE_META[m.type]?.icon||"✏️"}</span>
+            <span style={{fontSize:13,color:C.text}}>{m.type==="texto"?m.content:m.type==="musica"?`🎵 ${m.content}`:m.content}</span>
+            {m.caption&&<p style={{margin:"4px 0 0",fontSize:12,color:C.textMid,fontStyle:"italic"}}>{m.caption}</p>}
+          </div>
+        ))}
+        {textMoments.length>5&&<p style={{fontSize:12,color:C.textLight,textAlign:"center"}}>+{textMoments.length-5} outros momentos</p>}
+      </div>}
+      {mediaMoments.length>0&&<div style={{background:C.blueLight,borderRadius:12,padding:"10px 14px",marginBottom:14,border:`1px solid ${C.blueMid}44`}}>
+        <p style={{margin:0,fontSize:12,color:C.blue}}>📷 Este dia tem {mediaMoments.length} foto/vídeo(s) — não incluídos no link por tamanho.</p>
+      </div>}
+      {(moments||[]).length===0&&<p style={{textAlign:"center",fontSize:13,color:C.textLight,padding:"12px 0"}}>Nenhum momento de texto neste dia.</p>}
+      <Btn onClick={onAccept} style={{marginBottom:8}}>Aceitar dia 🌿</Btn>
+      <Btn onClick={onClose} variant="ghost">Recusar</Btn>
     </Modal>
   );
 }
@@ -1866,6 +2021,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [now,setNow]=useState(new Date());
   const [unreadCount,setUnreadCount]=useState(0);
   const [pendingAddCode,setPendingAddCode]=useState(null);
+  const [pendingSharedDay,setPendingSharedDay]=useState(null);
+  const [showAcceptSharedDay,setShowAcceptSharedDay]=useState(false);
 
   const sessionKey=useRef(null);
   const sessionSalt=useRef(null);
@@ -1951,6 +2108,22 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       sessionStorage.removeItem("veeda_pending_add");
       setPendingAddCode(pending);
       setShowInvite(true);
+    }
+  },[data,loading]);
+
+  // Pending shared day from URL (?day=vd1_…) — cross-device receive
+  useEffect(()=>{
+    if(!data||loading)return;
+    const pendingDay=sessionStorage.getItem("veeda_pending_day");
+    if(pendingDay){
+      sessionStorage.removeItem("veeda_pending_day");
+      const decoded=decodeSharedDay(pendingDay);
+      if(decoded){
+        // Evita duplicata: mesmo autor + mesma data + sharedAt próximo
+        const alreadyReceived=(data.received||[]).find(r=>r.date===decoded.date&&r.handle===decoded.handle&&Math.abs((r.sharedAt||0)-(decoded.sharedAt||0))<60000);
+        if(!alreadyReceived){setPendingSharedDay(decoded);setShowAcceptSharedDay(true);}
+        else addToast?.("Você já recebeu este dia.","info");
+      } else addToast?.("Link de dia inválido ou corrompido.","error");
     }
   },[data,loading]);
 
@@ -2099,11 +2272,12 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     <div style={{maxWidth:480,margin:"0 auto",background:`linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradEnd} 100%)`,minHeight:"100vh",fontFamily:SANS}}>
       <ToastContainer/>
       {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
+      {showAcceptSharedDay&&pendingSharedDay&&<AcceptSharedDayModal shared={pendingSharedDay} onClose={()=>{setShowAcceptSharedDay(false);setPendingSharedDay(null);}} onAccept={async()=>{if(!data||!pendingSharedDay)return;await save({...data,received:[...(data.received||[]),pendingSharedDay]});setShowAcceptSharedDay(false);setPendingSharedDay(null);setUnreadCount(c=>c+1);setView("recebidos");setViewRec(pendingSharedDay);addToast?.("Dia recebido e salvo! 🌿","success");}}/>}
       {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
       {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
 
       {/* ── Header ── */}
-      <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,position:"sticky",top:0,zIndex:100}}>
+      <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,position:"sticky",top:0,zIndex:100,paddingTop:"env(safe-area-inset-top)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 6px"}}>
           <span style={{fontFamily:PASSO,fontSize:18,fontWeight:700,color:C.purple}}>🌿 Veeda</span>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -2380,34 +2554,56 @@ function Veeda(){
   const [importing,setImporting]=useState(false);
   const [hasLocal,setHasLocal]=useState(false);
 
-  // ── Boot: URL intents + sessão persistente ────
+  // ── Boot: URL intents + OAuth redirect callback + sessão persistente ────
   useEffect(()=>{
-    // Check URL for add contact intent (?add=vc2_...)
+    // 1. Parse URL params — salva intents no sessionStorage antes de qualquer redirect
     const params=new URLSearchParams(window.location.search);
     const addCode=params.get("add");
-    if(addCode){
-      sessionStorage.setItem("veeda_pending_add",addCode);
-      window.history.replaceState({},"",window.location.pathname);
+    if(addCode)sessionStorage.setItem("veeda_pending_add",addCode);
+    const dayCode=params.get("day");
+    if(dayCode)sessionStorage.setItem("veeda_pending_day",dayCode);
+    if(addCode||dayCode)window.history.replaceState({},"",window.location.pathname);
+
+    // 2. Verifica se estamos voltando de um redirect OAuth (token no hash da URL)
+    const hash=window.location.hash;
+    if(hash&&hash.includes("access_token")){
+      const hp=new URLSearchParams(hash.slice(1));
+      const at=hp.get("access_token");
+      if(at){
+        const token={access_token:at,expires_in:parseInt(hp.get("expires_in")||"3600",10),scope:hp.get("scope"),ts:Date.now()};
+        safeLS.set(GDRIVE_KEY,token);
+        // Limpa o hash da URL sem recarregar
+        window.history.replaceState({},"",window.location.pathname+window.location.search);
+        // Continua o fluxo Google Login com o token recém-obtido
+        setGoogleLoading(true);
+        setProfiles(loadProfiles());
+        setHasLocal(hasLocalAccounts());
+        (async()=>{
+          try{
+            const u=await gdriveUserInfo(at);
+            setGoogleUser(u);
+            const acc=await cloudAccount.load(at);
+            setCloudProfiles(acc?.profiles||[]);
+            setScreen("google_select");
+          }catch(e){console.warn("OAuth redirect flow failed",e);setScreen("splash");}
+          finally{setGoogleLoading(false);}
+        })();
+        return; // não executa o boot normal
+      }
     }
 
+    // 3. Boot normal
     (async()=>{
       const ps=loadProfiles();
       setProfiles(ps);
       setHasLocal(hasLocalAccounts());
-      // Restaura usuário Google cacheado (para UI, o token é checado à parte)
       const cachedU=getCachedUser();
       if(cachedU)setGoogleUser(cachedU);
-
-      // Sessão persistente — se o perfil ativo for cloud e temos token, ótimo.
       const session=loadSession();
       if(session?.profileId&&session?.pw){
         const p=ps.find(x=>x.id===session.profileId);
         if(p){
-          // Se o perfil é cloud mas token expirou, cai no splash pro reauth
-          if(p.cloud&&!(await cloudSync.tokenOrNull())){
-            setScreen("splash");
-            return;
-          }
+          if(p.cloud&&!(await cloudSync.tokenOrNull())){setScreen("splash");return;}
           setActiveProfile(p);setActivePw(session.pw);setScreen("app");
           return;
         }
@@ -2607,7 +2803,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
     const swCode=`
-const CACHE_NAME = "veeda-v10";
+const CACHE_NAME = "veeda-v11";
 const URLS_TO_CACHE = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", e => {
