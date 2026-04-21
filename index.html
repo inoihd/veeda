@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -2593,8 +2594,14 @@ function Veeda(){
             setCloudProfiles(redirectList);
             // Usuário com 1 perfil vai direto para senha
             if(redirectList.length===1){
-              setSelProfile({...redirectList[0],cloud:true});
-              setScreen("password");
+              const rProfile={...redirectList[0],cloud:true};
+              setSelProfile(rProfile);
+              const rSession=loadSession();
+              if(rSession?.profileId===rProfile.id&&rSession?.pw){
+                await doEnterProfile(rProfile,rSession.pw);
+              }else{
+                setScreen("password");
+              }
             }else{
               setScreen("google_select");
             }
@@ -2626,6 +2633,28 @@ function Veeda(){
   },[]);
 
   const refresh=()=>{const ps=loadProfiles();setProfiles(ps);setHasLocal(hasLocalAccounts());return ps;};
+
+  // ── Entrada no app com perfil + senha (comum a todos os fluxos de login) ────
+  // Garante perfil local, puxa blob do Drive se necessário, salva sessão e navega.
+  const doEnterProfile=useCallback(async(profile,pw)=>{
+    if(profile.cloud){
+      const localPs=loadProfiles();
+      if(!localPs.find(p=>p.id===profile.id)){localPs.push(profile);saveProfiles(localPs);}
+      registryAdd(profile);
+      // Puxa blob cifrado do Drive se ainda não existe localmente (cross-device / primeiro acesso)
+      const t=await cloudSync.tokenOrNull();
+      if(t){
+        try{
+          const remote=await cloudData.load(profile.id,t);
+          if(remote&&!safeLS.raw(`veeda_data_${profile.id}`)){
+            safeLS.rawSet(`veeda_data_${profile.id}`,remote.content);
+          }
+        }catch(e){console.warn("pull on login failed",e);}
+      }
+    }
+    saveSession(profile.id,pw);
+    setActiveProfile(profile);setActivePw(pw);setScreen("app");
+  },[]);
 
   const updateProfile=updated=>{
     const ps=loadProfiles(),idx=ps.findIndex(p=>p.id===updated.id);
@@ -2659,17 +2688,23 @@ function Veeda(){
       const acc=await cloudAccount.load(t);
       const list=acc?.profiles||[];
       setCloudProfiles(list);
-      // Usuário com 1 perfil vai direto para senha, sem passar pela tela de seleção
+      const session=loadSession();
       if(list.length===1){
-        setSelProfile({...list[0],cloud:true});
-        setScreen("password");
+        const profile={...list[0],cloud:true};
+        setSelProfile(profile);
+        // Se há sessão salva para este perfil, vai direto pro app sem pedir senha
+        if(session?.profileId===profile.id&&session?.pw){
+          await doEnterProfile(profile,session.pw);
+        }else{
+          setScreen("password");
+        }
       }else{
         setScreen("google_select");
       }
     }catch(e){
       console.warn("Google login cancelado",e);
     }finally{setGoogleLoading(false);}
-  },[]);
+  },[doEnterProfile]);
 
   // ── Refresh cloud profile list sem re-login
   const refreshCloudProfiles=useCallback(async()=>{
@@ -2741,28 +2776,7 @@ function Veeda(){
     />
   );
   if(screen==="forgot"&&forgotProfile)return<ScreenForgot profile={forgotProfile} onBack={()=>setScreen("password")} onSuccess={pw=>{const ps=loadProfiles();const p=ps.find(x=>x.id===forgotProfile.id);saveSession(p.id,pw);setActiveProfile(p);setActivePw(pw);setForgotProfile(null);setScreen("app");}}/>;
-  if(screen==="password"&&selProfile)return<ScreenPassword profile={selProfile} onBack={()=>setScreen(selProfile.cloud?"google_select":"select")} onForgot={()=>{setForgotProfile(selProfile);setScreen("forgot");}} onSuccess={async pw=>{
-    // Para perfis cloud, baixa o blob antes de entrar (caso o local não exista neste dispositivo)
-    if(selProfile.cloud){
-      const t=await cloudSync.tokenOrNull();
-      if(t){
-        try{
-          const remote=await cloudData.load(selProfile.id,t);
-          if(remote&&!safeLS.raw(`veeda_data_${selProfile.id}`)){
-            safeLS.rawSet(`veeda_data_${selProfile.id}`,remote.content);
-          }
-        }catch(e){console.warn("pull on login failed",e);}
-      }
-      // Garante que o perfil existe também no localStorage para o VeedaApp
-      const localPs=loadProfiles();
-      if(!localPs.find(p=>p.id===selProfile.id)){
-        localPs.push(selProfile);saveProfiles(localPs);
-      }
-      // Garante que o perfil está no registro público (necessário para busca de usuários)
-      registryAdd(selProfile);
-    }
-    saveSession(selProfile.id,pw);setActiveProfile(selProfile);setActivePw(pw);setScreen("app");
-  }}/>;
+  if(screen==="password"&&selProfile)return<ScreenPassword profile={selProfile} onBack={()=>setScreen(selProfile.cloud?"google_select":"select")} onForgot={()=>{setForgotProfile(selProfile);setScreen("forgot");}} onSuccess={async pw=>{await doEnterProfile(selProfile,pw);}}/>;
   if(screen==="google_create")return<ScreenCreate
     googleUser={googleUser}
     onBack={()=>setScreen("google_select")}
@@ -2794,7 +2808,7 @@ function Veeda(){
     googleUser={googleUser}
     profiles={cloudProfiles}
     hasLocal={hasLocal}
-    onSelect={p=>{setSelProfile({...p,cloud:true});setScreen("password");}}
+    onSelect={async p=>{const sp={...p,cloud:true};setSelProfile(sp);const ss=loadSession();if(ss?.profileId===sp.id&&ss?.pw){await doEnterProfile(sp,ss.pw);}else{setScreen("password");}}}
     onCreateNew={()=>setScreen("google_create")}
     onImportLocal={()=>setScreen("google_import")}
     onLogout={doLogoutGoogle}
