@@ -1677,7 +1677,7 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
 // ═══════════════════════════════════════════════════
 // SPLASH SCREEN — v1.4: Google é o caminho principal
 // ═══════════════════════════════════════════════════
-function SplashScreen({onGoogle,onRecover,onGuide,loading,hasLocal}){
+function SplashScreen({onGoogle,onRecover,onGuide,loading,hasLocal,error}){
   return(
     <div style={{minHeight:"100vh",background:C.splashBg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 34px 50px"}}>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%",gap:20}}>
@@ -1686,6 +1686,7 @@ function SplashScreen({onGoogle,onRecover,onGuide,loading,hasLocal}){
         <p style={{fontFamily:SANS,fontSize:14,color:"#381653",textAlign:"center",lineHeight:1.65,maxWidth:300,margin:0}}>Seus dias ficam salvos na sua conta Google — acesse de qualquer dispositivo.</p>
       </div>
       <div style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
+        {error&&<p style={{margin:0,fontSize:13,color:"#b00020",textAlign:"center",background:"rgba(255,255,255,.7)",borderRadius:10,padding:"8px 12px"}}>{error}</p>}
         <button onClick={onGoogle} disabled={loading} style={{width:"100%",padding:"14px 0",background:"#fff",border:"1.5px solid #dadce0",borderRadius:50,cursor:loading?"wait":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,fontFamily:SANS,fontSize:15,fontWeight:500,color:"#3c4043",boxShadow:"0 1px 2px rgba(60,64,67,.12)",opacity:loading?.6:1}}>
           {loading?<Spinner size={18} color={C.purple}/>:<svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.56 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26a5.4 5.4 0 0 1-3.06.87 5.4 5.4 0 0 1-5.07-3.73H.95v2.34A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.93 10.7a5.41 5.41 0 0 1 0-3.4V4.96H.95a9 9 0 0 0 0 8.08l2.98-2.34z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58A9 9 0 0 0 9 0 9 9 0 0 0 .95 4.96l2.98 2.34A5.4 5.4 0 0 1 9 3.58z"/></svg>}
           {loading?"Conectando…":"Entrar com Google"}
@@ -1711,10 +1712,10 @@ function ScreenGoogleSelect({googleUser,profiles,onSelect,onCreateNew,onImportLo
   return(
     <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24,padding:"12px 14px",background:C.white,borderRadius:14,border:`1px solid ${C.cardBorder}`}}>
-        {googleUser.picture?<img src={googleUser.picture} alt="" style={{width:40,height:40,borderRadius:"50%"}}/>:<AvatarBubble emoji="👤" size={40}/>}
+        {googleUser?.picture?<img src={googleUser.picture} alt="" style={{width:40,height:40,borderRadius:"50%"}}/>:<AvatarBubble emoji="👤" size={40}/>}
         <div style={{flex:1}}>
           <p style={{margin:0,fontSize:13,color:C.textMid}}>Entrou como</p>
-          <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{googleUser.email}</p>
+          <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{googleUser?.email||"Conta Google"}</p>
         </div>
         <button onClick={onLogout} style={{background:"none",border:"none",color:C.textMid,fontSize:12,cursor:"pointer",textDecoration:"underline"}}>Sair</button>
       </div>
@@ -2556,6 +2557,7 @@ function Veeda(){
   const [showGuide,setShowGuide]=useState(false);
   const [googleUser,setGoogleUser]=useState(null);
   const [googleLoading,setGoogleLoading]=useState(false);
+  const [googleError,setGoogleError]=useState(null);
   const [importResult,setImportResult]=useState(null);
   const [importing,setImporting]=useState(false);
   const [hasLocal,setHasLocal]=useState(false);
@@ -2587,17 +2589,27 @@ function Veeda(){
         (async()=>{
           try{
             const u=await gdriveUserInfo(at);
+            if(!u)throw new Error("Não foi possível obter informações da conta Google.");
             setGoogleUser(u);
             const acc=await cloudAccount.load(at);
-            const redirectList=acc?.profiles||[];
+            let redirectList=acc?.profiles||[];
+            // Fallback: índice cloud indisponível — usa perfis locais desta conta
+            if(redirectList.length===0&&u?.sub){
+              const localCloud=loadProfiles().filter(p=>p.cloud&&(p.googleSub===u.sub||p.email===u.email));
+              if(localCloud.length>0)redirectList=localCloud;
+            }
             setCloudProfiles(redirectList);
-            // Usuário com 1 perfil vai direto para senha
             if(redirectList.length===1){
               const rProfile={...redirectList[0],cloud:true};
               setSelProfile(rProfile);
               const rSession=loadSession();
-              if(rSession?.profileId===rProfile.id&&rSession?.pw){
-                await doEnterProfile(rProfile,rSession.pw);
+              if(rSession?.profileId===rProfile.id&&rSession?.pw&&rProfile.passwordHash){
+                const rHash=await hashPw(rSession.pw);
+                if(rHash===rProfile.passwordHash){
+                  await doEnterProfile(rProfile,rSession.pw);
+                }else{
+                  setScreen("password");
+                }
               }else{
                 setScreen("password");
               }
@@ -2678,22 +2690,35 @@ function Veeda(){
 
   // ── Google login: abre popup → pega token → user info → lista perfis cloud
   const doGoogleLogin=useCallback(async()=>{
-    setGoogleLoading(true);
+    setGoogleLoading(true);setGoogleError(null);
     try{
-      await gdriveAuth();
-      const t=getCachedToken();
+      const freshToken=await gdriveAuth();
+      const t=freshToken||getCachedToken();
+      if(!t)throw new Error("Token não obtido. Tente novamente.");
       const u=await gdriveUserInfo(t);
+      if(!u)throw new Error("Não foi possível obter informações da conta Google.");
       setGoogleUser(u);
       const acc=await cloudAccount.load(t);
-      const list=acc?.profiles||[];
+      let list=acc?.profiles||[];
+      // Fallback: se o índice cloud não carregou (falha de rede, arquivo não existe),
+      // usa perfis locais que já foram sincronizados com esta conta Google
+      if(list.length===0&&u?.sub){
+        const localCloud=loadProfiles().filter(p=>p.cloud&&(p.googleSub===u.sub||p.email===u.email));
+        if(localCloud.length>0)list=localCloud;
+      }
       setCloudProfiles(list);
       const session=loadSession();
       if(list.length===1){
         const profile={...list[0],cloud:true};
         setSelProfile(profile);
-        // Se há sessão salva para este perfil, vai direto pro app sem pedir senha
-        if(session?.profileId===profile.id&&session?.pw){
-          await doEnterProfile(profile,session.pw);
+        // Se há sessão salva, verifica a senha antes de pular a tela de senha
+        if(session?.profileId===profile.id&&session?.pw&&profile.passwordHash){
+          const sessionHash=await hashPw(session.pw);
+          if(sessionHash===profile.passwordHash){
+            await doEnterProfile(profile,session.pw);
+          }else{
+            setScreen("password"); // Senha mudou em outro dispositivo
+          }
         }else{
           setScreen("password");
         }
@@ -2702,6 +2727,7 @@ function Veeda(){
       }
     }catch(e){
       console.warn("Google login cancelado",e);
+      if(e?.message!=="Janela fechada.")setGoogleError("Erro ao conectar com o Google. Tente novamente.");
     }finally{setGoogleLoading(false);}
   },[doEnterProfile]);
 
@@ -2807,7 +2833,7 @@ function Veeda(){
     googleUser={googleUser}
     profiles={cloudProfiles}
     hasLocal={hasLocal}
-    onSelect={async p=>{const sp={...p,cloud:true};setSelProfile(sp);const ss=loadSession();if(ss?.profileId===sp.id&&ss?.pw){await doEnterProfile(sp,ss.pw);}else{setScreen("password");}}}
+    onSelect={async p=>{const sp={...p,cloud:true};setSelProfile(sp);const ss=loadSession();if(ss?.profileId===sp.id&&ss?.pw&&sp.passwordHash){const h=await hashPw(ss.pw);if(h===sp.passwordHash){await doEnterProfile(sp,ss.pw);return;}}setScreen("password");}}
     onCreateNew={()=>setScreen("google_create")}
     onImportLocal={()=>setScreen("google_import")}
     onLogout={doLogoutGoogle}
@@ -2824,6 +2850,7 @@ function Veeda(){
         onGuide={()=>setShowGuide(true)}
         loading={googleLoading}
         hasLocal={hasLocal}
+        error={googleError}
       />
     </>
   );
