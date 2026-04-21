@@ -4,23 +4,112 @@
 // ScreenSelect, ScreenPassword, ScreenCreate, ScreenForgot
 // ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════
-// SPLASH SCREEN
+// SPLASH SCREEN — v1.4: Google é o caminho principal
 // ═══════════════════════════════════════════════════
-function SplashScreen({onLogin,onCreate,onGuide}){
+function SplashScreen({onGoogle,onRecover,onGuide,loading,hasLocal}){
   return(
     <div style={{minHeight:"100vh",background:C.splashBg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:"60px 34px 50px"}}>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%",gap:20}}>
         <p style={{fontFamily:PASSO,fontSize:64,fontWeight:700,color:C.purple,lineHeight:1,letterSpacing:"-3px",margin:0}}>Veeda</p>
         <p style={{fontFamily:PASSO,fontSize:17,color:C.purple,textAlign:"center",margin:0}}>Viva primeiro, compartilhe depois.</p>
-        <p style={{fontFamily:SANS,fontSize:14,color:"#381653",textAlign:"center",lineHeight:1.65,maxWidth:300,margin:0}}>Viva experiências, registre na hora e compartilhe com quem realmente importa.</p>
+        <p style={{fontFamily:SANS,fontSize:14,color:"#381653",textAlign:"center",lineHeight:1.65,maxWidth:300,margin:0}}>Seus dias ficam salvos na sua conta Google — acesse de qualquer dispositivo.</p>
       </div>
-      <div style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:14}}>
-        <Btn onClick={onCreate}>Criar a sua</Btn>
-        <Btn onClick={onLogin} variant="secondary">Já tenho uma conta</Btn>
-        <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:4}}>
+      <div style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
+        <button onClick={onGoogle} disabled={loading} style={{width:"100%",padding:"14px 0",background:"#fff",border:"1.5px solid #dadce0",borderRadius:50,cursor:loading?"wait":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,fontFamily:SANS,fontSize:15,fontWeight:500,color:"#3c4043",boxShadow:"0 1px 2px rgba(60,64,67,.12)",opacity:loading?.6:1}}>
+          {loading?<Spinner size={18} color={C.purple}/>:<svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.56 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26a5.4 5.4 0 0 1-3.06.87 5.4 5.4 0 0 1-5.07-3.73H.95v2.34A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.93 10.7a5.41 5.41 0 0 1 0-3.4V4.96H.95a9 9 0 0 0 0 8.08l2.98-2.34z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58A9 9 0 0 0 9 0 9 9 0 0 0 .95 4.96l2.98 2.34A5.4 5.4 0 0 1 9 3.58z"/></svg>}
+          {loading?"Conectando…":"Entrar com Google"}
+        </button>
+        {hasLocal&&(
+          <button onClick={onRecover} style={{width:"100%",padding:"11px 0",background:"rgba(255,255,255,.55)",border:`1px solid ${C.purple}44`,borderRadius:50,cursor:"pointer",fontFamily:PASSO,fontSize:13,fontWeight:600,color:"#381653"}}>
+            Recuperar conta deste dispositivo
+          </button>
+        )}
+        <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:6}}>
           <button onClick={onGuide} style={{background:"none",border:"none",color:"#381653",fontSize:13,cursor:"pointer",fontFamily:PASSO}}>📱 Como instalar</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// GOOGLE SELECT — após login, lista os perfis que já
+// estão no Drive do usuário Google
+// ═══════════════════════════════════════════════════
+function ScreenGoogleSelect({googleUser,profiles,onSelect,onCreateNew,onImportLocal,onLogout,hasLocal}){
+  return(
+    <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24,padding:"12px 14px",background:C.white,borderRadius:14,border:`1px solid ${C.cardBorder}`}}>
+        {googleUser.picture?<img src={googleUser.picture} alt="" style={{width:40,height:40,borderRadius:"50%"}}/>:<AvatarBubble emoji="👤" size={40}/>}
+        <div style={{flex:1}}>
+          <p style={{margin:0,fontSize:13,color:C.textMid}}>Entrou como</p>
+          <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{googleUser.email}</p>
+        </div>
+        <button onClick={onLogout} style={{background:"none",border:"none",color:C.textMid,fontSize:12,cursor:"pointer",textDecoration:"underline"}}>Sair</button>
+      </div>
+
+      <p style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Bem-vindo ao Veeda</p>
+
+      {profiles.length===0?(
+        <div>
+          <p style={{fontSize:14,color:C.textMid,marginBottom:20,lineHeight:1.6}}>Você ainda não tem nenhum perfil na sua conta Veeda.</p>
+          <Btn onClick={onCreateNew} style={{marginBottom:12}}>Criar meu primeiro perfil 🌿</Btn>
+          {hasLocal&&(
+            <Btn onClick={onImportLocal} variant="outline">Importar conta local deste dispositivo</Btn>
+          )}
+        </div>
+      ):(
+        <>
+          <p style={{fontSize:14,color:C.textMid,marginBottom:24}}>Selecione o perfil para entrar</p>
+          {profiles.map(p=>(
+            <button key={p.id} onClick={()=>onSelect(p)} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:16,padding:"16px",marginBottom:10,display:"flex",alignItems:"center",gap:14,cursor:"pointer",textAlign:"left",boxShadow:"0 2px 8px rgba(0,0,0,.05)"}}>
+              <AvatarBubble src={p.avatarSrc} emoji={p.emoji} color={p.avatarColor||C.purpleLight} size={50} ring/>
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontSize:15,fontWeight:600,color:C.text}}>{p.name}</p>
+                <p style={{margin:0,fontSize:12,color:C.textLight}}>{p.handle||"perfil"}</p>
+              </div>
+              <span style={{fontSize:22,color:C.textLight}}>›</span>
+            </button>
+          ))}
+          <Btn onClick={onCreateNew} variant="outline" style={{marginTop:8}}>+ Novo perfil</Btn>
+          {hasLocal&&(
+            <Btn onClick={onImportLocal} variant="ghost" style={{marginTop:6}}>Importar perfil local deste dispositivo</Btn>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// IMPORT LOCAL — migra perfis locais pro Drive
+// ═══════════════════════════════════════════════════
+function ScreenGoogleImport({localProfiles,onCancel,onImport,importing,result}){
+  const [selected,setSelected]=useState(localProfiles.map(p=>p.id));
+  const toggle=id=>setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  return(
+    <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1.25rem",background:C.bg,minHeight:"100vh"}}>
+      <Btn onClick={onCancel} variant="ghost" style={{width:"auto",marginBottom:16}}>‹ Voltar</Btn>
+      <p style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Importar conta local</p>
+      <p style={{fontSize:13,color:C.textMid,lineHeight:1.6,marginBottom:18}}>Encontramos {localProfiles.length} perfil(is) salvo(s) neste dispositivo. Escolha quais enviar pra sua conta Google. Uma cópia de segurança dos dados originais será mantida neste navegador.</p>
+      {localProfiles.map(p=>(
+        <label key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:selected.includes(p.id)?"#E8FBF0":C.white,border:`1.5px solid ${selected.includes(p.id)?C.green:C.cardBorder}`,borderRadius:14,marginBottom:10,cursor:"pointer"}}>
+          <input type="checkbox" checked={selected.includes(p.id)} onChange={()=>toggle(p.id)} style={{width:18,height:18}}/>
+          <AvatarBubble src={p.avatarSrc} emoji={p.emoji||"🌿"} color={p.avatarColor||C.purpleLight} size={38}/>
+          <div style={{flex:1}}>
+            <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{p.name||"(sem nome)"}</p>
+            <p style={{margin:0,fontSize:12,color:C.textLight}}>{p.handle||p.email||"perfil local"}</p>
+          </div>
+        </label>
+      ))}
+      {result&&(
+        <div style={{background:result.ok?C.greenLight:C.redLight,border:`1px solid ${result.ok?C.green:C.red}44`,borderRadius:10,padding:"10px 12px",marginTop:10}}>
+          <p style={{margin:0,fontSize:13,color:result.ok?C.green:C.red}}>{result.msg}</p>
+        </div>
+      )}
+      <Btn onClick={()=>onImport(selected)} disabled={importing||selected.length===0} style={{marginTop:16}}>
+        {importing?<><Spinner size={16} color="#fff"/>Enviando {selected.length} perfil(is)…</>:`Importar ${selected.length} perfil(is)`}
+      </Btn>
     </div>
   );
 }
@@ -94,11 +183,15 @@ function ScreenPassword({profile,onSuccess,onBack,onForgot}){
   );
 }
 
-function ScreenCreate({onDone,onBack}){
+function ScreenCreate({onDone,onBack,googleUser}){
+  const gName=googleUser?.name||"";
+  const gEmail=googleUser?.email||"";
   const [step,setStep]=useState(1);
-  const [email,setEmail]=useState("");const [name,setName]=useState("");
-  const [handle,setHandle]=useState("");const [handleManual,setHandleManual]=useState(false);const [handleErr,setHandleErr]=useState("");
-  const [emoji,setEmoji]=useState("🌿");const [avatarColor,setAvatarColor]=useState(C.purpleLight);const [avatarSrc,setAvatarSrc]=useState(null);
+  const [name,setName]=useState(gName);
+  const [handle,setHandle]=useState(sanitizeHandle(gName||gEmail.split("@")[0]||""));
+  const [handleManual,setHandleManual]=useState(false);const [handleErr,setHandleErr]=useState("");
+  const [emoji,setEmoji]=useState("🌿");const [avatarColor,setAvatarColor]=useState(C.purpleLight);
+  const [avatarSrc,setAvatarSrc]=useState(googleUser?.picture||null);
   const [pw,setPw]=useState("");const [pw2,setPw2]=useState("");
   const [code]=useState(genCode);const [confirmed,setConfirmed]=useState(false);const [copied,setCopied]=useState(false);
   const [loading,setLoading]=useState(false);const [err,setErr]=useState("");
@@ -112,10 +205,18 @@ function ScreenCreate({onDone,onBack}){
     if(!confirmed){setErr("Confirme que salvou o código.");return;}
     setLoading(true);
     try{
-      const h="@"+(handle||sanitizeHandle(name)||sanitizeHandle(email.split("@")[0]));
+      const h="@"+(handle||sanitizeHandle(name)||sanitizeHandle(gEmail.split("@")[0]));
       if(!isHandleAvailable(h,null)){setErr("Este @handle já está em uso. Escolha outro.");setLoading(false);return;}
       const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString();
-      const profile={id,name,email,handle:h,emoji,avatarColor,avatarSrc,passwordHash,recoveryHash,createdAt:Date.now()};
+      const profile={
+        id,name,
+        email:gEmail,
+        googleSub:googleUser?.sub||null,
+        handle:h,emoji,avatarColor,avatarSrc,
+        passwordHash,recoveryHash,
+        createdAt:Date.now(),
+        cloud:!!googleUser
+      };
       const ps=loadProfiles();ps.push(profile);saveProfiles(ps);
       registryAdd(profile);
       const enc=await encryptObj(EMPTY_DATA(),pw);
@@ -131,10 +232,8 @@ function ScreenCreate({onDone,onBack}){
       <div style={{display:"flex",gap:6,marginBottom:24}}>{[1,2,3,4].map(n=><div key={n} style={{flex:1,height:4,borderRadius:4,background:step>=n?C.purple:C.cardBorder,transition:"background .3s"}}/>)}</div>
 
       {step===1&&<div style={{animation:"fadeIn .25s ease"}}>
-        <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Crie sua conta Veeda</p>
-        <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>Seu e-mail identifica sua conta. Não enviamos e-mails, é só para identificação.</p>
-        <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>E-mail</label>
-        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="seu@email.com" style={{marginBottom:14}}/>
+        <p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4,fontFamily:PASSO}}>Crie seu perfil Veeda</p>
+        <p style={{fontSize:13,color:C.textMid,marginBottom:20,lineHeight:1.5}}>{gEmail?<>Conectado como <strong>{gEmail}</strong>. Escolha um nome e um @handle únicos para o seu perfil.</>:"Escolha um nome e um @handle únicos para o seu perfil."}</p>
         <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Nome no Veeda</label>
         <input value={name} onChange={e=>setName(e.target.value)} placeholder="Como quer ser chamado" style={{marginBottom:14}}/>
         <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>@handle <span style={{fontWeight:400,color:C.textLight}}>(único, pode personalizar)</span></label>
@@ -145,7 +244,6 @@ function ScreenCreate({onDone,onBack}){
         {handleErr&&<p style={{fontSize:12,color:C.red,margin:"-16px 0 12px",fontWeight:500}}>{handleErr}</p>}
         {handle&&!handleErr&&<p style={{fontSize:12,color:C.green,margin:"-14px 0 14px"}}>✓ @{handle}</p>}
         <Btn onClick={()=>{
-          if(!email.includes("@")){setErr("E-mail inválido.");return;}
           if(!name.trim()){setErr("Informe seu nome.");return;}
           const h=handle||sanitizeHandle(name);
           if(h.length<3){setHandleErr("Handle muito curto (mín. 3 car.).");return;}
