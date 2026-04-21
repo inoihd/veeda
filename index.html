@@ -650,10 +650,10 @@ function SkeletonLine({w="100%",h=14,r=8,mb=8}){
   return<div className="shimmer" style={{width:w,height:h,borderRadius:r,marginBottom:mb}}/>;
 }
 
-function Modal({onClose,title,children,fullHeight=false}){
+function Modal({onClose,title,children,fullHeight=false,zIndex=300}){
   useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
   return(
-    <div style={{position:"fixed",inset:0,background:C.overlay,display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:300}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div style={{position:"fixed",inset:0,background:C.overlay,display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.white,borderRadius:"20px 20px 0 0",padding:"20px 16px 40px",width:"100%",maxWidth:480,maxHeight:fullHeight?"95vh":"90vh",overflowY:"auto",animation:"slideUp .28s cubic-bezier(.22,1,.36,1)",WebkitOverflowScrolling:"touch"}}>
         {title&&(
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
@@ -1111,13 +1111,27 @@ function TagPicker({selectedTags,onChange,customTags=[]}){
 // ═══════════════════════════════════════════════════
 // ADD CONTACT MODAL (with cross-device support)
 // ═══════════════════════════════════════════════════
-function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard}){
-  const [q,setQ]=useState("");
+function AddContactModal({contacts,myHandle,profile,onAdd,onClose,addToast,prefillCard}){
   const [cardCode,setCardCode]=useState(prefillCard||"");
-  const [tab,setTab]=useState(prefillCard?"card":"search"); // search | card
+  const [tab,setTab]=useState("add"); // add | search
   const [step,setStep]=useState(1);
   const [found,setFound]=useState(null);
+  const [q,setQ]=useState("");
+  const [myLinkCopied,setMyLinkCopied]=useState(false);
+
   const myH=(myHandle||"").replace(/^@/,"");
+  const myCode=profile?makeProfileCard(profile):null;
+  const myLink=myCode?`${window.location.origin}${window.location.pathname}?add=${encodeURIComponent(myCode)}`:null;
+
+  const copyMyLink=()=>{
+    if(!myLink)return;
+    navigator.clipboard?.writeText(myLink);
+    setMyLinkCopied(true);setTimeout(()=>setMyLinkCopied(false),2500);
+  };
+  const shareMyLink=()=>{
+    if(!myLink)return;
+    navigator.share?.({title:"Veeda",text:`Olá! Sou ${profile?.name||myHandle} no Veeda. Me adiciona no Meu Círculo:\n${myLink}`}).catch(()=>{});
+  };
 
   // Auto-decode prefilled code from invite link
   useEffect(()=>{
@@ -1135,17 +1149,23 @@ function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard})
   },[prefillCard]);
 
   const localResults=useMemo(()=>{
-    const results=registrySearch(q).filter(p=>{
+    return registrySearch(q).filter(p=>{
       if(p.handle.replace(/^@/,"")===myH)return false;
       if(contacts.find(c=>(c.handle||"").replace(/^@/,"")===(p.handle||"").replace(/^@/,"")))return false;
       return true;
     });
-    return results;
   },[q,myH,contacts]);
 
   const tryParseCard=()=>{
-    const parsed=parseProfileCard(cardCode.trim());
-    if(!parsed){addToast("Código inválido. Peça ao contato para gerar o código novamente.","error");return;}
+    // Aceita tanto vc2_... direto quanto uma URL que contenha ?add=vc2_...
+    let raw=cardCode.trim();
+    try{const u=new URL(raw);const p=u.searchParams.get("add");if(p)raw=p;}catch{}
+    const parsed=parseProfileCard(raw);
+    if(!parsed){addToast?.("Código inválido. Peça ao contato para gerar o código novamente.","error");return;}
+    if(parsed.handle.replace(/^@/,"")===myH){addToast?.("Este é o seu próprio código.","warn");return;}
+    if(contacts.find(c=>(c.handle||"").replace(/^@/,"")===(parsed.handle||"").replace(/^@/,""))){
+      addToast?.(`${parsed.name} já está no seu Círculo.`,"info");return;
+    }
     setFound(parsed);setStep(2);
   };
 
@@ -1157,16 +1177,41 @@ function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard})
   return(
     <div>
       {step===1&&<>
-        <div style={{display:"flex",gap:6,marginBottom:16}}>
-          {[["search","🔍 Buscar"],["card","📋 Código"]].map(([k,l])=>(
-            <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"9px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:13}}>{l}</button>
+        {/* Seção: Compartilhar MEU código */}
+        {myLink&&(
+          <div style={{background:C.greenLight,borderRadius:14,padding:"14px",marginBottom:18,border:`1px solid ${C.green}33`}}>
+            <p style={{margin:"0 0 4px",fontSize:12,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.5px"}}>🔗 Primeiro: compartilhe seu link</p>
+            <p style={{margin:"0 0 12px",fontSize:12,color:C.textMid,lineHeight:1.5}}>Envie para quem você quer adicionar — quando tocar no link, o Veeda já vai mostrar seu perfil para adicionar.</p>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={copyMyLink} style={{flex:1,padding:"10px 0",background:myLinkCopied?C.green:C.white,color:myLinkCopied?C.white:C.green,border:`1.5px solid ${C.green}`,borderRadius:50,fontWeight:600,fontSize:13,cursor:"pointer"}}>
+                {myLinkCopied?"✓ Copiado!":"Copiar meu link"}
+              </button>
+              {navigator.share&&<button onClick={shareMyLink} style={{flex:1,padding:"10px 0",background:C.purple,color:C.white,border:"none",borderRadius:50,fontWeight:600,fontSize:13,cursor:"pointer"}}>Compartilhar ↑</button>}
+            </div>
+          </div>
+        )}
+
+        {/* Tabs: Adicionar pelo código | Buscar neste dispositivo */}
+        <div style={{display:"flex",gap:6,marginBottom:14}}>
+          {[["add","📋 Adicionar pelo código"],["search","🔍 Buscar aqui"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"9px 4px",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:12}}>{l}</button>
           ))}
         </div>
 
+        {tab==="add"&&<>
+          <p style={{fontSize:13,color:C.textMid,marginBottom:10,lineHeight:1.5}}>Cole o <strong>link ou código</strong> que seu contato compartilhou com você:</p>
+          <textarea value={cardCode} onChange={e=>setCardCode(e.target.value)} placeholder="Cole aqui o link de convite ou código vc2_…" style={{marginBottom:12,minHeight:72,borderRadius:14}}/>
+          <Btn onClick={tryParseCard} disabled={!cardCode.trim()}>Identificar perfil</Btn>
+        </>}
+
         {tab==="search"&&<>
-          <p style={{fontSize:12,color:C.textMid,marginBottom:8}}>Seu handle: <strong style={{color:C.purple}}>{myHandle}</strong></p>
           <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar por nome ou @handle…" autoFocus style={{marginBottom:8}}/>
-          {q.trim()&&localResults.length===0&&<p style={{fontSize:13,color:C.textLight,textAlign:"center",padding:"16px 0"}}>Nenhum usuário encontrado neste dispositivo.</p>}
+          {q.trim()&&localResults.length===0&&(
+            <div style={{padding:"14px",background:C.amberLight,borderRadius:10,border:`1px solid ${C.amber}44`,marginTop:4}}>
+              <p style={{margin:"0 0 4px",fontSize:12,color:"#7A5800",fontWeight:600}}>Nenhum usuário encontrado aqui</p>
+              <p style={{margin:0,fontSize:12,color:"#7A5800",lineHeight:1.5}}>A busca funciona para perfis do mesmo dispositivo. Para adicionar alguém de outro celular, use a aba "Adicionar pelo código".</p>
+            </div>
+          )}
           {localResults.map(p=>(
             <button key={p.id||p.handle} onClick={()=>{setFound(p);setStep(2);}} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left"}}>
               <AvatarBubble src={p.avatarSrc} emoji={p.emoji||"🌿"} color={p.avatarColor||C.purpleLight} size={44}/>
@@ -1174,16 +1219,6 @@ function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard})
               <span style={{fontSize:18,color:C.textLight}}>+</span>
             </button>
           ))}
-          <div style={{marginTop:12,padding:"12px 14px",background:C.amberLight,borderRadius:10,border:`1px solid ${C.amber}44`}}>
-            <p style={{margin:"0 0 6px",fontSize:12,color:"#7A5800",fontWeight:600}}>Para adicionar alguém de outro dispositivo:</p>
-            <p style={{margin:0,fontSize:12,color:"#7A5800",lineHeight:1.5}}>Peça que a pessoa vá em Configurações → Meu Código de Conexão, copie e envie para você. Depois cole na aba "Código" acima.</p>
-          </div>
-        </>}
-
-        {tab==="card"&&<>
-          <p style={{fontSize:13,color:C.textMid,marginBottom:12,lineHeight:1.6}}>Cole o <strong>Código de Conexão</strong> que o seu contato compartilhou com você.</p>
-          <textarea value={cardCode} onChange={e=>setCardCode(e.target.value)} placeholder="Cole o código aqui (começa com vc2_…)" style={{marginBottom:14,minHeight:80,borderRadius:14}}/>
-          <Btn onClick={tryParseCard} disabled={!cardCode.trim()}>Decodificar código</Btn>
         </>}
       </>}
 
@@ -1192,17 +1227,17 @@ function AddContactModal({contacts,myHandle,onAdd,onClose,addToast,prefillCard})
           <AvatarBubble src={found.avatarSrc} emoji={found.emoji} color={found.avatarColor||C.purpleLight} size={64} ring/>
           <p style={{margin:"10px 0 2px",fontSize:16,fontWeight:700,color:C.text}}>{found.name}</p>
           <p style={{margin:0,fontSize:14,color:C.purple,fontWeight:600}}>{found.handle}</p>
-          {found.fromCard&&<p style={{margin:"6px 0 0",fontSize:12,color:C.green}}>✓ Perfil identificado via código</p>}
+          {found.fromCard&&<p style={{margin:"6px 0 0",fontSize:12,color:C.green}}>✓ Perfil identificado pelo código</p>}
         </div>
         <Btn onClick={confirm} style={{marginBottom:10}}>Adicionar ao Meu Círculo</Btn>
-        <Btn onClick={()=>{setStep(1);setFound(null);}} variant="ghost">← Buscar outro</Btn>
+        <Btn onClick={()=>{setStep(1);setFound(null);setCardCode("");}} variant="ghost">← Voltar</Btn>
       </>}
     </div>
   );
 }
 
 // Connection Code Modal
-function ConnectionCodeModal({profile,onClose}){
+function ConnectionCodeModal({profile,onClose,zIndex=400}){
   const [copied,setCopied]=useState(false);
   const [linkCopied,setLinkCopied]=useState(false);
   const code=makeProfileCard(profile);
@@ -1214,7 +1249,7 @@ function ConnectionCodeModal({profile,onClose}){
   const copyLink=()=>{navigator.clipboard?.writeText(inviteLink);setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);};
   const shareNative=()=>{navigator.share?.({title:"Veeda",text:whatsMsg}).catch(()=>{});};
   return(
-    <Modal title="Meu Código de Conexão" onClose={onClose}>
+    <Modal title="Meu Código de Conexão" onClose={onClose} zIndex={zIndex}>
       <div style={{textAlign:"center",marginBottom:16}}>
         <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji} color={profile.avatarColor||C.purpleLight} size={60} ring/>
         <p style={{margin:"8px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
@@ -1476,7 +1511,7 @@ function RemindersModal({reminders,onSave,onClose}){
 // ═══════════════════════════════════════════════════
 // BACKUP MODAL
 // ═══════════════════════════════════════════════════
-function BackupModal({data,profile,password,onClose,addToast}){
+function BackupModal({data,profile,password,onClose,addToast,zIndex=400}){
   const [status,setStatus]=useState("idle");const [msg,setMsg]=useState("");
   const [driveToken,setDriveToken]=useState(safeLS.get(GDRIVE_KEY)?.access_token||null);
   const fileRef=useRef();
@@ -1491,7 +1526,7 @@ function BackupModal({data,profile,password,onClose,addToast}){
   const importLocal=file=>{const r=new FileReader();r.onload=async e=>{try{const{data:d}=await decryptObj(e.target.result,password);addToast?.("Backup verificado com sucesso!","success");setMsg("Backup verificado!");}catch{addToast?.("Arquivo inválido ou senha incorreta.","error");}};r.readAsText(file);};
 
   return(
-    <Modal title="Backup dos Dados" onClose={onClose} fullHeight>
+    <Modal title="Backup dos Dados" onClose={onClose} fullHeight zIndex={zIndex}>
       <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,borderRadius:14,padding:16,textAlign:"center",marginBottom:20}}>
         <p style={{margin:0,fontSize:28}}>🌿</p>
         <p style={{margin:"6px 0 2px",fontSize:15,fontWeight:700,color:C.text}}>{profile.name}</p>
@@ -2532,7 +2567,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       </Modal>}
 
       {showInvite&&<Modal title="Adicionar ao Meu Círculo" onClose={()=>{setShowInvite(false);setPendingAddCode(null);}}>
-        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} prefillCard={pendingAddCode} onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);setPendingAddCode(null);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>{setShowInvite(false);setPendingAddCode(null);}} addToast={addToast}/>
+        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} profile={profile} prefillCard={pendingAddCode} onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);setPendingAddCode(null);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>{setShowInvite(false);setPendingAddCode(null);}} addToast={addToast}/>
       </Modal>}
 
       {showGroupName&&<Modal title="Renomear" onClose={()=>setShowGroupName(false)}>
