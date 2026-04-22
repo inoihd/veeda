@@ -528,11 +528,13 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
               {viewRec.message && <div style={{margin: '12px 0 0', background: C.purpleLight, borderRadius: 12, padding: '12px 16px', width: '100%', boxSizing: 'border-box'}}><p style={{margin: 0, fontSize: 14, color: C.purple, fontStyle: 'italic', lineHeight: 1.6}}>"{viewRec.message}"</p></div>}
               <button onClick={() => setViewRec(null)} style={{marginTop: 12, fontSize: 13, color: C.textMid, background: 'none', border: `1px solid ${C.cardBorder}`, borderRadius: 20, padding: '6px 18px', cursor: 'pointer'}}>‹ Voltar</button>
             </div>
-            <div style={{padding: 16, display: 'flex', flexWrap: 'wrap', gap: 12}}>
+            <div style={{padding: 16, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center'}}>
               {(viewRec.moments || []).slice().sort((a, b) => a.ts - b.ts).map(m => (
-                <div key={m.id} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4}}>
-                  <MomentCircle m={m} onTap={() => setExpandedMoment(m)} size={58} />
-                  <span style={{fontSize: 10, color: C.textLight}}>{fmt(m.ts)}</span>
+                <div key={m.id} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer', transition: 'transform 0.2s ease', _hover: {transform: 'scale(1.08)'}}}>
+                  <div style={{transition: 'transform 0.2s ease'}} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+                    <MomentCircle m={m} onTap={() => setExpandedMoment(m)} size={58} />
+                  </div>
+                  <span style={{fontSize: 10, color: C.textLight, textAlign: 'center'}}>{fmt(m.ts)}</span>
                 </div>
               ))}
             </div>
