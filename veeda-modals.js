@@ -1022,3 +1022,180 @@ function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays
     </Modal>
   );
 }
+
+// ═══════════════════════════════════════════════════════════
+// PROFILE MODAL — Perfil detalhado de contato
+// ═══════════════════════════════════════════════════════════
+function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays, onClose, addToast}) {
+  // Calcular estatísticas do perfil
+  const totalDaysShared = receivedDays.filter(d => d.handle === viewedProfile.handle).length;
+  const totalMoments = receivedDays
+    .filter(d => d.handle === viewedProfile.handle)
+    .reduce((sum, d) => sum + (d.moments?.length || 0), 0);
+
+  const lastSharedDate = receivedDays
+    .filter(d => d.handle === viewedProfile.handle)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))[0]?.date;
+
+  return (
+    <Modal title={`Perfil de ${viewedProfile.name}`} onClose={onClose} fullHeight>
+      <div style={{paddingBottom: '20px'}}>
+        {/* Header do perfil */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '20px 0',
+          borderBottom: `1px solid ${C.headerBorder}`,
+          marginBottom: '24px'
+        }}>
+          <AvatarBubble
+            src={viewedProfile.avatarSrc}
+            emoji={viewedProfile.emoji || '🌿'}
+            color={viewedProfile.avatarColor || C.purpleLight}
+            size={80}
+            ring
+          />
+          <h2 style={{
+            margin: '16px 0 4px',
+            fontSize: '20px',
+            fontWeight: '700',
+            color: C.text,
+            fontFamily: PASSO,
+            textAlign: 'center'
+          }}>
+            {viewedProfile.name}
+          </h2>
+          <p style={{
+            margin: 0,
+            fontSize: '14px',
+            color: C.purple,
+            fontWeight: '500'
+          }}>
+            @{viewedProfile.handle || nameToHandle(viewedProfile.name)}
+          </p>
+        </div>
+
+        {/* Estatísticas */}
+        <div style={{marginBottom: '24px'}}>
+          <h3 style={{
+            margin: '0 0 16px',
+            fontSize: '16px',
+            fontWeight: '600',
+            color: C.text,
+            fontFamily: PASSO
+          }}>
+            Estatísticas
+          </h3>
+          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px'}}>
+            <Card style={{textAlign: 'center', padding: '16px'}}>
+              <div style={{fontSize: '24px', marginBottom: '4px'}}>📅</div>
+              <div style={{fontSize: '18px', fontWeight: '700', color: C.purple}}>{totalDaysShared}</div>
+              <div style={{fontSize: '12px', color: C.textMid}}>Dias compartilhados</div>
+            </Card>
+            <Card style={{textAlign: 'center', padding: '16px'}}>
+              <div style={{fontSize: '24px', marginBottom: '4px'}}>💭</div>
+              <div style={{fontSize: '18px', fontWeight: '700', color: C.purple}}>{totalMoments}</div>
+              <div style={{fontSize: '12px', color: C.textMid}}>Momentos registrados</div>
+            </Card>
+          </div>
+        </div>
+
+        {/* Última atividade */}
+        {lastSharedDate && (
+          <div style={{marginBottom: '24px'}}>
+            <h3 style={{
+              margin: '0 0 12px',
+              fontSize: '16px',
+              fontWeight: '600',
+              color: C.text,
+              fontFamily: PASSO
+            }}>
+              Última atividade
+            </h3>
+            <Card style={{padding: '16px'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                <div style={{fontSize: '20px'}}>🌱</div>
+                <div>
+                  <p style={{margin: 0, fontSize: '14px', fontWeight: '500', color: C.text}}>
+                    Compartilhou um dia
+                  </p>
+                  <p style={{margin: '2px 0 0', fontSize: '12px', color: C.textMid}}>
+                    {fmtFull(lastSharedDate)}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Dias compartilhados recentes */}
+        {totalDaysShared > 0 && (
+          <div style={{marginBottom: '24px'}}>
+            <h3 style={{
+              margin: '0 0 12px',
+              fontSize: '16px',
+              fontWeight: '600',
+              color: C.text,
+              fontFamily: PASSO
+            }}>
+              Dias compartilhados
+            </h3>
+            <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+              {receivedDays
+                .filter(d => d.handle === viewedProfile.handle)
+                .sort((a, b) => new Date(b.date) - new Date(a.date))
+                .slice(0, 5)
+                .map((day, index) => (
+                  <Card key={index} style={{padding: '12px'}}>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                      <AvatarBubble
+                        emoji={day.emoji || '🌿'}
+                        color={day.avatarColor || C.purpleLight}
+                        size={32}
+                      />
+                      <div style={{flex: 1}}>
+                        <p style={{margin: 0, fontSize: '14px', fontWeight: '500', color: C.text}}>
+                          {fmtLabel(day.date)}
+                        </p>
+                        <p style={{margin: '2px 0 0', fontSize: '12px', color: C.textMid}}>
+                          {day.moments?.length || 0} momento{day.moments?.length !== 1 ? 's' : ''}
+                          {day.feeling && ` · ${day.feeling.emoji}`}
+                        </p>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Ações */}
+        <div style={{
+          paddingTop: '20px',
+          borderTop: `1px solid ${C.headerBorder}`,
+          display: 'flex',
+          gap: '12px'
+        }}>
+          <Btn
+            variant="outline"
+            style={{flex: 1}}
+            onClick={() => {
+              // Implementar compartilhamento do perfil
+              addToast?.('Funcionalidade em breve! 🌱', 'info');
+            }}
+          >
+            Compartilhar perfil
+          </Btn>
+          <Btn
+            variant="ghost"
+            style={{flex: 1}}
+            onClick={onClose}
+          >
+            Fechar
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
