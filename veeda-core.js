@@ -449,6 +449,32 @@ const _buildOAuthUrl=()=>{
   });
   return`https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 };
+
+// ── Online Status Management ───────────────────────────────
+const markUserActive = (handle) => {
+  const key = `veeda_online_status_${handle.replace(/^@/, '')}`;
+  safeLS.set(key, { lastActive: Date.now(), isOnline: true });
+};
+
+const getUserStatus = (handle) => {
+  const key = `veeda_online_status_${handle.replace(/^@/, '')}`;
+  const status = safeLS.get(key, null);
+  if (!status) return { isOnline: false, lastActive: null };
+  
+  const now = Date.now();
+  const timeDiff = now - status.lastActive;
+  // Consider online if active within last 5 minutes
+  const isOnline = timeDiff < 5 * 60 * 1000;
+  
+  return { isOnline, lastActive: status.lastActive };
+};
+
+const getContactsStatus = (contacts) => {
+  return contacts.map(contact => ({
+    ...contact,
+    status: getUserStatus(contact.handle)
+  }));
+};
 const _isPWAStandalone=()=>
   (window.matchMedia?.("(display-mode: standalone)").matches)||
   (window.navigator.standalone===true);
