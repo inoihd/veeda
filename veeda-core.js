@@ -10,6 +10,7 @@ const DATA_VERSION = 4;
 
 // ── Version History ───────────────────────────────────────
 const VERSION_HISTORY = [
+  { version: "2.0.3", date: "2026-04-22", changes: ["Visualização horizontal da timeline (carrossel) com alternância entre modos vertical e horizontal"] },
   { version: "2.0.2", date: "2026-04-22", changes: ["Perfis de contatos clicáveis com listagem de dias compartilhados", "Sistema completo de comentários em dias compartilhados", "Status online/offline dos contatos com indicadores visuais"] },
   { version: "2.0.0", date: "2026-04-21", changes: ["Correção da ordenação da timeline (momentos antigos no topo)", "Melhorias no sistema de conexões bidirecionais", "Página de versões do aplicativo", "Limites de contatos para versão Beta (máximo 5)", "Interface aprimorada para criação de perfil local"] },
   { version: "1.9.1", date: "2026-04-21", changes: ["Sistema de conexão bidirecional com confirmação", "Melhorias na sincronização de perfis entre usuários"] },
