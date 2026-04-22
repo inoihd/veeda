@@ -314,11 +314,15 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
       
       confirmConnectionToSender(senderProfile, myProfile);
       
+      // Verificar se a confirmação foi salva
+      const confirmations = getConnectionConfirmations(senderProfile.handle.replace(/^@/, ''));
+      const confirmationSent = confirmations.some(c => c.fromId === myProfile.id);
+      
       setPendingConnections(prev => 
         prev.filter(r => r.fromId !== request.fromId)
       );
       
-      addToast?.(`${request.fromName} adicionado ao seu Círculo! 🤝`, 'success');
+      addToast?.(`${request.fromName} adicionado ao seu Círculo! ${confirmationSent ? '🤝' : '⚠️'}`, 'success');
     }
   }, [data, profile, save, addToast]);
 
