@@ -5,7 +5,7 @@
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "1.9.1";
+const APP_VERSION  = "2.0.0";
 const DATA_VERSION = 4;
 
 // ── Version History ───────────────────────────────────────
@@ -416,7 +416,7 @@ const EMPTY_DATA=()=>({
   _v:DATA_VERSION,moments:{},received:[],contacts:[],
   groupName:"Meu Círculo",dayColors:{},dayFeelings:{},
   reminders:[],sharedLog:{},events:[],customTags:[],
-  suggestions:[],notifications:[],
+  suggestions:[],notifications:[],comments:{},
   settings:{locationEnabled:false,notificationsEnabled:false},
 });
 const migrateData=(d)=>{

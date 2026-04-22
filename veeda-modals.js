@@ -484,11 +484,43 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
   );
 }
 
-function AcceptSharedDayModal({shared, onAccept, onClose}) {
+function AcceptSharedDayModal({shared, onAccept, onClose, currentUserProfile, onSaveComment}) {
   if (!shared) return null;
-  const { author, handle, emoji, avatarColor, feeling, moments, message, date } = shared;
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [recordingVoice, setRecordingVoice] = useState(false);
+  const [commentError, setCommentError] = useState('');
+  
+  const { author, handle, emoji, avatarColor, feeling, moments, message, date, id } = shared;
   const textMoments = (moments || []).filter(m => m.type === "texto" || m.type === "link" || m.type === "videolink" || m.type === "musica");
   const mediaMoments = (moments || []).filter(m => m._hasMedia);
+  
+  const sharedDayId = `${handle}_${date}`;
+  const comments = shared.comments || [];
+  
+  const addComment = (content, type = 'texto') => {
+    if (!content.trim() && type === 'texto') {
+      setCommentError('Escreva algo para comentar.');
+      return;
+    }
+    if (!currentUserProfile) {
+      setCommentError('Erro ao salvar comentário.');
+      return;
+    }
+    const newComment = {
+      id: Date.now(),
+      from: currentUserProfile.name,
+      fromHandle: currentUserProfile.handle,
+      fromEmoji: currentUserProfile.emoji,
+      type: type,
+      content: content,
+      ts: Date.now()
+    };
+    onSaveComment?.(sharedDayId, newComment);
+    setCommentText('');
+    setCommentError('');
+  };
+
   return (
     <Modal title="Dia compartilhado com você 🌿" onClose={onClose} fullHeight>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: C.purpleLight, borderRadius: 14, marginBottom: 16 }}>
@@ -503,6 +535,51 @@ function AcceptSharedDayModal({shared, onAccept, onClose}) {
       {message && <div style={{ background: C.white, borderRadius: 12, padding: '12px 14px', marginBottom: 14, border: `1px solid ${C.cardBorder}` }}><p style={{ margin: 0, fontSize: 13, color: C.textMid, fontStyle: 'italic' }}>"{message}"</p></div>}
       {textMoments.length > 0 && <div style={{ marginBottom: 14 }}><p style={{ fontSize: 12, fontWeight: 600, color: C.textMid, marginBottom: 8 }}>Momentos do dia</p>{textMoments.slice(0, 5).map((m, i) => <div key={i} style={{ background: C.white, borderRadius: 12, padding: '10px 12px', marginBottom: 8, border: `1px solid ${C.cardBorder}` }}><span style={{ fontSize: 11, color: C.textLight, marginRight: 6 }}>{TYPE_META[m.type]?.icon || "✏️"}</span><span style={{ fontSize: 13, color: C.text }}>{m.type === "texto" ? m.content : m.type === "musica" ? `🎵 ${m.content}` : m.content}</span></div>)}</div>}
       {mediaMoments.length > 0 && <div style={{ background: C.blueLight, borderRadius: 12, padding: '10px 14px', marginBottom: 14, border: `1px solid ${C.blueMid}44` }}><p style={{ margin: 0, fontSize: 12, color: C.blue }}>📷 Este dia tem {mediaMoments.length} foto/vídeo(s) — não incluídos no link.</p></div>}
+      
+      <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${C.headerBorder}` }}>
+        <button onClick={() => setShowComments(!showComments)} style={{ width: '100%', padding: '12px 0', background: 'none', border: 'none', color: C.purple, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>💬 Comentários ({comments.length})</button>
+      </div>
+      
+      {showComments && (
+        <div style={{ marginBottom: 16 }}>
+          {comments.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              {comments.map(c => (
+                <div key={c.id} style={{ background: C.white, borderRadius: 12, padding: '10px 12px', marginBottom: 8, border: `1px solid ${C.cardBorder}` }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6 }}>
+                    <div style={{ fontSize: 16 }}>{c.fromEmoji || '🌿'}</div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: C.text }}>{c.from}</p>
+                      <p style={{ margin: 0, fontSize: 11, color: C.textLight }}>{new Date(c.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
+                    </div>
+                  </div>
+                  {c.type === 'texto' && <p style={{ margin: 0, fontSize: 13, color: C.text, lineHeight: 1.4 }}>{c.content}</p>}
+                  {c.type === 'voz' && <p style={{ fontSize: 12, color: C.purple, fontWeight: 500 }}>🎙️ Comentário de voz</p>}
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {!recordingVoice && (
+            <div style={{ marginBottom: 12 }}>
+              <textarea value={commentText} onChange={e => { setCommentText(e.target.value); setCommentError(''); }} placeholder="Deixe um comentário sobre este dia…" style={{ width: '100%', minHeight: 60, borderRadius: 12, padding: '10px 12px', border: `1px solid ${C.cardBorder}`, fontSize: 13, marginBottom: commentError ? 6 : 12, boxSizing: 'border-box', fontFamily: 'inherit' }} />
+              {commentError && <p style={{ margin: 0, fontSize: 11, color: C.red, marginBottom: 12 }}>{commentError}</p>}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => addComment(commentText)} style={{ flex: 1, padding: '10px 0', background: C.purple, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Comentar ✏️</button>
+                <button onClick={() => setRecordingVoice(true)} style={{ flex: 1, padding: '10px 0', background: C.greenLight, color: C.green, border: `1px solid ${C.green}44`, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Voz 🎙️</button>
+              </div>
+            </div>
+          )}
+          
+          {recordingVoice && (
+            <div style={{ background: C.greenLight, borderRadius: 12, padding: 12, marginBottom: 12, border: `1px solid ${C.green}44`, textAlign: 'center' }}>
+              <p style={{ margin: 0, fontSize: 12, color: C.green, fontWeight: 600, marginBottom: 8 }}>🎙️ Gravando áudio...</p>
+              <button onClick={() => setRecordingVoice(false)} style={{ padding: '8px 16px', background: C.red, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Cancelar</button>
+            </div>
+          )}
+        </div>
+      )}
+      
       <Btn onClick={onAccept} style={{ marginBottom: 8 }}>Aceitar dia 🌿</Btn>
       <Btn onClick={onClose} variant="ghost">Recusar</Btn>
     </Modal>
@@ -706,7 +783,7 @@ function SettingsModal({profile, data, password, onUpdateProfile, onSave, onLogo
             <p style={{ fontSize: 12, color: C.textMid, margin: 0 }}>v{APP_VERSION} — Dias de Vida</p>
           </div>
           <p style={{ fontSize: 13, color: C.textMid, lineHeight: 1.7, marginBottom: 16 }}>Veeda nasce da crença de que a vida não cabe em um feed. Viva primeiro, registre, compartilhe depois.</p>
-          <Btn onClick={() => setShowVersions(true)}>📋 Ver histórico de atualizações</Btn>
+          <button onClick={() => setShowVersions(true)} style={{width: '100%', padding: '12px 0', background: C.purple, color: '#fff', border: 'none', borderRadius: 50, fontWeight: 600, fontSize: 14, cursor: 'pointer'}}>📋 Ver histórico de atualizações</button>
         </div>}
       </Modal>
     </>
