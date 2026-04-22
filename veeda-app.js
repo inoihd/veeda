@@ -45,6 +45,8 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   const [showConnectionRequests, setShowConnectionRequests] = useState(false);
   const [pendingSharedDay, setPendingSharedDay] = useState(null);
   const [showAcceptSharedDay, setShowAcceptSharedDay] = useState(false);
+  const [decryptionError, setDecryptionError] = useState(null);
+  const [showDecryptionRecovery, setShowDecryptionRecovery] = useState(false);
 
   const sessionKey = useRef(null);
   const sessionSalt = useRef(null);
@@ -67,6 +69,8 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             sessionKey.current = key; sessionSalt.current = salt;
             setData(migrateData(d));
           } catch (decErr) {
+            setDecryptionError(decErr);
+            setShowDecryptionRecovery(true);
             const snap = await loadLatestSnapshot(profile.id, password);
             if (snap) {
               sessionKey.current = snap.key; sessionSalt.current = snap.salt;
@@ -103,7 +107,12 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
       const inbox = safeLS.get(k, []);
       if (inbox.length > 0) {
         const notif = inbox[0];
-        if (!(data.received || []).find(r => r.date === notif.date && r.author === notif.author && r.importedAt === notif.importedAt)) {
+        const isDuplicate = (data.received || []).find(r => 
+          r.date === notif.date && 
+          (r.author === notif.author || r.handle === notif.handle) && 
+          Math.abs((r.importedAt || 0) - (notif.importedAt || 0)) < 1000
+        );
+        if (!isDuplicate) {
           setPendingNotif(notif);
           setUnreadCount(c => c + 1);
           showNativeNotif('Veeda', `${notif.author} compartilhou o dia com você! 🌿`);
@@ -263,7 +272,11 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
     [`veeda_inbox_${myH}`, `veeda_inbox_${profile.id}`].forEach(k => {
       const inbox = safeLS.get(k, []);
-      safeLS.set(k, inbox.filter(x => !(x.date === notif.date && x.author === notif.author && x.importedAt === notif.importedAt)));
+      safeLS.set(k, inbox.filter(x => !(
+         x.date === notif.date && 
+         (x.author === notif.author || x.handle === notif.handle) && 
+         Math.abs((x.importedAt || 0) - (notif.importedAt || 0)) < 1000
+       )));
     });
   }, [profile]);
 
@@ -365,7 +378,8 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     <div style={{maxWidth: 480, margin: '0 auto', background: `linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradEnd} 100%)`, minHeight: '100vh', fontFamily: SANS}}>
       <ToastContainer />
       {pendingNotif && <ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif} />}
-      {showAcceptSharedDay && pendingSharedDay && <AcceptSharedDayModal shared={pendingSharedDay} currentUserProfile={profile} onClose={() => { setShowAcceptSharedDay(false); setPendingSharedDay(null); }} onAccept={async () => { if (!data || !pendingSharedDay) return; await save({...data, received: [...(data.received || []), pendingSharedDay]}); setShowAcceptSharedDay(false); setPendingSharedDay(null); setUnreadCount(c => c + 1); setView('recebidos'); setViewRec(pendingSharedDay); addToast?.('Dia recebido e salvo! 🌿', 'success'); }} onSaveComment={async (dayId, comment) => { const updated = {...data, comments: {...(data.comments || {}), [dayId]: [...((data.comments || {})[dayId] || []), comment]}}; await save(updated); addToast?.('Comentário adicionado! 💬', 'success'); }} />}
+      {showDecryptionRecovery && <Modal title="⚠️ Dados Corrompidos" onClose={() => { setShowDecryptionRecovery(false); setDecryptionError(null); }}><p style={{fontSize: 14, color: C.text, marginBottom: 16}}>Detectamos um problema ao descriptografar seus dados locais. Estamos usando um backup seguro de 30 dias atrás.</p><p style={{fontSize: 12, color: C.textMid, marginBottom: 20}}>Se você tiver dados mais recentes, considere fazer um novo backup agora.</p><Btn onClick={() => { setShowDecryptionRecovery(false); setDecryptionError(null); }}>Entendi</Btn></Modal>}
+      {showAcceptSharedDay && pendingSharedDay && <AcceptSharedDayModal shared={pendingSharedDay} currentUserProfile={profile} onClose={() => { setShowAcceptSharedDay(false); setPendingSharedDay(null); }} onAccept={async () => { if (!data || !pendingSharedDay) return; const isDuplicate = (data.received || []).find(r => r.date === pendingSharedDay.date && (r.author === pendingSharedDay.author || r.handle === pendingSharedDay.handle) && Math.abs((r.importedAt || 0) - (pendingSharedDay.importedAt || 0)) < 1000); if (isDuplicate) { addToast?.('Este dia já foi recebido.', 'info'); setShowAcceptSharedDay(false); setPendingSharedDay(null); return; } await save({...data, received: [...(data.received || []), pendingSharedDay]}); setShowAcceptSharedDay(false); setPendingSharedDay(null); setView('recebidos'); setViewRec(pendingSharedDay); addToast?.('Dia recebido e salvo! 🌿', 'success'); }} onSaveComment={async (dayId, comment) => { const updated = {...data, comments: {...(data.comments || {}), [dayId]: [...((data.comments || {})[dayId] || []), comment]}}; await save(updated); addToast?.('Comentário adicionado! 💬', 'success'); }} />}
       {showDrawing && <DrawingCanvas onClose={() => setShowDrawing(false)} onSave={dataUrl => { setShowDrawing(false); const id = Date.now(); const m = {id, ts: id, type: 'arte', content: dataUrl, caption: addCaption.trim() || undefined, location: addLocation || undefined}; save({...data, moments: {...(data.moments || {}), [todayStr()]: [...((data.moments || {})[todayStr()] || []), m]}}); setLastId(id); setAddCaption(''); setAddLocation(null); }} />}
       {expandedMoment && <MomentDetail m={expandedMoment} onClose={() => setExpandedMoment(null)} onDelete={() => { delMoment(curDay, expandedMoment.id); setExpandedMoment(null); }} />}
 
