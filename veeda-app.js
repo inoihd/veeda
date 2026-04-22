@@ -282,6 +282,13 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     const accepted = acceptConnectionRequest(myH, request.fromId);
     
     if (accepted) {
+      // Verificar limite de contatos para Beta 1.0
+      const currentContacts = data.contacts || [];
+      if (currentContacts.length >= MAX_CONTACTS_BETA) {
+        addToast?.(`Limite de ${MAX_CONTACTS_BETA} contatos atingido (versão Beta).`, 'error');
+        return;
+      }
+      
       const newContact = { 
         name: request.fromName, 
         handle: request.fromHandle, 
@@ -292,7 +299,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
         addedAt: Date.now() 
       };
       
-      save({...data, contacts: [...(data.contacts || []), newContact]});
+      save({...data, contacts: [...currentContacts, newContact]});
       
       const senderProfile = {
         id: request.fromId,
@@ -470,6 +477,10 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             <button onClick={() => { setNewGroup(group); setShowGroupName(true); }} style={{fontSize: 12, color: C.purple, background: 'none', border: 'none', cursor: 'pointer'}}>renomear</button>
           </div>
           <Btn onClick={() => setShowInvite(true)} style={{marginBottom: 20}}>+ Adicionar ao Círculo</Btn>
+          <div style={{background: C.amberLight, border: `1px solid ${C.amber}44`, borderRadius: 12, padding: '12px 16px', marginBottom: 16}}>
+            <p style={{margin: 0, fontSize: 12, color: C.amber, fontWeight: 600}}>Beta 1.0: Máximo {MAX_CONTACTS_BETA} contatos</p>
+            <p style={{margin: '4px 0 0', fontSize: 11, color: C.textMid}}>Atualmente: {(activeData.contacts || []).length} de {MAX_CONTACTS_BETA}</p>
+          </div>
           {(!activeData.contacts || activeData.contacts.length === 0) ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>👥</div><p style={{fontSize: 14, color: C.textLight, marginBottom: 16}}>Nenhum contato ainda.</p><button onClick={() => setShowInviteApp(true)} style={{background: 'none', border: `1.5px solid ${C.purple}`, borderRadius: 20, padding: '9px 20px', color: C.purple, cursor: 'pointer', fontSize: 13, fontWeight: 600}}>Convidar para o Veeda</button></div> : activeData.contacts.map((c, i) => (
             <div key={i} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12}}>
               <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={44} />
