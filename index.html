@@ -2191,6 +2191,11 @@ function SplashScreen({onGoogle,onRecover,onGuide,loading,hasLocal,error}){
             Recuperar conta deste dispositivo
           </button>
         )}
+        {!hasLocal&&(
+          <button onClick={onRecover} style={{width:"100%",padding:"11px 0",background:"rgba(255,255,255,.55)",border:`1px solid ${C.purple}44`,borderRadius:50,cursor:"pointer",fontFamily:PASSO,fontSize:13,fontWeight:600,color:"#381653"}}>
+            Criar perfil local
+          </button>
+        )}
         <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:6}}>
           <button onClick={onGuide} style={{background:"none",border:"none",color:"#381653",fontSize:13,cursor:"pointer",fontFamily:PASSO}}>📱 Como instalar</button>
         </div>
@@ -2369,7 +2374,7 @@ function ScreenCreate({onDone,onBack,googleUser}){
   const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
 
   const finish=async()=>{
-    if(!confirmed){setErr("Confirme que salvou o código.");return;}
+    // if(!confirmed){setErr("Confirme que salvou o código.");return;} // Temporarily disabled for testing
     setLoading(true);
     try{
       const h="@"+(handle||sanitizeHandle(name)||sanitizeHandle(gEmail.split("@")[0]));
