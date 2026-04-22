@@ -10,7 +10,7 @@ const DATA_VERSION = 4;
 
 // ── Version History ───────────────────────────────────────
 const VERSION_HISTORY = [
-  { version: "2.0.1", date: "2026-04-22", changes: ["Correção crítica da timeline: momentos ordenados cronologicamente", "Melhoria no sistema de conexões: verificação de confirmação bidirecional"] },
+  { version: "2.0.1", date: "2026-04-22", changes: ["Correção crítica da timeline: momentos ordenados cronologicamente", "Melhoria no sistema de conexões: verificação de confirmação bidirecional", "Implementação de limites de contatos: máximo 5 para versão Beta"] },
   { version: "2.0.0", date: "2026-04-21", changes: ["Correção da ordenação da timeline (momentos antigos no topo)", "Melhorias no sistema de conexões bidirecionais", "Página de versões do aplicativo", "Limites de contatos para versão Beta (máximo 5)", "Interface aprimorada para criação de perfil local"] },
   { version: "1.9.1", date: "2026-04-21", changes: ["Sistema de conexão bidirecional com confirmação", "Melhorias na sincronização de perfis entre usuários"] },
   { version: "1.9.0", date: "2026-04-15", changes: ["Sistema de convites e compartilhamento", "Novo sistema de modais para adicionar contatos", "Aprimoramentos no sistema de backup"] },
