@@ -248,7 +248,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     moments.forEach(m => { const k = fmt(m.ts); if (!by[k]) by[k] = []; by[k].push(m); });
     const times = new Set(Object.keys(by));
     if (isToday) times.add(nowKey);
-    return Array.from(times).sort().map(t => ({time: t, moments: by[t] || [], isNow: isToday && t === nowKey}));
+    return Array.from(times).sort().map(t => ({time: t, moments: (by[t] || []).sort((a, b) => a.ts - b.ts), isNow: isToday && t === nowKey}));
   }, [moments, isToday, nowKey]);
 
   const dayColor = useMemo(() => DAY_COLORS.find(c => c.label === (activeData?.dayColors || {})[curDay]) || DAY_COLORS[0], [activeData, curDay]);
