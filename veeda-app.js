@@ -483,7 +483,9 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
           </div>
           {(!activeData.contacts || activeData.contacts.length === 0) ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>👥</div><p style={{fontSize: 14, color: C.textLight, marginBottom: 16}}>Nenhum contato ainda.</p><button onClick={() => setShowInviteApp(true)} style={{background: 'none', border: `1.5px solid ${C.purple}`, borderRadius: 20, padding: '9px 20px', color: C.purple, cursor: 'pointer', fontSize: 13, fontWeight: 600}}>Convidar para o Veeda</button></div> : activeData.contacts.map((c, i) => (
             <div key={i} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12}}>
-              <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={44} />
+              <div onClick={() => setViewProfile(c)} style={{cursor: 'pointer'}}>
+                <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={44} />
+              </div>
               <div style={{flex: 1}}><p style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.text}}>{c.name}</p><p style={{margin: 0, fontSize: 12, color: C.purple, fontWeight: 500}}>{c.handle}</p></div>
               <button onClick={() => { const nc = [...activeData.contacts]; nc.splice(i, 1); save({...data, contacts: nc}); }} style={{fontSize: 12, color: C.textLight, background: 'none', border: 'none', cursor: 'pointer', padding: '6px'}}>remover</button>
             </div>
