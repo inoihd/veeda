@@ -83,7 +83,7 @@ function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast,
     const success = saveConnectionRequest(profile, found.handle);
     
     if (success) {
-      addToast?.(`Convite enviado para ${found.name}! Aguarde a aceitação.`, 'success');
+      addToast?.(`Convite enviado para ${found.name}! ${found.name} receberá uma notificação e poderá aceitar para conectar seus perfis.`, 'success');
       setSending(false);
       onClose();
     } else {

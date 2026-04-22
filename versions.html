@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover"/>
+<meta name="theme-color" content="#9000FF"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Veeda"/>
+<meta name="description" content="Histórico de versões do Veeda"/>
+<title>Versões - Veeda</title>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   VEEDA VERSIONS PAGE STYLES
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  --primary: #9000FF;
+  --secondary: #22FCB7;
+  --bg: #FAF9FF;
+  --white: #FFFFFF;
+  --text: #2D1B69;
+  --text-light: #6B5B95;
+  --card-border: #E8E5F0;
+  --shadow: 0 4px 16px rgba(144, 0, 255, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  padding-bottom: 32px;
+}
+
+.header {
+  background: var(--white);
+  border-bottom: 1px solid var(--card-border);
+  padding: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--primary);
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.header p {
+  font-size: 14px;
+  color: var(--text-light);
+  text-align: center;
+}
+
+.container {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.version-card {
+  background: var(--white);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+
+.version-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.version-number {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.version-date {
+  font-size: 12px;
+  color: var(--text-light);
+  background: rgba(144, 0, 255, 0.1);
+  padding: 4px 8px;
+  border-radius: 12px;
+}
+
+.changes-list {
+  list-style: none;
+  padding: 0;
+}
+
+.changes-list li {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 8px;
+  padding-left: 16px;
+  position: relative;
+}
+
+.changes-list li:before {
+  content: "•";
+  color: var(--secondary);
+  font-weight: bold;
+  position: absolute;
+  left: 0;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--primary);
+  color: var(--white);
+  border: none;
+  border-radius: 50px;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  margin: 16px;
+  transition: all 0.2s ease;
+}
+
+.back-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(144, 0, 255, 0.3);
+}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🌿 Veeda</h1>
+  <p>Histórico de versões</p>
+</div>
+
+<div class="container">
+  <a href="index.html" class="back-button">
+    ← Voltar ao Veeda
+  </a>
+
+  <div class="version-card">
+    <div class="version-header">
+      <div class="version-number">Versão 2.0</div>
+      <div class="version-date">21 abr 2026</div>
+    </div>
+    <ul class="changes-list">
+      <li>Correção da ordenação da timeline (momentos antigos no topo)</li>
+      <li>Melhorias no sistema de conexões bidirecionais</li>
+      <li>Adição da página de versões do aplicativo</li>
+      <li>Limites de contatos para versão Beta (máximo 5)</li>
+      <li>Interface aprimorada para criação de perfil local</li>
+    </ul>
+  </div>
+
+  <div class="version-card">
+    <div class="version-header">
+      <div class="version-number">Versão 1.9</div>
+      <div class="version-date">20 abr 2026</div>
+    </div>
+    <ul class="changes-list">
+      <li>Sistema de convites e conexões bidirecionais</li>
+      <li>Compartilhamento de dias via link</li>
+      <li>Notificações de novos convites</li>
+      <li>Confirmação bidirecional de conexões</li>
+      <li>Melhorias na interface de compartilhamento</li>
+    </ul>
+  </div>
+
+  <div class="version-card">
+    <div class="version-header">
+      <div class="version-number">Versão 1.8</div>
+      <div class="version-date">15 abr 2026</div>
+    </div>
+    <ul class="changes-list">
+      <li>Funcionalidade de voz para momentos</li>
+      <li>Desenhos e arte na timeline</li>
+      <li>Música do Apple Music integrada</li>
+      <li>Sistema de lembretes e eventos</li>
+      <li>Backup na nuvem com Google Drive</li>
+    </ul>
+  </div>
+
+  <div class="version-card">
+    <div class="version-header">
+      <div class="version-number">Versão 1.7</div>
+      <div class="version-date">10 abr 2026</div>
+    </div>
+    <ul class="changes-list">
+      <li>Interface redesenhada com gradientes modernos</li>
+      <li>Emojis personalizados para perfis</li>
+      <li>Sistema de cores do dia</li>
+      <li>Animações suaves e transições</li>
+      <li>Responsividade aprimorada</li>
+    </ul>
+  </div>
+
+  <div class="version-card">
+    <div class="version-header">
+      <div class="version-number">Versão 1.6</div>
+      <div class="version-date">5 abr 2026</div>
+    </div>
+    <ul class="changes-list">
+      <li>Funcionalidade básica de momentos (texto, foto, link)</li>
+      <li>Timeline vertical com pontos de tempo</li>
+      <li>Perfis de usuário com avatar e emoji</li>
+      <li>Armazenamento local seguro</li>
+      <li>Interface PWA instalável</li>
+    </ul>
+  </div>
+
+  <div class="version-card">
+    <div class="version-header">
+      <div class="version-number">Versão 1.0</div>
+      <div class="version-date">1 abr 2026</div>
+    </div>
+    <ul class="changes-list">
+      <li>Lançamento inicial do Veeda</li>
+      <li>Conceito básico de diário compartilhado</li>
+      <li>Protótipo funcional</li>
+      <li>Interface básica</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+// Navegação suave de volta
+document.querySelector('.back-button').addEventListener('click', function(e) {
+  e.preventDefault();
+  if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    window.location.href = 'index.html';
+  }
+});
+</script>
+</body>
+</html>

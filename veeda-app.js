@@ -235,7 +235,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
 
   const moments = useMemo(() => {
     if (!activeData) return [];
-    return ((activeData.moments || {})[curDay] || []).slice().sort((a, b) => b.ts - a.ts);
+    return ((activeData.moments || {})[curDay] || []).slice().sort((a, b) => a.ts - b.ts);
   }, [activeData, curDay]);
 
   const upcoming = useMemo(() => {
