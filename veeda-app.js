@@ -45,6 +45,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   const [showConnectionRequests, setShowConnectionRequests] = useState(false);
   const [pendingSharedDay, setPendingSharedDay] = useState(null);
   const [showAcceptSharedDay, setShowAcceptSharedDay] = useState(false);
+  const [timelineView, setTimelineView] = useState('vertical'); // 'vertical' or 'horizontal'
 
   const sessionKey = useRef(null);
   const sessionSalt = useRef(null);
@@ -445,7 +446,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
               <button onClick={() => setDayOffset(o => Math.max(0, o - 1))} style={{background: 'none', border: 'none', fontSize: 24, color: dayOffset === 0 ? 'transparent' : C.textMid, cursor: dayOffset === 0 ? 'default' : 'pointer', padding: '4px 12px', pointerEvents: dayOffset === 0 ? 'none' : 'auto', fontFamily: PASSO}}>›</button>
             </div>
             <div style={{display: 'flex', gap: 6, padding: '6px 16px 10px', justifyContent: 'center', flexWrap: 'wrap'}}>
-              {[['🎨 cor', () => setShowEditDay(true), ''], ['', () => setShowFeeling(true), feeling ? `${feeling.emoji} ${feeling.label}` : '😊 sentimento'], ['🔔', () => setShowReminders(true), ''], ['📅', () => setShowEvents(true), upcoming.length > 0 ? `📅 (${upcoming.length})` : '📅']].map(([icon, action, label], i) => (
+              {[['🎨 cor', () => setShowEditDay(true), ''], ['', () => setShowFeeling(true), feeling ? `${feeling.emoji} ${feeling.label}` : '😊 sentimento'], ['🔔', () => setShowReminders(true), ''], ['📅', () => setShowEvents(true), upcoming.length > 0 ? `📅 (${upcoming.length})` : '📅'], [timelineView === 'vertical' ? '⬌' : '⬍', () => setTimelineView(timelineView === 'vertical' ? 'horizontal' : 'vertical'), timelineView === 'vertical' ? 'carrossel' : 'linha']].map(([icon, action, label], i) => (
                 <button key={i} onClick={action} style={{fontSize: 12, padding: '4px 12px', background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 20, color: C.textMid, cursor: 'pointer', fontFamily: SANS}}>{label || icon}</button>
               ))}
             </div>
@@ -453,25 +454,55 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             {isToday && upcoming[0] && <div style={{margin: '0 16px 10px', background: C.amberLight, border: `1px solid ${C.amber}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10}}><span style={{fontSize: 18}}>{EVENT_TYPES.find(t => t.id === upcoming[0].type)?.emoji || '📅'}</span><div><p style={{margin: 0, fontSize: 13, fontWeight: 600, color: C.amber}}>{upcoming[0].title}</p><p style={{margin: 0, fontSize: 11, color: C.textMid}}>{fmtLabel(upcoming[0].date)}{upcoming[0].time ? ` às ${upcoming[0].time}` : ''}</p></div></div>}
 
             <div style={{position: 'relative', padding: '16px 0 24px'}}>
-              {slots.length > 0 && <div style={{position: 'absolute', left: '50%', top: 0, bottom: 0, width: 3, borderRadius: 3, background: `linear-gradient(to bottom,${dayColor.dot}44,${dayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`, transform: 'translateX(-50%)', zIndex: 0}} />}
-              {slots.length === 0 && <div style={{textAlign: 'center', padding: '3rem 1.5rem'}}><div style={{fontSize: 48, marginBottom: 12}}>🌿</div><p style={{fontSize: 14, color: C.textLight, margin: 0}}>{isToday ? 'Registre o primeiro momento do seu dia.' : 'Nenhum momento registrado neste dia.'}</p></div>}
-              {slots.map((slot, i) => {
-                const isLeft = i % 2 === 0;
-                return (
-                  <div key={slot.time} style={{position: 'relative', display: 'flex', alignItems: 'flex-start', marginBottom: 30, zIndex: 1}}>
-                    <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', paddingRight: 20, paddingLeft: 10, gap: 6}}>
-                      {isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', textAlign: 'right', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
-                    </div>
-                    <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, zIndex: 2}}>
-                      {slot.isNow ? <PulsingDot onClick={() => setShowModal(true)} color={dayColor.dot} /> : <div style={{width: 12, height: 12, borderRadius: '50%', background: dayColor.dot, border: `2.5px solid ${C.white}`, boxShadow: '0 1px 4px rgba(0,0,0,.1)'}} />}
-                      <span style={{fontSize: 9, color: C.textLight, marginTop: 3, whiteSpace: 'nowrap'}}>{slot.time}</span>
-                    </div>
-                    <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', paddingLeft: 20, paddingRight: 10, gap: 6}}>
-                      {!isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
-                    </div>
+              {timelineView === 'vertical' ? (
+                <>
+                  {slots.length > 0 && <div style={{position: 'absolute', left: '50%', top: 0, bottom: 0, width: 3, borderRadius: 3, background: `linear-gradient(to bottom,${dayColor.dot}44,${dayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`, transform: 'translateX(-50%)', zIndex: 0}} />}
+                  {slots.length === 0 && <div style={{textAlign: 'center', padding: '3rem 1.5rem'}}><div style={{fontSize: 48, marginBottom: 12}}>🌿</div><p style={{fontSize: 14, color: C.textLight, margin: 0}}>{isToday ? 'Registre o primeiro momento do seu dia.' : 'Nenhum momento registrado neste dia.'}</p></div>}
+                  {slots.map((slot, i) => {
+                    const isLeft = i % 2 === 0;
+                    return (
+                      <div key={slot.time} style={{position: 'relative', display: 'flex', alignItems: 'flex-start', marginBottom: 30, zIndex: 1}}>
+                        <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', paddingRight: 20, paddingLeft: 10, gap: 6}}>
+                          {isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', textAlign: 'right', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
+                        </div>
+                        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, zIndex: 2}}>
+                          {slot.isNow ? <PulsingDot onClick={() => setShowModal(true)} color={dayColor.dot} /> : <div style={{width: 12, height: 12, borderRadius: '50%', background: dayColor.dot, border: `2.5px solid ${C.white}`, boxShadow: '0 1px 4px rgba(0,0,0,.1)'}} />}
+                          <span style={{fontSize: 9, color: C.textLight, marginTop: 3, whiteSpace: 'nowrap'}}>{slot.time}</span>
+                        </div>
+                        <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', paddingLeft: 20, paddingRight: 10, gap: 6}}>
+                          {!isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              ) : (
+                <>
+                  {slots.length === 0 && <div style={{textAlign: 'center', padding: '3rem 1.5rem'}}><div style={{fontSize: 48, marginBottom: 12}}>🌿</div><p style={{fontSize: 14, color: C.textLight, margin: 0}}>{isToday ? 'Registre o primeiro momento do seu dia.' : 'Nenhum momento registrado neste dia.'}</p></div>}
+                  <div style={{display: 'flex', overflowX: 'auto', padding: '0 16px', gap: 16, scrollSnapType: 'x mandatory'}}>
+                    {slots.map((slot, i) => (
+                      <div key={slot.time} style={{flexShrink: 0, width: 120, scrollSnapAlign: 'start'}}>
+                        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 12}}>
+                          {slot.isNow ? <PulsingDot onClick={() => setShowModal(true)} color={dayColor.dot} /> : <div style={{width: 12, height: 12, borderRadius: '50%', background: dayColor.dot, border: `2.5px solid ${C.white}`, boxShadow: '0 1px 4px rgba(0,0,0,.1)'}} />}
+                          <span style={{fontSize: 10, color: C.textLight, marginTop: 4, textAlign: 'center'}}>{slot.time}</span>
+                        </div>
+                        <div style={{display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center'}}>
+                          {slot.isNow ? (
+                            <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 16, padding: '8px 12px', fontSize: 11, color: C.purple, cursor: 'pointer', fontWeight: 600, textAlign: 'center', width: '100%'}}>registrar<br/>acontecimento</button>
+                          ) : (
+                            slot.moments.map(m => (
+                              <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null} style={{width: '100%'}}>
+                                <MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} />
+                                <span style={{display: 'block', textAlign: 'center', fontSize: 9, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                );
-              })}
+                </>
+              )}
             </div>
           </div>
         )}
