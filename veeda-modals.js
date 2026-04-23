@@ -368,6 +368,7 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [shareType, setShareType] = useState('contacts'); // 'contacts', 'specific', 'public'
   const contacts = data.contacts || [];
   const moments = (data.moments || {})[curDay] || [];
   const already = (data.sharedLog || {})[curDay] || [];
@@ -379,8 +380,8 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
   const sharedLink = sharedCode ? `${window.location.origin}${window.location.pathname}?day=${encodeURIComponent(sharedCode)}` : null;
   const copyShareLink = () => { if (sharedLink) { navigator.clipboard?.writeText(sharedLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2500); } };
 
-  const doShare = async () => {
-    if (!sel.length) return;
+  const doShare = async (targetHandles = sel) => {
+    if (!targetHandles.length) return;
     setLoading(true);
     
     const payload = {
@@ -398,21 +399,20 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
     
     let sharedCount = 0;
     
-    sel.forEach(contactHandle => {
-      const cleanHandle = contactHandle.replace(/^@/, '');
+    targetHandles.forEach(contactHandle => {
+      const cleanHandle = (contactHandle || '').replace(/^@/, '');
+      if (!cleanHandle) return;
       const inboxKey = `veeda_inbox_${cleanHandle}`;
-      const inbox = safeLS.get(inboxKey, null);
+      const inbox = safeLS.get(inboxKey, []);
       
-      if (inbox !== null) {
-        inbox.push(payload);
-        safeLS.set(inboxKey, inbox);
-        sharedCount++;
-      }
+      inbox.push(payload);
+      safeLS.set(inboxKey, inbox);
+      sharedCount++;
     });
     
     if (sharedCount > 0) {
       showNativeNotif('Veeda', `${profile.name} compartilhou o dia com você! 🌿`);
-      await onShared({ ...(data.sharedLog || {}), [curDay]: [...already, ...sel] });
+      await onShared({ ...(data.sharedLog || {}), [curDay]: [...already, ...targetHandles] });
       addToast?.(`Dia compartilhado com ${sharedCount} pessoa(s)! 🌿`, 'success');
       setDone(true);
     } else {
@@ -429,30 +429,117 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
       {moments.length === 0 ? <p style={{ fontSize: 14, color: C.textMid, textAlign: 'center', padding: '20px 0' }}>Nenhum momento registrado hoje ainda.</p> : (
         <>
           <p style={{ fontSize: 13, color: C.textMid, marginBottom: 12 }}>{moments.length} momento{moments.length !== 1 ? "s" : ""} · {fmtFull(curDay)}</p>
+          
+          {/* Seletor de privacidade */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Quem pode ver?</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {[
+                ['contacts', '👥 Todos do meu círculo', 'Compartilhar com todos os seus contatos conectados'],
+                ['specific', '🎯 Contatos específicos', 'Escolher quem vai receber'],
+                ['public', '🌐 Público (link)', 'Qualquer pessoa com o link pode ver']
+              ].map(([type, label, desc]) => (
+                <button
+                  key={type}
+                  onClick={() => setShareType(type)}
+                  style={{
+                    flex: 1,
+                    minWidth: '120px',
+                    padding: '10px 12px',
+                    background: shareType === type ? C.purple : C.white,
+                    border: `2px solid ${shareType === type ? C.purple : C.cardBorder}`,
+                    borderRadius: 12,
+                    color: shareType === type ? C.white : C.text,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    textAlign: 'center',
+                    lineHeight: 1.3
+                  }}
+                  title={desc}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
-            {[['local', '👥 Meu Círculo'], ['link', '🔗 Via link']].map(([k, l]) => (
+            {[['local', '👥 Compartilhar'], ['link', '🔗 Gerar link']].map(([k, l]) => (
               <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '9px 0', background: tab === k ? C.purple : C.purpleLight, color: tab === k ? C.white : C.purple, border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>{l}</button>
             ))}
           </div>
 
           {tab === 'local' && (
             <>
-              {available.length === 0 ? (
-                <div style={{ background: C.amberLight, borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
-                  <p style={{ fontSize: 13, color: '#7A5800', margin: 0 }}>Você já compartilhou hoje com todos os seus contatos. Use "Via link" para compartilhar com alguém de outro dispositivo.</p>
-                </div>
-              ) : available.map(c => (
-                <button key={c.code} onClick={() => toggle(c.code)} style={{ width: '100%', background: sel.includes(c.code) ? C.purpleLight : C.white, border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, borderRadius: 14, padding: '12px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left' }}>
-                  <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={38} />
-                  <span style={{ fontSize: 14, fontWeight: 500, color: C.text, flex: 1 }}>{c.name}</span>
-                  <div style={{ width: 22, height: 22, borderRadius: '50%', border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, background: sel.includes(c.code) ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#fff' }}>{sel.includes(c.code) ? '✓' : ''}</div>
-                </button>
-              ))}
-              <div style={{ marginTop: 12, marginBottom: 14 }}>
-                <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
-                <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
-              </div>
-              <Btn onClick={doShare} disabled={loading || !sel.length}>{loading ? <><Spinner size={16} color="#fff" />Compartilhando…</> : "Compartilhar linha do tempo"}</Btn>
+              {shareType === 'contacts' && (
+                <>
+                  <div style={{ background: C.greenLight, borderRadius: 14, padding: 12, marginBottom: 14, border: `1px solid ${C.green}33` }}>
+                    <p style={{ margin: 0, fontSize: 12, color: C.green, fontWeight: 600 }}>👥 Compartilhar com todos os contatos</p>
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: C.textMid }}>Todos os {contacts.length} contatos conectados receberão este dia.</p>
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
+                    <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
+                  </div>
+                  <Btn onClick={() => doShare(contacts.map(c => c.code))} disabled={loading || contacts.length === 0}>
+                    {loading ? <><Spinner size={16} color="#fff" />Compartilhando…</> : `Compartilhar com ${contacts.length} contato${contacts.length !== 1 ? 's' : ''}`}
+                  </Btn>
+                </>
+              )}
+
+              {shareType === 'specific' && (
+                <>
+                  <div style={{ background: C.blueLight, borderRadius: 14, padding: 12, marginBottom: 14, border: `1px solid ${C.blue}33` }}>
+                    <p style={{ margin: 0, fontSize: 12, color: C.blue, fontWeight: 600 }}>🎯 Escolher contatos específicos</p>
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: C.textMid }}>Selecione quem vai receber este dia.</p>
+                  </div>
+                  {available.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                      <p style={{ fontSize: 14, color: C.textMid, marginBottom: 8 }}>Todos os seus contatos já receberam este dia hoje.</p>
+                      <p style={{ fontSize: 12, color: C.textLight }}>Volte amanhã para compartilhar novamente! 🌿</p>
+                    </div>
+                  ) : (
+                    <>
+                      {available.map(c => (
+                        <button key={c.code} onClick={() => toggle(c.code)} style={{ width: '100%', background: sel.includes(c.code) ? C.purpleLight : C.white, border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, borderRadius: 14, padding: '12px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left' }}>
+                          <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={38} />
+                          <span style={{ fontSize: 14, fontWeight: 500, color: C.text, flex: 1 }}>{c.name}</span>
+                          <div style={{ width: 22, height: 22, borderRadius: '50%', border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, background: sel.includes(c.code) ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#fff' }}>{sel.includes(c.code) ? '✓' : ''}</div>
+                        </button>
+                      ))}
+                      <div style={{ marginTop: 12, marginBottom: 14 }}>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
+                        <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
+                      </div>
+                      <Btn onClick={doShare} disabled={loading || !sel.length}>{loading ? <><Spinner size={16} color="#fff" />Compartilhando…</> : "Compartilhar linha do tempo"}</Btn>
+                    </>
+                  )}
+                </>
+              )}
+
+              {shareType === 'public' && (
+                <>
+                  <div style={{ background: C.amberLight, borderRadius: 14, padding: 12, marginBottom: 14, border: `1px solid ${C.amber}33` }}>
+                    <p style={{ margin: 0, fontSize: 12, color: C.amber, fontWeight: 600 }}>🌐 Compartilhamento público</p>
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: C.textMid }}>Qualquer pessoa com o link pode ver este dia.</p>
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
+                    <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
+                  </div>
+                  {sharedLink && (
+                    <div style={{ background: C.greenLight, borderRadius: 14, padding: 12, marginBottom: 12, border: `1px solid ${C.green}33` }}>
+                      <p style={{ margin: '0 0 4px', fontSize: 10, fontWeight: 600, color: C.green, textTransform: 'uppercase', letterSpacing: '1px' }}>🔗 Link gerado</p>
+                      <p style={{ margin: 0, fontSize: 11, color: C.textMid, wordBreak: 'break-all', lineHeight: 1.5 }}>{sharedLink.slice(0, 80)}…</p>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <Btn onClick={copyShareLink} variant={linkCopied ? "green" : "primary"} style={{ flex: 1, fontSize: 13, padding: '11px 0' }}>{linkCopied ? "✓ Copiado!" : "Copiar link"}</Btn>
+                    {navigator.share && sharedLink && <button onClick={() => navigator.share({ title: "Meu dia no Veeda 🌿", text: `${profile.name} quer compartilhar o dia ${fmtFull(curDay)} com você no Veeda 🌿\n\n${sharedLink}` }).catch(() => {})} style={{ flex: 1, padding: '11px 0', background: C.white, color: C.purple, border: `1.5px solid ${C.purple}`, borderRadius: 50, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Compartilhar ↑</button>}
+                  </div>
+                </>
+              )}
             </>
           )}
 
@@ -831,8 +918,10 @@ function VersionsModal({onClose}) {
 function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays, onClose, addToast}) {
   // Verificar se o perfil visualizado está no círculo de contatos
   const isInCircle = contacts.some(c => c.handle === viewedProfile.handle || c.id === viewedProfile.id);
+  const hasReceivedFromThisProfile = receivedDays.some(d => d.handle === viewedProfile.handle);
+  const canViewProfile = isInCircle || hasReceivedFromThisProfile;
 
-  if (!isInCircle) {
+  if (!canViewProfile) {
     return (
       <Modal title="Perfil Privado" onClose={onClose}>
         <div style={{textAlign: 'center', padding: '40px 20px'}}>
@@ -1023,179 +1112,3 @@ function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// PROFILE MODAL — Perfil detalhado de contato
-// ═══════════════════════════════════════════════════════════
-function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays, onClose, addToast}) {
-  // Calcular estatísticas do perfil
-  const totalDaysShared = receivedDays.filter(d => d.handle === viewedProfile.handle).length;
-  const totalMoments = receivedDays
-    .filter(d => d.handle === viewedProfile.handle)
-    .reduce((sum, d) => sum + (d.moments?.length || 0), 0);
-
-  const lastSharedDate = receivedDays
-    .filter(d => d.handle === viewedProfile.handle)
-    .sort((a, b) => new Date(b.date) - new Date(a.date))[0]?.date;
-
-  return (
-    <Modal title={`Perfil de ${viewedProfile.name}`} onClose={onClose} fullHeight>
-      <div style={{paddingBottom: '20px'}}>
-        {/* Header do perfil */}
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          padding: '20px 0',
-          borderBottom: `1px solid ${C.headerBorder}`,
-          marginBottom: '24px'
-        }}>
-          <AvatarBubble
-            src={viewedProfile.avatarSrc}
-            emoji={viewedProfile.emoji || '🌿'}
-            color={viewedProfile.avatarColor || C.purpleLight}
-            size={80}
-            ring
-          />
-          <h2 style={{
-            margin: '16px 0 4px',
-            fontSize: '20px',
-            fontWeight: '700',
-            color: C.text,
-            fontFamily: PASSO,
-            textAlign: 'center'
-          }}>
-            {viewedProfile.name}
-          </h2>
-          <p style={{
-            margin: 0,
-            fontSize: '14px',
-            color: C.purple,
-            fontWeight: '500'
-          }}>
-            @{viewedProfile.handle || nameToHandle(viewedProfile.name)}
-          </p>
-        </div>
-
-        {/* Estatísticas */}
-        <div style={{marginBottom: '24px'}}>
-          <h3 style={{
-            margin: '0 0 16px',
-            fontSize: '16px',
-            fontWeight: '600',
-            color: C.text,
-            fontFamily: PASSO
-          }}>
-            Estatísticas
-          </h3>
-          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px'}}>
-            <Card style={{textAlign: 'center', padding: '16px'}}>
-              <div style={{fontSize: '24px', marginBottom: '4px'}}>📅</div>
-              <div style={{fontSize: '18px', fontWeight: '700', color: C.purple}}>{totalDaysShared}</div>
-              <div style={{fontSize: '12px', color: C.textMid}}>Dias compartilhados</div>
-            </Card>
-            <Card style={{textAlign: 'center', padding: '16px'}}>
-              <div style={{fontSize: '24px', marginBottom: '4px'}}>💭</div>
-              <div style={{fontSize: '18px', fontWeight: '700', color: C.purple}}>{totalMoments}</div>
-              <div style={{fontSize: '12px', color: C.textMid}}>Momentos registrados</div>
-            </Card>
-          </div>
-        </div>
-
-        {/* Última atividade */}
-        {lastSharedDate && (
-          <div style={{marginBottom: '24px'}}>
-            <h3 style={{
-              margin: '0 0 12px',
-              fontSize: '16px',
-              fontWeight: '600',
-              color: C.text,
-              fontFamily: PASSO
-            }}>
-              Última atividade
-            </h3>
-            <Card style={{padding: '16px'}}>
-              <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                <div style={{fontSize: '20px'}}>🌱</div>
-                <div>
-                  <p style={{margin: 0, fontSize: '14px', fontWeight: '500', color: C.text}}>
-                    Compartilhou um dia
-                  </p>
-                  <p style={{margin: '2px 0 0', fontSize: '12px', color: C.textMid}}>
-                    {fmtFull(lastSharedDate)}
-                  </p>
-                </div>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* Dias compartilhados recentes */}
-        {totalDaysShared > 0 && (
-          <div style={{marginBottom: '24px'}}>
-            <h3 style={{
-              margin: '0 0 12px',
-              fontSize: '16px',
-              fontWeight: '600',
-              color: C.text,
-              fontFamily: PASSO
-            }}>
-              Dias compartilhados
-            </h3>
-            <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-              {receivedDays
-                .filter(d => d.handle === viewedProfile.handle)
-                .sort((a, b) => new Date(b.date) - new Date(a.date))
-                .slice(0, 5)
-                .map((day, index) => (
-                  <Card key={index} style={{padding: '12px'}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                      <AvatarBubble
-                        emoji={day.emoji || '🌿'}
-                        color={day.avatarColor || C.purpleLight}
-                        size={32}
-                      />
-                      <div style={{flex: 1}}>
-                        <p style={{margin: 0, fontSize: '14px', fontWeight: '500', color: C.text}}>
-                          {fmtLabel(day.date)}
-                        </p>
-                        <p style={{margin: '2px 0 0', fontSize: '12px', color: C.textMid}}>
-                          {day.moments?.length || 0} momento{day.moments?.length !== 1 ? 's' : ''}
-                          {day.feeling && ` · ${day.feeling.emoji}`}
-                        </p>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-            </div>
-          </div>
-        )}
-
-        {/* Ações */}
-        <div style={{
-          paddingTop: '20px',
-          borderTop: `1px solid ${C.headerBorder}`,
-          display: 'flex',
-          gap: '12px'
-        }}>
-          <Btn
-            variant="outline"
-            style={{flex: 1}}
-            onClick={() => {
-              // Implementar compartilhamento do perfil
-              addToast?.('Funcionalidade em breve! 🌱', 'info');
-            }}
-          >
-            Compartilhar perfil
-          </Btn>
-          <Btn
-            variant="ghost"
-            style={{flex: 1}}
-            onClick={onClose}
-          >
-            Fechar
-          </Btn>
-        </div>
-      </div>
-    </Modal>
-  );
-}
