@@ -430,11 +430,15 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
           {feeling && <div style={{display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, background: C.purpleLight, borderRadius: 20, padding: '3px 12px'}}><span style={{fontSize: 13}}>{feeling.emoji}</span><span style={{fontSize: 11, color: C.tabActive, fontWeight: 500}}>{feeling.label}</span></div>}
           {view === 'hoje' && <span style={{fontSize: 11, color: C.textLight, marginTop: 4}}>toque para editar perfil</span>}
         </div>
-        <div style={{display: 'flex', padding: '0 4px', overflowX: 'auto'}}>
-          {[['hoje', 'Hoje'], ['grupo', group], ['recebidos', unreadCount > 0 ? `Recebidos (${unreadCount})` : 'Recebidos']].map(([v, l]) => (
-            <button key={v} onClick={() => { setView(v); if (v === 'recebidos') setUnreadCount(0); }} style={{padding: '10px 14px', fontSize: 13, fontWeight: view === v ? 600 : 400, background: 'none', border: 'none', borderBottom: `2.5px solid ${view === v ? C.tabActive : 'transparent'}`, color: view === v ? C.tabActive : C.textMid, cursor: 'pointer', whiteSpace: 'nowrap'}}>{l}</button>
-          ))}
-        </div>
+        <TabBar
+          options={[
+            {key: 'hoje', label: 'Hoje'},
+            {key: 'grupo', label: group},
+            {key: 'recebidos', label: unreadCount > 0 ? `Recebidos (${unreadCount})` : 'Recebidos'}
+          ]}
+          value={view}
+          onChange={v => { setView(v); if (v === 'recebidos') setUnreadCount(0); }}
+        />
       </div>
 
       <div style={{paddingBottom: 120}}>
@@ -517,49 +521,44 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             <p style={{margin: '4px 0 0', fontSize: 11, color: C.textMid}}>Atualmente: {(activeData.contacts || []).length} de {MAX_CONTACTS_BETA}</p>
           </div>
           {(!activeData.contacts || activeData.contacts.length === 0) ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>👥</div><p style={{fontSize: 14, color: C.textLight, marginBottom: 16}}>Nenhum contato ainda.</p><button onClick={() => setShowInviteApp(true)} style={{background: 'none', border: `1.5px solid ${C.purple}`, borderRadius: 20, padding: '9px 20px', color: C.purple, cursor: 'pointer', fontSize: 13, fontWeight: 600}}>Convidar para o Veeda</button></div> : getContactsStatus(activeData.contacts || []).map((c, i) => (
-            <div key={i} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12}}>
-              <div onClick={() => setViewProfile(c)} style={{cursor: 'pointer', position: 'relative'}}>
-                <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={44} />
-                <div style={{position: 'absolute', bottom: -2, right: -2, width: 12, height: 12, borderRadius: '50%', background: c.status.isOnline ? C.green : C.textLight, border: `2px solid ${C.white}`}} />
-              </div>
-              <div style={{flex: 1}}>
-                <p style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.text}}>{c.name}</p>
-                <p style={{margin: 0, fontSize: 12, color: C.purple, fontWeight: 500}}>{c.handle}</p>
-                <p style={{margin: '2px 0 0', fontSize: 10, color: c.status.isOnline ? C.green : C.textLight}}>
-                  {c.status.isOnline ? '● Online' : '● Offline'}
-                </p>
-              </div>
-              <button onClick={() => { const nc = [...activeData.contacts]; nc.splice(i, 1); save({...data, contacts: nc}); }} style={{fontSize: 12, color: C.textLight, background: 'none', border: 'none', cursor: 'pointer', padding: '6px'}}>remover</button>
-            </div>
+            <ProfileCard
+              key={i}
+              profile={c}
+              status={c.status}
+              onClick={() => setViewProfile(c)}
+              onRemove={() => { const nc = [...activeData.contacts]; nc.splice(i, 1); save({...data, contacts: nc}); }}
+            />
           ))}
         </div>}
 
         {view === 'recebidos' && !viewRec && <div style={{padding: '20px 16px'}}>
-          <p style={{fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16, fontFamily: PASSO}}>Dias recebidos</p>
+          <SectionTitle style={{marginBottom: 16}}>Dias recebidos</SectionTitle>
           {(activeData.received || []).length === 0 ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>💌</div><p style={{fontSize: 14, color: C.textLight}}>Nenhum Dia de Veeda recebido ainda.</p></div> : (activeData.received || []).slice().sort((a, b) => b.importedAt - a.importedAt).map((r, i) => (
-            <div key={i} onClick={() => setViewRec(r)} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12}}>
-              <AvatarBubble src={r.avatarSrc} emoji={r.emoji || '🌿'} color={r.avatarColor || C.purpleLight} size={44} ring />
-              <div style={{flex: 1}}>
-                <p
-                  style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.purple, cursor: 'pointer'}}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setViewProfile({
-                      name: r.author,
-                      handle: r.handle,
-                      emoji: r.emoji,
-                      avatarColor: r.avatarColor,
-                      avatarSrc: r.avatarSrc,
-                      id: r.authorId
-                    });
-                  }}
-                >
-                  {r.author}
-                </p>
-                <p style={{margin: 0, fontSize: 12, color: C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length !== 1 ? 's' : ''}{r.feeling ? ` · ${r.feeling.emoji}` : ''}</p>
+            <Card key={i} onClick={() => setViewRec(r)} style={{marginBottom: 10}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: 12}}>
+                <AvatarBubble src={r.avatarSrc} emoji={r.emoji || '🌿'} color={r.avatarColor || C.purpleLight} size={44} ring />
+                <div style={{flex: 1}}>
+                  <p
+                    style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.purple, cursor: 'pointer'}}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setViewProfile({
+                        name: r.author,
+                        handle: r.handle,
+                        emoji: r.emoji,
+                        avatarColor: r.avatarColor,
+                        avatarSrc: r.avatarSrc,
+                        id: r.authorId
+                      });
+                    }}
+                  >
+                    {r.author}
+                  </p>
+                  <p style={{margin: 0, fontSize: 12, color: C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length !== 1 ? 's' : ''}{r.feeling ? ` · ${r.feeling.emoji}` : ''}</p>
+                </div>
+                <span style={{color: C.textLight, fontSize: 22}}>›</span>
               </div>
-              <span style={{color: C.textLight, fontSize: 22}}>›</span>
-            </div>
+            </Card>
           ))}
         </div>}
 

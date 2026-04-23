@@ -426,3 +426,63 @@ function Card({children,style={},onClick}){
     </div>
   );
 }
+
+function SectionTitle({children, style={}}){
+  return (
+    <p style={{
+      margin: 0,
+      fontSize: 16,
+      fontWeight: 700,
+      color: C.text,
+      fontFamily: PASSO,
+      lineHeight: 1.35,
+      ...style
+    }}>
+      {children}
+    </p>
+  );
+}
+
+function TabBar({options,value,onChange}){
+  return (
+    <div style={{display:'flex',gap:8,padding:'0 4px',overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+      {options.map(({key,label})=> (
+        <button key={key} onClick={() => onChange(key)} style={{
+          padding: '10px 14px',
+          fontSize: 13,
+          fontWeight: value === key ? 600 : 400,
+          background: 'none',
+          border: 'none',
+          borderBottom: `2.5px solid ${value === key ? C.tabActive : 'transparent'}`,
+          color: value === key ? C.tabActive : C.textMid,
+          cursor: 'pointer',
+          whiteSpace: 'nowrap'
+        }}>{label}</button>
+      ))}
+    </div>
+  );
+}
+
+function ProfileCard({profile,onClick,onRemove,status}){
+  const online = status?.isOnline;
+  return (
+    <Card onClick={onClick} style={{display:'flex',alignItems:'center',gap:12,padding:14,marginBottom:10}}>
+      <div style={{position:'relative'}}>
+        <AvatarBubble src={profile.avatarSrc} emoji={profile.emoji||'🌿'} color={profile.avatarColor||C.purpleLight} size={44} />
+        {status && <div style={{position:'absolute',bottom:-2,right:-2,width:12,height:12,borderRadius:'50%',background:online?C.green:C.textLight,border:`2px solid ${C.white}`}} />}
+      </div>
+      <div style={{flex:1}}>
+        <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{profile.name}</p>
+        <p style={{margin:'2px 0 0',fontSize:12,color:C.purple,fontWeight:500}}>{profile.handle}</p>
+        {status && <p style={{margin:'4px 0 0',fontSize:10,color:online?C.green:C.textLight}}>{online?'Online':'Offline'}</p>}
+      </div>
+      {onRemove && <button onClick={e => { e.stopPropagation(); onRemove(); }} style={{fontSize:12,color:C.textLight,background:'none',border:'none',cursor:'pointer',padding:'6px'}}>remover</button>}
+    </Card>
+  );
+}
+
+function InfoBadge({children, style={}}){
+  return (
+    <span style={{display:'inline-flex',alignItems:'center',gap:6,background:C.purpleLight,color:C.tabActive,fontSize:11,fontWeight:600,padding:'4px 10px',borderRadius:20,...style}}>{children}</span>
+  );
+}
