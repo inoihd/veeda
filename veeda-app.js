@@ -582,69 +582,13 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
               ))}
             </div>
             
-            {/* Comentários do dia compartilhado */}
-            {(() => {
-              const dayId = `${viewRec.handle}_${viewRec.date}`;
-              const comments = (data.comments || {})[dayId] || [];
-              const [showCommentInput, setShowCommentInput] = useState(false);
-              const [commentText, setCommentText] = useState('');
-              
-              const addComment = () => {
-                if (!commentText.trim()) return;
-                const newComment = {
-                  id: Date.now(),
-                  from: profile.name,
-                  fromHandle: profile.handle,
-                  fromEmoji: profile.emoji,
-                  type: 'texto',
-                  content: commentText.trim(),
-                  ts: Date.now()
-                };
-                const updated = {...data, comments: {...(data.comments || {}), [dayId]: [...comments, newComment]}};
-                save(updated);
-                setCommentText('');
-                setShowCommentInput(false);
-                addToast?.('Comentário adicionado! 💬', 'success');
-              };
-              
-              return (
-                <div style={{marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.headerBorder}`}}>
-                  <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12}}>
-                    <h3 style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: PASSO}}>💬 Comentários ({comments.length})</h3>
-                    <button onClick={() => setShowCommentInput(!showCommentInput)} style={{fontSize: 12, color: C.purple, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px'}}>{showCommentInput ? 'Cancelar' : '+ Comentar'}</button>
-                  </div>
-                  
-                  {showCommentInput && (
-                    <div style={{marginBottom: 12}}>
-                      <textarea 
-                        value={commentText} 
-                        onChange={e => setCommentText(e.target.value)} 
-                        placeholder="Deixe um comentário sobre este dia…" 
-                        style={{width: '100%', minHeight: 60, borderRadius: 12, padding: '10px 12px', border: `1px solid ${C.cardBorder}`, fontSize: 13, marginBottom: 8, boxSizing: 'border-box', fontFamily: 'inherit'}} 
-                      />
-                      <div style={{display: 'flex', gap: 8}}>
-                        <button onClick={addComment} style={{flex: 1, padding: '8px 0', background: C.purple, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600}}>Comentar ✏️</button>
-                        <button onClick={() => setShowCommentInput(false)} style={{flex: 1, padding: '8px 0', background: C.white, color: C.textMid, border: `1px solid ${C.cardBorder}`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600}}>Cancelar</button>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {comments.map(c => (
-                    <div key={c.id} style={{background: C.white, borderRadius: 12, padding: '10px 12px', marginBottom: 8, border: `1px solid ${C.cardBorder}`}}>
-                      <div style={{display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6}}>
-                        <div style={{fontSize: 16}}>{c.fromEmoji || '🌿'}</div>
-                        <div style={{flex: 1}}>
-                          <p style={{margin: 0, fontSize: 12, fontWeight: 600, color: C.text}}>{c.from}</p>
-                          <p style={{margin: 0, fontSize: 11, color: C.textLight}}>{new Date(c.ts).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</p>
-                        </div>
-                      </div>
-                      {c.type === 'texto' && <p style={{margin: 0, fontSize: 13, color: C.text, lineHeight: 1.4}}>{c.content}</p>}
-                      {c.type === 'voz' && <p style={{fontSize: 12, color: C.purple, fontWeight: 500}}>🎙️ Comentário de voz</p>}
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
+            <ReceivedDayComments
+              dayId={`${viewRec.handle}_${viewRec.date}`}
+              comments={(data.comments || {})[`${viewRec.handle}_${viewRec.date}`] || []}
+              profile={profile}
+              onSaveComment={(dayId, comment) => save({...data, comments: {...(data.comments || {}), [dayId]: [...((data.comments || {})[dayId] || []), comment]}})}
+              addToast={addToast}
+            />
           </div>
         )}
       </div>
@@ -929,7 +873,67 @@ function Veeda() {
   return (<>{showGuide && <InstallGuide onClose={() => setShowGuide(false)} />}<SplashScreen onGoogle={doGoogleLogin} onRecover={() => setScreen('select')} onGuide={() => setShowGuide(true)} loading={googleLoading} hasLocal={hasLocal} error={googleError} /></>);
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<Veeda />);
+function ReceivedDayComments({dayId, comments, profile, onSaveComment, addToast}) {
+  const [showCommentInput, setShowCommentInput] = useState(false);
+  const [commentText, setCommentText] = useState('');
+
+  const addComment = () => {
+    if (!commentText.trim()) return;
+    const newComment = {
+      id: Date.now(),
+      from: profile.name,
+      fromHandle: profile.handle,
+      fromEmoji: profile.emoji,
+      type: 'texto',
+      content: commentText.trim(),
+      ts: Date.now()
+    };
+    onSaveComment(dayId, newComment);
+    setCommentText('');
+    setShowCommentInput(false);
+    addToast?.('Comentário adicionado! 💬', 'success');
+  };
+
+  return (
+    <div style={{marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.headerBorder}`}}>
+      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12}}>
+        <h3 style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: PASSO}}>💬 Comentários ({comments.length})</h3>
+        <button onClick={() => setShowCommentInput(!showCommentInput)} style={{fontSize: 12, color: C.purple, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px'}}>{showCommentInput ? 'Cancelar' : '+ Comentar'}</button>
+      </div>
+
+      {showCommentInput && (
+        <div style={{marginBottom: 12}}>
+          <textarea
+            value={commentText}
+            onChange={e => setCommentText(e.target.value)}
+            placeholder="Deixe um comentário sobre este dia…"
+            style={{width: '100%', minHeight: 60, borderRadius: 12, padding: '10px 12px', border: `1px solid ${C.cardBorder}`, fontSize: 13, marginBottom: 8, boxSizing: 'border-box', fontFamily: 'inherit'}}
+          />
+          <div style={{display: 'flex', gap: 8}}>
+            <button onClick={addComment} style={{flex: 1, padding: '8px 0', background: C.purple, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600}}>Comentar ✏️</button>
+            <button onClick={() => setShowCommentInput(false)} style={{flex: 1, padding: '8px 0', background: C.white, color: C.textMid, border: `1px solid ${C.cardBorder}`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600}}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {comments.map(c => (
+        <div key={c.id} style={{background: C.white, borderRadius: 12, padding: '10px 12px', marginBottom: 8, border: `1px solid ${C.cardBorder}`}}>
+          <div style={{display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6}}>
+            <div style={{fontSize: 16}}>{c.fromEmoji || '🌿'}</div>
+            <div style={{flex: 1}}>
+              <p style={{margin: 0, fontSize: 12, fontWeight: 600, color: C.text}}>{c.from}</p>
+              <p style={{margin: 0, fontSize: 11, color: C.textLight}}>{new Date(c.ts).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</p>
+            </div>
+          </div>
+          {c.type === 'texto' && <p style={{margin: 0, fontSize: 13, color: C.text, lineHeight: 1.4}}>{c.content}</p>}
+          {c.type === 'voz' && <p style={{fontSize: 12, color: C.purple, fontWeight: 500}}>🎙️ Comentário de voz</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Veeda() {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
