@@ -50,6 +50,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   const sessionKey = useRef(null);
   const sessionSalt = useRef(null);
   const vidRef = useRef(), photoRef = useRef(), galleryRef = useRef(), lastRef = useRef(null), touchX = useRef(null);
+  const sbChannels = useRef([]);
 
   useEffect(() => {
     (async () => {
@@ -119,6 +120,104 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   }, [data, profile]);
 
   useEffect(() => { if (data && !loading) checkInbox(); }, [data, loading]);
+
+  // ── Supabase: sync cross-device ────────────────────────────
+  const syncFromSupabase = useCallback(async () => {
+    if (!window.VeedaSupabase?.isReady() || !data) return;
+    const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
+    try {
+      // 1. Dias compartilhados recebidos
+      const sbDays = await VeedaSupabase.days.getInbox(myH);
+      let inboxChanged = false;
+      for (const day of sbDays) {
+        const inboxKey = `veeda_inbox_${myH}`;
+        const inbox = safeLS.get(inboxKey, []);
+        const alreadyInbox = inbox.find(r => r.date === day.date && r.author === day.author);
+        const alreadyReceived = (data.received || []).find(r => r.date === day.date && r.handle === day.handle);
+        if (!alreadyInbox && !alreadyReceived) {
+          inbox.push(day); safeLS.set(inboxKey, inbox); inboxChanged = true;
+          if (day._sbId) VeedaSupabase.days.markConsumed(day._sbId, day.importedAt);
+        }
+      }
+      if (inboxChanged) checkInbox();
+
+      // 2. Pedidos de conexão recebidos
+      const sbReqs = await VeedaSupabase.connections.getRequests(myH);
+      if (sbReqs.length) {
+        const lsKey = `veeda_conn_requests_${myH}`;
+        const lsReqs = safeLS.get(lsKey, []);
+        let changed = false;
+        for (const req of sbReqs) {
+          if (!lsReqs.find(r => r.fromId === req.fromId)) { lsReqs.push(req); changed = true; }
+        }
+        if (changed) safeLS.set(lsKey, lsReqs);
+        const pending = lsReqs.filter(r => r.status === 'pending');
+        if (pending.length > 0) setPendingConnections(pending);
+      }
+
+      // 3. Confirmações: o remetente original vira contato
+      const sbConfs = await VeedaSupabase.connections.getConfirmations(myH);
+      if (sbConfs.length) {
+        const newContacts = [];
+        for (const conf of sbConfs) {
+          const alreadyContact = (data.contacts || []).find(
+            c => (c.handle || '').replace(/^@/, '') === (conf.fromHandle || '').replace(/^@/, '')
+          );
+          if (!alreadyContact && (data.contacts || []).length + newContacts.length < MAX_CONTACTS_BETA) {
+            newContacts.push({
+              name: conf.fromName, handle: conf.fromHandle,
+              code: conf.fromHandle.replace(/^@/, ''), emoji: conf.fromEmoji || '🌿',
+              avatarColor: conf.fromAvatarColor || C.purpleLight,
+              avatarSrc: conf.fromAvatarSrc, addedAt: conf.confirmedAt
+            });
+            addToast?.(`${conf.fromName} aceitou seu convite! 🤝`, 'success');
+          }
+          if (conf._sbId) VeedaSupabase.connections.markConfirmationConsumed(conf._sbId);
+        }
+        if (newContacts.length > 0) {
+          await save({ ...data, contacts: [...(data.contacts || []), ...newContacts] });
+        }
+      }
+    } catch (e) { console.warn('[VeedaSupabase sync]', e); }
+  }, [data, profile, checkInbox, save, addToast]);
+
+  // Setup realtime + sync inicial quando os dados carregam
+  useEffect(() => {
+    if (loading || !data || !window.VeedaSupabase?.isReady()) return;
+    const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
+
+    syncFromSupabase();
+
+    // Realtime: novos dias no inbox
+    const inboxSub = VeedaSupabase.realtime.subscribeInbox(myH, day => {
+      const k = `veeda_inbox_${myH}`;
+      const inbox = safeLS.get(k, []);
+      if (!inbox.find(r => r.date === day.date && r.author === day.author)) {
+        inbox.push(day); safeLS.set(k, inbox); checkInbox();
+      }
+    });
+
+    // Realtime: novos pedidos de conexão
+    const reqSub = VeedaSupabase.realtime.subscribeRequests(myH, req => {
+      const k = `veeda_conn_requests_${myH}`;
+      const reqs = safeLS.get(k, []);
+      if (!reqs.find(r => r.fromId === req.fromId)) {
+        reqs.push(req); safeLS.set(k, reqs);
+        setPendingConnections(prev => [...prev, req]);
+      }
+    });
+
+    sbChannels.current = [inboxSub, reqSub].filter(Boolean);
+
+    // Polling periódico como fallback (complementa realtime)
+    const syncInterval = setInterval(() => syncFromSupabase(), 30000);
+
+    return () => {
+      clearInterval(syncInterval);
+      sbChannels.current.forEach(c => VeedaSupabase.realtime.removeChannel(c));
+      sbChannels.current = [];
+    };
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!data || loading) return;

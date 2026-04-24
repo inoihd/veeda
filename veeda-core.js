@@ -272,6 +272,8 @@ const saveConnectionRequest = (fromProfile, toHandle) => {
       status: 'pending'
     });
     safeLS.set(key, requests);
+    // Cross-device: espelha no Supabase para o destinatário receber em outro dispositivo
+    if (window.VeedaSupabase?.isReady()) VeedaSupabase.connections.sendRequest(safeProfile, toHandle);
     return true;
   }
   return false;
@@ -334,6 +336,8 @@ const confirmConnectionToSender = (fromProfile, toProfile) => {
       confirmedAt: Date.now()
     });
     safeLS.set(key, confirmations);
+    // Cross-device: envia confirmação para o remetente original via Supabase
+    if (window.VeedaSupabase?.isReady()) VeedaSupabase.connections.confirmToSender(toProfile, fromProfile);
     return true;
   }
   return false;
@@ -456,6 +460,8 @@ const _buildOAuthUrl=()=>{
 const markUserActive = (handle) => {
   const key = `veeda_online_status_${handle.replace(/^@/, '')}`;
   safeLS.set(key, { lastActive: Date.now(), isOnline: true });
+  // Cross-device presence
+  if (window.VeedaSupabase?.isReady()) VeedaSupabase.presence.update(handle);
 };
 
 const getUserStatus = (handle) => {

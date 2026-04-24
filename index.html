@@ -296,6 +296,9 @@ button:active:before {
 </head>
 <body>
 <div id="root"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="veeda-supabase.js"></script>
+<script>VeedaSupabase.init();</script>
 <script src="react.min.js"></script>
 <script src="react-dom.min.js"></script>
 <script src="babel.min.js"></script>
@@ -1376,126 +1379,103 @@ function TagPicker({selectedTags,onChange,customTags=[]}){
 // ADD CONTACT MODAL (with cross-device support)
 // ═══════════════════════════════════════════════════
 function AddContactModal({contacts,myHandle,profile,onAdd,onClose,addToast,prefillCard}){
-  const [cardCode,setCardCode]=useState(prefillCard||"");
-  const [tab,setTab]=useState("add"); // add | search
-  const [step,setStep]=useState(1);
-  const [found,setFound]=useState(null);
   const [q,setQ]=useState("");
-  const [myLinkCopied,setMyLinkCopied]=useState(false);
-
+  const [results,setResults]=useState([]);
+  const [searching,setSearching]=useState(false);
   const myH=(myHandle||"").replace(/^@/,"");
-  const myCode=profile?makeProfileCard(profile):null;
-  const myLink=myCode?`${window.location.origin}${window.location.pathname}?add=${encodeURIComponent(myCode)}`:null;
 
-  const copyMyLink=()=>{
-    if(!myLink)return;
-    navigator.clipboard?.writeText(myLink);
-    setMyLinkCopied(true);setTimeout(()=>setMyLinkCopied(false),2500);
-  };
-  const shareMyLink=()=>{
-    if(!myLink)return;
-    navigator.share?.({title:"Veeda",text:`Olá! Sou ${profile?.name||myHandle} no Veeda. Me adiciona no Meu Círculo:\n${myLink}`}).catch(()=>{});
-  };
-
-  // Auto-decode prefilled code from invite link
+  // Retrocompat: se veio via link antigo (?add=vc2_…), pré-preenche a busca com o @handle
   useEffect(()=>{
     if(!prefillCard)return;
     const parsed=parseProfileCard(prefillCard.trim());
-    if(parsed){
-      if(parsed.handle.replace(/^@/,"")===myH){addToast?.("Este é o seu próprio código.","warn");return;}
-      if(contacts.find(c=>(c.handle||"").replace(/^@/,"")===(parsed.handle||"").replace(/^@/,""))){
-        addToast?.(`${parsed.name} já está no seu Círculo.`,"info");return;
-      }
-      setFound(parsed);setStep(2);
-    } else {
-      addToast?.("Link de convite inválido ou corrompido.","error");
-    }
+    if(parsed?.handle)setQ(parsed.handle);
   },[prefillCard]);
 
-  const localResults=useMemo(()=>{
-    return registrySearch(q).filter(p=>{
-      if(p.handle.replace(/^@/,"")===myH)return false;
-      if(contacts.find(c=>(c.handle||"").replace(/^@/,"")===(p.handle||"").replace(/^@/,"")))return false;
-      return true;
-    });
-  },[q,myH,contacts]);
-
-  const tryParseCard=()=>{
-    // Aceita tanto vc2_... direto quanto uma URL que contenha ?add=vc2_...
-    let raw=cardCode.trim();
-    try{const u=new URL(raw);const p=u.searchParams.get("add");if(p)raw=p;}catch{}
-    const parsed=parseProfileCard(raw);
-    if(!parsed){addToast?.("Código inválido. Peça ao contato para gerar o código novamente.","error");return;}
-    if(parsed.handle.replace(/^@/,"")===myH){addToast?.("Este é o seu próprio código.","warn");return;}
-    if(contacts.find(c=>(c.handle||"").replace(/^@/,"")===(parsed.handle||"").replace(/^@/,""))){
-      addToast?.(`${parsed.name} já está no seu Círculo.`,"info");return;
+  // Busca com debounce no Supabase
+  useEffect(()=>{
+    const term=q.trim();
+    if(term.length<2){setResults([]);setSearching(false);return;}
+    if(!window.VeedaSupabase?.isReady()){
+      setResults([]);setSearching(false);
+      addToast?.("Conexão com o servidor indisponível. Tente novamente em instantes.","warn");
+      return;
     }
-    setFound(parsed);setStep(2);
-  };
+    setSearching(true);
+    const h=setTimeout(async()=>{
+      try{
+        const found=await VeedaSupabase.profiles.search(term,myHandle);
+        const filtered=found.filter(p=>!contacts.find(c=>(c.handle||"").replace(/^@/,"")===(p.handle||"").replace(/^@/,"")));
+        setResults(filtered);
+      }catch(e){setResults([]);}
+      setSearching(false);
+    },350);
+    return()=>clearTimeout(h);
+  },[q,contacts,myHandle]);
 
-  const confirm=()=>{
-    if(!found)return;
-    onAdd({name:found.name,handle:found.handle,code:found.handle.replace(/^@/,""),emoji:found.emoji||"🌿",avatarColor:found.avatarColor||C.purpleLight,avatarSrc:found.avatarSrc||null,addedAt:Date.now()});
+  const addContact=(p)=>{
+    onAdd({
+      name:p.name,handle:p.handle,code:p.handle.replace(/^@/,""),
+      emoji:p.emoji||"🌿",avatarColor:p.avatarColor||C.purpleLight,
+      avatarSrc:p.avatarSrc||null,addedAt:Date.now()
+    });
+    if(window.VeedaSupabase?.isReady()){
+      VeedaSupabase.profiles.register(profile).catch(()=>{});
+      VeedaSupabase.connections.confirmToSender(profile,p).catch(()=>{});
+    }
+    setResults(rs=>rs.filter(r=>(r.handle||"").replace(/^@/,"")!==(p.handle||"").replace(/^@/,"")));
+    addToast?.(`${p.name} adicionado ao Meu Círculo! 🤝`,"success");
   };
 
   return(
     <div>
-      {step===1&&<>
-        {/* Seção: Compartilhar MEU código */}
-        {myLink&&(
-          <div style={{background:C.greenLight,borderRadius:14,padding:"14px",marginBottom:18,border:`1px solid ${C.green}33`}}>
-            <p style={{margin:"0 0 4px",fontSize:12,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.5px"}}>🔗 Primeiro: compartilhe seu link</p>
-            <p style={{margin:"0 0 12px",fontSize:12,color:C.textMid,lineHeight:1.5}}>Envie para quem você quer adicionar — quando tocar no link, o Veeda já vai mostrar seu perfil para adicionar.</p>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={copyMyLink} style={{flex:1,padding:"10px 0",background:myLinkCopied?C.green:C.white,color:myLinkCopied?C.white:C.green,border:`1.5px solid ${C.green}`,borderRadius:50,fontWeight:600,fontSize:13,cursor:"pointer"}}>
-                {myLinkCopied?"✓ Copiado!":"Copiar meu link"}
-              </button>
-              {navigator.share&&<button onClick={shareMyLink} style={{flex:1,padding:"10px 0",background:C.purple,color:C.white,border:"none",borderRadius:50,fontWeight:600,fontSize:13,cursor:"pointer"}}>Compartilhar ↑</button>}
-            </div>
+      {/* Lembrete do @handle do usuário atual (para ele avisar quem quer adicionar) */}
+      {myHandle&&(
+        <div style={{background:C.purpleLight,borderRadius:12,padding:"10px 14px",marginBottom:14}}>
+          <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.5}}>
+            Seu handle: <strong style={{color:C.purple}}>{myHandle}</strong> — compartilhe com quem quer te encontrar.
+          </p>
+        </div>
+      )}
+
+      <p style={{fontSize:13,color:C.textMid,marginBottom:10,lineHeight:1.5}}>
+        Busque por <strong>nome</strong> ou <strong>@handle</strong> da pessoa que você quer adicionar ao seu Círculo:
+      </p>
+      <input
+        value={q}
+        onChange={e=>setQ(e.target.value)}
+        placeholder="Ex: Maria ou @mariasilva"
+        autoFocus
+        style={{marginBottom:10,padding:"12px 16px",borderRadius:50,border:`1.5px solid ${C.cardBorder}`,fontSize:14,width:"100%",outline:"none",background:C.white}}
+      />
+
+      {q.trim()&&q.trim().length<2&&(
+        <p style={{fontSize:12,color:C.textLight,margin:"4px 0 8px"}}>Digite pelo menos 2 caracteres para buscar.</p>
+      )}
+
+      {searching&&(
+        <div style={{padding:"16px 0",textAlign:"center"}}><Spinner size={16}/></div>
+      )}
+
+      {!searching&&q.trim().length>=2&&results.length===0&&(
+        <div style={{padding:"14px",background:C.amberLight,borderRadius:10,marginTop:4}}>
+          <p style={{margin:0,fontSize:12,color:"#7A5800",lineHeight:1.5}}>
+            Nenhum usuário encontrado. Confira o nome ou @handle — a pessoa precisa ter uma conta ativa no Veeda.
+          </p>
+        </div>
+      )}
+
+      {results.map(p=>(
+        <div key={p.id||p.handle} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"10px 12px",marginBottom:8,display:"flex",alignItems:"center",gap:12}}>
+          <AvatarBubble src={p.avatarSrc} emoji={p.emoji||"🌿"} color={p.avatarColor||C.purpleLight} size={40}/>
+          <div style={{flex:1,minWidth:0}}>
+            <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</p>
+            <p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{p.handle}</p>
           </div>
-        )}
-
-        {/* Tabs: Adicionar pelo código | Buscar neste dispositivo */}
-        <div style={{display:"flex",gap:6,marginBottom:14}}>
-          {[["add","📋 Adicionar pelo código"],["search","🔍 Buscar aqui"]].map(([k,l])=>(
-            <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"9px 4px",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:12}}>{l}</button>
-          ))}
+          <button onClick={()=>addContact(p)} style={{background:C.purple,color:C.white,border:"none",borderRadius:50,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+            + Adicionar
+          </button>
         </div>
-
-        {tab==="add"&&<>
-          <p style={{fontSize:13,color:C.textMid,marginBottom:10,lineHeight:1.5}}>Cole o <strong>link ou código</strong> que seu contato compartilhou com você:</p>
-          <textarea value={cardCode} onChange={e=>setCardCode(e.target.value)} placeholder="Cole aqui o link de convite ou código vc2_…" style={{marginBottom:12,minHeight:72,borderRadius:14}}/>
-          <Btn onClick={tryParseCard} disabled={!cardCode.trim()}>Identificar perfil</Btn>
-        </>}
-
-        {tab==="search"&&<>
-          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar por nome ou @handle…" autoFocus style={{marginBottom:8}}/>
-          {q.trim()&&localResults.length===0&&(
-            <div style={{padding:"14px",background:C.amberLight,borderRadius:10,border:`1px solid ${C.amber}44`,marginTop:4}}>
-              <p style={{margin:"0 0 4px",fontSize:12,color:"#7A5800",fontWeight:600}}>Nenhum usuário encontrado aqui</p>
-              <p style={{margin:0,fontSize:12,color:"#7A5800",lineHeight:1.5}}>A busca funciona para perfis do mesmo dispositivo. Para adicionar alguém de outro celular, use a aba "Adicionar pelo código".</p>
-            </div>
-          )}
-          {localResults.map(p=>(
-            <button key={p.id||p.handle} onClick={()=>{setFound(p);setStep(2);}} style={{width:"100%",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left"}}>
-              <AvatarBubble src={p.avatarSrc} emoji={p.emoji||"🌿"} color={p.avatarColor||C.purpleLight} size={44}/>
-              <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{p.name}</p><p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{p.handle}</p></div>
-              <span style={{fontSize:18,color:C.textLight}}>+</span>
-            </button>
-          ))}
-        </>}
-      </>}
-
-      {step===2&&found&&<>
-        <div style={{textAlign:"center",marginBottom:20}}>
-          <AvatarBubble src={found.avatarSrc} emoji={found.emoji} color={found.avatarColor||C.purpleLight} size={64} ring/>
-          <p style={{margin:"10px 0 2px",fontSize:16,fontWeight:700,color:C.text}}>{found.name}</p>
-          <p style={{margin:0,fontSize:14,color:C.purple,fontWeight:600}}>{found.handle}</p>
-          {found.fromCard&&<p style={{margin:"6px 0 0",fontSize:12,color:C.green}}>✓ Perfil identificado pelo código</p>}
-        </div>
-        <Btn onClick={confirm} style={{marginBottom:10}}>Adicionar ao Meu Círculo</Btn>
-        <Btn onClick={()=>{setStep(1);setFound(null);setCardCode("");}} variant="ghost">← Voltar</Btn>
-      </>}
+      ))}
     </div>
   );
 }
@@ -1611,7 +1591,7 @@ function ShareDayModal({profile,data,curDay,onClose,onShared,addToast}){
 
   const copyShareLink=()=>{if(sharedLink){navigator.clipboard?.writeText(sharedLink);setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);}};
 
-  // ── Compartilhamento local (mesmo device) ──────────
+  // ── Compartilhamento local + cross-device via Supabase ──
   const doShare=async()=>{
     if(!sel.length)return;setLoading(true);
     const payload={date:curDay,author:profile.name,handle:profile.handle||nameToHandle(profile.name),emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling,message:msg.trim(),importedAt:Date.now()};
@@ -1619,6 +1599,10 @@ function ShareDayModal({profile,data,curDay,onClose,onShared,addToast}){
       const k=`veeda_inbox_${handle.replace(/^@/,"")}`;
       const ex=safeLS.get(k,[]);ex.push(payload);safeLS.set(k,ex);
     });
+    // Cross-device: envia via Supabase para destinatários em outros dispositivos
+    if(window.VeedaSupabase?.isReady()){
+      VeedaSupabase.days.share(profile,sel,payload).catch(()=>{});
+    }
     showNativeNotif("Veeda",`${profile.name} compartilhou o dia com você! 🌿`);
     await onShared({...(data.sharedLog||{}),[curDay]:[...already,...sel]});
     addToast?.("Dia compartilhado com sucesso! 🌿","success");
@@ -2338,6 +2322,14 @@ function ScreenPassword({profile,onSuccess,onBack,onForgot}){
     const hash=await hashPw(pw.trim());
     if(hash!==profile.passwordHash){setErr("Senha incorreta.");setPw("");setLoading(false);return;}
     onSuccess(pw.trim());
+    if(window.VeedaSupabase?.isReady()){
+      VeedaSupabase.auth.signIn(profile.handle,hash)
+        .then(({error})=>{
+          if(error)return VeedaSupabase.auth.signUp(profile.handle,hash)
+            .then(()=>VeedaSupabase.profiles.register(profile));
+          return VeedaSupabase.profiles.register(profile);
+        }).catch(()=>{});
+    }
   };
   return(
     <div style={{maxWidth:400,margin:"0 auto",padding:"3rem 21px",background:`linear-gradient(180deg,${C.splashBg} 0%,${C.bg} 40%,${C.bgGradEnd} 100%)`,minHeight:"100vh",display:"flex",flexDirection:"column"}}>
@@ -2395,6 +2387,10 @@ function ScreenCreate({onDone,onBack,googleUser}){
       safeLS.rawSet(`veeda_data_${id}`,enc);
       saveMonthlySnapshot(id,enc);
       onDone(profile,pw);
+      if(window.VeedaSupabase?.isReady()){
+        VeedaSupabase.auth.signUp(profile.handle,passwordHash)
+          .then(()=>VeedaSupabase.profiles.register(profile)).catch(()=>{});
+      }
     }catch(e){setErr("Erro ao criar conta. Tente novamente.");setLoading(false);}
   };
 
@@ -2607,6 +2603,76 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   },[data,profile]);
 
   useEffect(()=>{if(data&&!loading)checkInbox();},[data,loading]);
+
+  // ── Supabase: sync cross-device ──────────────────────────
+  const sbChannels=useRef([]);
+
+  const syncFromSupabase=useCallback(async()=>{
+    if(!window.VeedaSupabase?.isReady()||!data)return;
+    const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+    const MAX_C=5; // MAX_CONTACTS_BETA
+    try{
+      // Dias compartilhados recebidos
+      const sbDays=await VeedaSupabase.days.getInbox(myH);
+      let inboxChanged=false;
+      for(const day of sbDays){
+        const k=`veeda_inbox_${myH}`;
+        const inbox=safeLS.get(k,[]);
+        if(!inbox.find(r=>r.date===day.date&&r.author===day.author)&&
+           !(data.received||[]).find(r=>r.date===day.date&&r.handle===day.handle)){
+          inbox.push(day);safeLS.set(k,inbox);inboxChanged=true;
+          if(day._sbId)VeedaSupabase.days.markConsumed(day._sbId,day.importedAt);
+        }
+      }
+      if(inboxChanged)checkInbox();
+      // Pedidos de conexão
+      const sbReqs=await VeedaSupabase.connections.getRequests(myH);
+      if(sbReqs.length){
+        const lsKey=`veeda_conn_requests_${myH}`;
+        const lsReqs=safeLS.get(lsKey,[]);let changed=false;
+        for(const req of sbReqs){if(!lsReqs.find(r=>r.fromId===req.fromId)){lsReqs.push(req);changed=true;}}
+        if(changed)safeLS.set(lsKey,lsReqs);
+      }
+      // Confirmações → vira contato
+      const sbConfs=await VeedaSupabase.connections.getConfirmations(myH);
+      if(sbConfs.length){
+        const newContacts=[];
+        for(const conf of sbConfs){
+          const dup=(data.contacts||[]).find(c=>(c.handle||"").replace(/^@/,"")===(conf.fromHandle||"").replace(/^@/,""));
+          if(!dup&&(data.contacts||[]).length+newContacts.length<MAX_C){
+            newContacts.push({name:conf.fromName,handle:conf.fromHandle,code:conf.fromHandle.replace(/^@/,""),
+              emoji:conf.fromEmoji||"🌿",avatarColor:conf.fromAvatarColor||"#D0C4F7",
+              avatarSrc:conf.fromAvatarSrc,addedAt:conf.confirmedAt});
+            addToast?.(`${conf.fromName} aceitou seu convite! 🤝`,"success");
+          }
+          if(conf._sbId)VeedaSupabase.connections.markConfirmationConsumed(conf._sbId);
+        }
+        if(newContacts.length>0)await save({...data,contacts:[...(data.contacts||[]),...newContacts]});
+      }
+    }catch(e){console.warn("[VeedaSupabase sync]",e);}
+  },[data,profile,checkInbox,save,addToast]);
+
+  // Setup realtime + sync inicial ao carregar dados
+  useEffect(()=>{
+    if(loading||!data||!window.VeedaSupabase?.isReady())return;
+    const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+    syncFromSupabase();
+    const inboxSub=VeedaSupabase.realtime.subscribeInbox(myH,day=>{
+      const k=`veeda_inbox_${myH}`;const inbox=safeLS.get(k,[]);
+      if(!inbox.find(r=>r.date===day.date&&r.author===day.author)){inbox.push(day);safeLS.set(k,inbox);checkInbox();}
+    });
+    const reqSub=VeedaSupabase.realtime.subscribeRequests(myH,req=>{
+      const k=`veeda_conn_requests_${myH}`;const reqs=safeLS.get(k,[]);
+      if(!reqs.find(r=>r.fromId===req.fromId)){reqs.push(req);safeLS.set(k,reqs);}
+    });
+    sbChannels.current=[inboxSub,reqSub].filter(Boolean);
+    const syncInterval=setInterval(()=>syncFromSupabase(),30000);
+    return()=>{
+      clearInterval(syncInterval);
+      sbChannels.current.forEach(c=>VeedaSupabase.realtime.removeChannel(c));
+      sbChannels.current=[];
+    };
+  },[loading]); // eslint-disable-line
 
   // Pending add from invite link (?add=vc2_…)
   useEffect(()=>{
