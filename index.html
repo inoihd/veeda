@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.1.5";
+  var EMBEDDED_VERSION = "2.1.6";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.5";
+const APP_VERSION  = "2.1.6";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1551,6 +1551,7 @@ function MomentCircle({m,isNew,onTap,size=52}){
 function MomentDetail({m,onClose,onDelete}){
   const [playing,setPlaying]=useState(false);
   const [saving,setSaving]=useState(false);
+  const [confirmDelete,setConfirmDelete]=useState(false);
   const audioRef=useRef(null);
   const embed=m.type==="videolink"?getVideoEmbed(m.content):null;
   const allTags=[...DEFAULT_TAGS];
@@ -1568,11 +1569,23 @@ function MomentDetail({m,onClose,onDelete}){
         if(!loaded){setSaving(false);return;}
         src=loaded;
       }
+      // Converte data URL para Blob para evitar navegação de página no iOS Safari
+      const mimeMap={foto:"image/png",arte:"image/png",video:"video/mp4",voz:"audio/webm"};
+      const mime=mimeMap[m.type]||"application/octet-stream";
+      let blobUrl;
+      try{
+        const res=await fetch(src);
+        const blob=await res.blob();
+        blobUrl=URL.createObjectURL(blob);
+      }catch{
+        blobUrl=src; // fallback para data URL se fetch falhar
+      }
       const ext=m.type==="video"?"mp4":m.type==="voz"?"webm":"png";
       const a=document.createElement("a");
-      a.href=src;
+      a.href=blobUrl;
       a.download=`veeda-${m.id}.${ext}`;
       document.body.appendChild(a);a.click();document.body.removeChild(a);
+      if(blobUrl!==src)setTimeout(()=>URL.revokeObjectURL(blobUrl),5000);
     }finally{setSaving(false);}
   };
 
@@ -1627,9 +1640,19 @@ function MomentDetail({m,onClose,onDelete}){
       </div>}
 
       {canSave&&<Btn onClick={saveToDevice} disabled={saving} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>{saving?<><Spinner size={14} color={C.purple}/>Preparando…</>:"↓ Salvar no dispositivo"}</Btn>}
-      {/* Botão de remover só aparece se onDelete foi passado (modo edição do próprio DONO).
-          Em visualização da LINHA DO TEMPO de PESSOA DO MEU CÍRCULO, fica oculto. */}
-      {typeof onDelete==="function"&&<Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>}
+      {/* Botão de excluir só aparece se onDelete foi passado (modo edição do próprio DONO). */}
+      {typeof onDelete==="function"&&!confirmDelete&&(
+        <Btn onClick={()=>setConfirmDelete(true)} variant="ghost" style={{color:C.red,fontSize:13}}>Excluir registro</Btn>
+      )}
+      {typeof onDelete==="function"&&confirmDelete&&(
+        <div style={{background:"#FFF3F3",border:`1.5px solid ${C.red}`,borderRadius:12,padding:"14px 16px",marginTop:4}}>
+          <p style={{margin:"0 0 10px",fontSize:13,color:C.text,fontWeight:600,lineHeight:1.5}}>Tem certeza? Este registro será excluído permanentemente e não poderá ser recuperado.</p>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>setConfirmDelete(false)} variant="outline" style={{flex:1,fontSize:13}}>Cancelar</Btn>
+            <Btn onClick={()=>{onDelete();onClose();}} style={{flex:1,fontSize:13,background:C.red,color:"#fff",border:"none"}}>Sim, excluir</Btn>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
