@@ -298,7 +298,59 @@ button:active:before {
 <div id="root"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="veeda-supabase.js"></script>
-<script>VeedaSupabase.init();</script>
+<script>
+VeedaSupabase.init();
+
+// ── Veeda Debug — diagnóstico cross-device ──
+// Uso no console: veedaDebug.diag()  ou  veedaDebug.testShare("@handleDoOutroUser")
+window.veedaDebug = {
+  async session(){
+    const s = await VeedaSupabase.auth.getSession();
+    console.log("Session:", s);
+    return s;
+  },
+  async whoami(){
+    if(!VeedaSupabase.isReady()){console.log("❌ Supabase OFFLINE");return null;}
+    const s = await VeedaSupabase.auth.getSession();
+    if(!s){console.log("❌ Sem sessão Supabase. Faça logout/login do app.");return null;}
+    const email = s.user?.email;
+    const handle = email?.split("@")[0];
+    console.log("✅ Logado como:", { email, handle, userId: s.user?.id });
+    return { email, handle };
+  },
+  async diag(){
+    console.log("═══ VEEDA DIAG ═══");
+    console.log("1. Supabase ready:", VeedaSupabase.isReady());
+    const me = await this.whoami();
+    if(!me) return;
+    const inbox = await VeedaSupabase.days.getInbox(me.handle);
+    console.log("2. Inbox (shared_days p/ mim):", inbox.length, "itens", inbox);
+    const reqs = await VeedaSupabase.connections.getRequests(me.handle);
+    console.log("3. Pedidos de conexão pendentes:", reqs.length, reqs);
+    const confs = await VeedaSupabase.connections.getConfirmations(me.handle);
+    console.log("4. Confirmações não consumidas:", confs.length, confs);
+    console.log("═════════════════");
+    return { inbox, reqs, confs };
+  },
+  async testShare(toHandle){
+    if(!VeedaSupabase.isReady()){console.log("❌ Supabase OFFLINE");return;}
+    const me = await this.whoami(); if(!me) return;
+    // pega perfil local
+    const psRaw = localStorage.getItem("veeda_profiles_v2");
+    const ps = psRaw ? JSON.parse(psRaw) : [];
+    const myProfile = ps.find(p => (p.handle||"").replace(/^@/,"") === me.handle);
+    if(!myProfile){console.log("❌ Perfil local não encontrado para",me.handle);return;}
+    const cleanTo = toHandle.replace(/^@/,"");
+    const today = new Date().toISOString().slice(0,10);
+    const payload = { date: today, feeling:null, message:"DIAG TEST "+Date.now(), moments:[] };
+    console.log("→ Enviando teste para", cleanTo, "...");
+    const ok = await VeedaSupabase.days.share(myProfile, [cleanTo], payload);
+    console.log(ok ? "✅ Insert no Supabase OK" : "❌ Insert FALHOU — abra Network e veja o erro RLS");
+    return ok;
+  }
+};
+console.log("[Veeda] Debug disponível: veedaDebug.diag() / veedaDebug.testShare('@handle')");
+</script>
 <script src="react.min.js"></script>
 <script src="react-dom.min.js"></script>
 <script src="babel.min.js"></script>
@@ -311,7 +363,7 @@ button:active:before {
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.0.0";
+const APP_VERSION  = "2.0.5";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1600,12 +1652,26 @@ function ShareDayModal({profile,data,curDay,onClose,onShared,addToast}){
       const ex=safeLS.get(k,[]);ex.push(payload);safeLS.set(k,ex);
     });
     // Cross-device: envia via Supabase para destinatários em outros dispositivos
+    let sbStatus="skip";let sbError=null;
     if(window.VeedaSupabase?.isReady()){
-      VeedaSupabase.days.share(profile,sel,payload).catch(()=>{});
+      try{
+        const ok=await VeedaSupabase.days.share(profile,sel,payload);
+        sbStatus=ok?"sent":"failed";
+        console.log("[Veeda share]",{to:sel,date:curDay,sbStatus,profileHandle:profile.handle});
+      }catch(e){
+        sbStatus="error";sbError=e?.message||String(e);
+        console.error("[Veeda share] erro:",e);
+      }
+    }else{
+      console.warn("[Veeda share] Supabase OFFLINE — dia salvo só local. Outro dispositivo NÃO vai receber.");
+    }
+    if(sbStatus==="failed"||sbStatus==="error"){
+      addToast?.(`Compartilhado localmente, mas falhou no servidor: ${sbError||"verifique console"}`,"warn");
+    }else{
+      addToast?.("Dia compartilhado com sucesso! 🌿","success");
     }
     showNativeNotif("Veeda",`${profile.name} compartilhou o dia com você! 🌿`);
     await onShared({...(data.sharedLog||{}),[curDay]:[...already,...sel]});
-    addToast?.("Dia compartilhado com sucesso! 🌿","success");
     setDone(true);setLoading(false);
   };
 
@@ -2324,11 +2390,17 @@ function ScreenPassword({profile,onSuccess,onBack,onForgot}){
     onSuccess(pw.trim());
     if(window.VeedaSupabase?.isReady()){
       VeedaSupabase.auth.signIn(profile.handle,hash)
-        .then(({error})=>{
-          if(error)return VeedaSupabase.auth.signUp(profile.handle,hash)
-            .then(()=>VeedaSupabase.profiles.register(profile));
-          return VeedaSupabase.profiles.register(profile);
-        }).catch(()=>{});
+        .then(async({error})=>{
+          if(error){
+            console.warn("[Veeda auth] signIn falhou, tentando signUp:",error.message);
+            const su=await VeedaSupabase.auth.signUp(profile.handle,hash);
+            if(su?.error)console.error("[Veeda auth] signUp falhou:",su.error.message);
+            else console.log("[Veeda auth] signUp ok, registrando perfil");
+          }else{
+            console.log("[Veeda auth] signIn ok");
+          }
+          await VeedaSupabase.profiles.register(profile);
+        }).catch(e=>console.error("[Veeda auth] erro:",e));
     }
   };
   return(
@@ -2389,7 +2461,11 @@ function ScreenCreate({onDone,onBack,googleUser}){
       onDone(profile,pw);
       if(window.VeedaSupabase?.isReady()){
         VeedaSupabase.auth.signUp(profile.handle,passwordHash)
-          .then(()=>VeedaSupabase.profiles.register(profile)).catch(()=>{});
+          .then(async(r)=>{
+            if(r?.error){console.error("[Veeda auth] signUp na criação falhou:",r.error.message);return;}
+            console.log("[Veeda auth] conta criada no Supabase");
+            await VeedaSupabase.profiles.register(profile);
+          }).catch(e=>console.error("[Veeda auth] erro signUp:",e));
       }
     }catch(e){setErr("Erro ao criar conta. Tente novamente.");setLoading(false);}
   };
