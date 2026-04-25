@@ -296,6 +296,77 @@ button:active:before {
 </head>
 <body>
 <div id="root"></div>
+
+<!-- ═══ Pre-render version sentinel ═══
+     Verifica version.json (sem cache HTTP) ANTES de carregar React.
+     Se versão diverge, limpa caches+SW e recarrega — usuário sempre vê
+     a versão mais recente sem precisar limpar nada manualmente. -->
+<script>
+(function(){
+  // Versão embutida nesta cópia do index.html. Deve casar com version.json.
+  var EMBEDDED_VERSION = "2.0.7";
+  var KEY_LAST_RELOAD = "veeda_last_force_reload";
+
+  function showOverlay(msg){
+    var o = document.createElement("div");
+    o.id = "veeda-update-overlay";
+    o.style.cssText = "position:fixed;inset:0;background:linear-gradient(180deg,#22FCB7 0%,#EAFFF8 60%);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#3A3350;";
+    o.innerHTML = '<div style="font-size:48px;margin-bottom:14px">🌿</div><div style="font-size:16px;font-weight:600;margin-bottom:8px">Atualizando Veeda…</div><div style="font-size:13px;color:#7A7090">' + msg + '</div>';
+    document.body.appendChild(o);
+  }
+
+  async function clearEverythingAndReload(reason){
+    // Anti-loop: se já forçamos reload nos últimos 30s, não faz de novo
+    try{
+      var last = parseInt(localStorage.getItem(KEY_LAST_RELOAD)||"0",10);
+      if(Date.now() - last < 30000){
+        console.warn("[Veeda update] reload recente, abortando para evitar loop");
+        return;
+      }
+      localStorage.setItem(KEY_LAST_RELOAD, String(Date.now()));
+    }catch(e){}
+
+    showOverlay("Versão nova encontrada — recarregando…");
+    console.log("[Veeda update]", reason);
+
+    try {
+      if ("serviceWorker" in navigator) {
+        var regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(function(r){ return r.unregister(); }));
+      }
+    } catch(e){}
+    try {
+      if ("caches" in window) {
+        var keys = await caches.keys();
+        await Promise.all(keys.map(function(k){ return caches.delete(k); }));
+      }
+    } catch(e){}
+
+    // Hard reload — bypass HTTP cache
+    setTimeout(function(){
+      // location.reload(true) é deprecated mas ainda funciona; combinado com bust
+      location.replace(location.pathname + "?_v=" + Date.now());
+    }, 600);
+  }
+
+  // Roda em background — não bloqueia o boot. Se app já carregou antes da
+  // resposta chegar, recarrega só se houver mismatch real.
+  if ("fetch" in window) {
+    fetch("version.json?_=" + Date.now(), { cache: "no-store" })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){
+        if (!j || !j.version) return;
+        if (j.version !== EMBEDDED_VERSION) {
+          clearEverythingAndReload("server="+j.version+" embedded="+EMBEDDED_VERSION);
+        } else {
+          console.log("[Veeda] versão atual:", EMBEDDED_VERSION);
+        }
+      })
+      .catch(function(){ /* offline — segue com a versão local */ });
+  }
+})();
+</script>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="veeda-supabase.js"></script>
 <script>
@@ -374,7 +445,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.0.6";
+const APP_VERSION  = "2.0.7";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -3658,71 +3729,23 @@ function Veeda(){
 ReactDOM.createRoot(document.getElementById("root")).render(<Veeda/>);
 
 // ═══════════════════════════════════════════════════
-// SERVICE WORKER (for PWA offline support)
+// SERVICE WORKER (PWA offline + atualizações automáticas)
 // ═══════════════════════════════════════════════════
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
-    const swCode=`
-const CACHE_NAME = "veeda-v13";
-const URLS_TO_CACHE = ["./", "./index.html", "./manifest.json"];
-
-self.addEventListener("install", e => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then(c => c.addAll(URLS_TO_CACHE)).then(() => self.skipWaiting())
-  );
-});
-self.addEventListener("activate", e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
-self.addEventListener("message", e => {
-  if (e.data === "SKIP_WAITING") self.skipWaiting();
-});
-self.addEventListener("fetch", e => {
-  if(e.request.method !== "GET") return;
-  const isNav = e.request.mode === "navigate" ||
-                (e.request.destination === "document") ||
-                (e.request.headers.get("accept") || "").includes("text/html");
-  if(isNav){
-    e.respondWith(
-      fetch(e.request).then(resp => {
-        if(resp && resp.status === 200 && resp.type === "basic"){
-          const clone = resp.clone();
-          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-        }
-        return resp;
-      }).catch(() => caches.match(e.request).then(c => c || caches.match("./index.html")))
-    );
-    return;
-  }
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      const fetchPromise = fetch(e.request).then(resp => {
-        if(resp && resp.status === 200 && resp.type === "basic") {
-          const clone = resp.clone();
-          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-        }
-        return resp;
-      }).catch(() => cached);
-      return cached || fetchPromise;
-    })
-  );
-});
-self.addEventListener("push", e => {
-  const data = e.data ? e.data.json() : {};
-  e.waitUntil(self.registration.showNotification(data.title || "Veeda", {
-    body: data.body || "Você tem uma nova mensagem.",
-    icon: "./icon-192.png",
-    badge: "./icon-192.png",
-  }));
-});
-    `.trim();
-    const blob=new Blob([swCode],{type:"application/javascript"});
-    const url=URL.createObjectURL(blob);
-    navigator.serviceWorker.register(url).catch(()=>{});
+    // Registra com cache-bust pra garantir que mudanças no sw.js sejam pegas
+    navigator.serviceWorker.register("./sw.js?v="+APP_VERSION)
+      .then(reg=>{
+        // Quando um novo SW assume controle, recarrega para puxar a versão nova
+        let refreshing=false;
+        navigator.serviceWorker.addEventListener("controllerchange",()=>{
+          if(refreshing)return;refreshing=true;
+          location.reload();
+        });
+        // Verifica updates ativamente a cada 5min
+        setInterval(()=>reg.update().catch(()=>{}),5*60*1000);
+      })
+      .catch(()=>{});
   });
 }
 </script>
