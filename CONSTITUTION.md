@@ -59,6 +59,24 @@
 
 ---
 
+## Artigo 6 — Permanência absoluta do DONO DA VEEDA
+
+> **Cláusula pétrea.** Este artigo nasceu de um incidente real em que perfis foram perdidos entre atualizações. Sua violação é o erro mais grave que o código pode cometer.
+
+**6.1** É **proibido** chamar `localStorage.removeItem` em qualquer chave do escopo `veeda_profiles_*`, `veeda_data_*`, `veeda_snap_*` ou `veeda_backup_*` fora do fluxo explícito de exclusão de conta requisitado pelo próprio DONO DA VEEDA (Art. 5.2).
+
+**6.2** É **proibido** chamar `localStorage.setItem` em chaves de perfil sem antes ler o conteúdo anterior e aplicar **merge aditivo**. A função `safeMergeProfile()` é a **única porta de entrada permitida** para escritas em perfil.
+
+**6.3** **Antes** de qualquer migração de schema (`DATA_VERSION` em cadeia ou alteração de campos de perfil) o app deve criar um snapshot em `veeda_backup_<timestamp>` contendo uma cópia integral das chaves de perfil atuais. São mantidos os **5 snapshots mais recentes** em rotação.
+
+**6.4** No **boot da aplicação**, se o perfil ativo apresentar campos críticos vazios (`name`, `handle`, `id`) E houver pelo menos um `veeda_backup_*` válido com aqueles campos preenchidos, o app deve **automaticamente restaurar** do backup mais recente e exibir um toast informativo ao usuário. Em hipótese alguma o app deve assumir "perfil novo" silenciosamente quando há backup disponível.
+
+**6.5** Toda mudança em código que toque em escrita/leitura de perfis deve ser acompanhada de **teste manual documentado** com o cenário: criar perfil → recarregar 5x → realizar `git push` → recarregar 5x → confirmar que nome, @handle e REGISTROS persistem intactos.
+
+**6.6** O `passwordHash` e o `recoveryHash` originais do perfil **nunca** podem ser substituídos por um cálculo derivado de senha vazia ou nula. Tentativas de gravar hash de senha vazia devem **abortar a operação inteira** e logar erro.
+
+---
+
 ## Processo de Conformidade
 
 Antes de aprovar qualquer mudança que toque em:

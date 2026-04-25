@@ -350,6 +350,17 @@ window.veedaDebug = {
   }
 };
 console.log("[Veeda] Debug disponível: veedaDebug.diag() / veedaDebug.testShare('@handle')");
+
+// Notifica usuário se perfis foram restaurados de backup (Art 6.4)
+window.addEventListener("load",()=>{
+  setTimeout(()=>{
+    if(window._veedaProfilesRecovered){
+      const r=window._veedaProfilesRecovered;
+      console.warn("⚠️ Veeda: perfis restaurados de backup automático.",r);
+      try{alert(`Veeda restaurou ${r.count} perfil(is) de um backup automático.\n\nSeu acesso está intacto. Esse aviso indica que o app detectou um momento em que os perfis poderiam ter sido perdidos — e impediu.`);}catch{}
+    }
+  },1500);
+});
 </script>
 <script src="react.min.js"></script>
 <script src="react-dom.min.js"></script>
@@ -363,7 +374,7 @@ console.log("[Veeda] Debug disponível: veedaDebug.diag() / veedaDebug.testShare
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.0.5";
+const APP_VERSION  = "2.0.6";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -501,8 +512,124 @@ const safeLS={
 };
 
 // ── Profiles ───────────────────────────────────────────────
+// CRÍTICO: ler CONSTITUTION.md Art 6 antes de modificar qualquer coisa aqui.
+// A regra é: NUNCA apagar perfil existente, NUNCA sobrescrever sem merge aditivo.
+
 const loadProfiles=()=>safeLS.get(PROFILES_KEY,[]);
-const saveProfiles=ps=>safeLS.set(PROFILES_KEY,ps);
+
+// ── Backup rolling do registro de perfis (Art 6.3) ─────────
+// Antes de QUALQUER escrita em PROFILES_KEY, tira snapshot. Mantém os 5 mais recentes.
+const PROFILES_BACKUP_PREFIX="veeda_backup_profiles_";
+const PROFILES_BACKUP_KEEP=5;
+const createProfilesBackup=()=>{
+  try{
+    const cur=safeLS.raw(PROFILES_KEY);
+    if(!cur||cur==="[]"||cur==="null")return; // não cria backup vazio
+    const k=`${PROFILES_BACKUP_PREFIX}${Date.now()}`;
+    safeLS.rawSet(k,cur);
+    // Rotação: mantém apenas os N mais recentes
+    const all=[];
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(key&&key.startsWith(PROFILES_BACKUP_PREFIX))all.push(key);
+    }
+    all.sort();
+    while(all.length>PROFILES_BACKUP_KEEP){
+      const old=all.shift();
+      try{localStorage.removeItem(old);}catch{}
+    }
+  }catch(e){console.warn("[Veeda backup] falha:",e);}
+};
+const listProfilesBackups=()=>{
+  const out=[];
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith(PROFILES_BACKUP_PREFIX)){
+      out.push({key:k,ts:parseInt(k.replace(PROFILES_BACKUP_PREFIX,""),10)||0});
+    }
+  }
+  return out.sort((a,b)=>b.ts-a.ts);
+};
+
+// safeMergeProfile(updated) — única porta de entrada permitida (Art 6.2)
+// - Encontra perfil pelo id; se não existe, append
+// - Faz merge aditivo (campos existentes preservados se 'updated' não os trouxer)
+// - PROIBIDO sobrescrever id, handle, passwordHash com vazio (Art 6.6)
+const safeMergeProfile=(updated)=>{
+  if(!updated||!updated.id){console.error("[safeMergeProfile] perfil sem id, abortando:",updated);return false;}
+  const ps=loadProfiles();
+  const idx=ps.findIndex(p=>p.id===updated.id);
+  if(idx<0){
+    // Append novo perfil
+    if(!updated.handle||!updated.passwordHash){console.error("[safeMergeProfile] perfil novo sem handle/passwordHash, abortando");return false;}
+    createProfilesBackup();
+    ps.push(updated);
+    safeLS.set(PROFILES_KEY,ps);
+    return true;
+  }
+  const cur=ps[idx];
+  // Validações de invariantes (Art 2 + 6)
+  if(updated.handle&&updated.handle!==cur.handle){
+    console.error("[safeMergeProfile] tentativa de mudar @handle (Art 2.1) — bloqueada. id=",cur.id);
+    return false;
+  }
+  if(Object.prototype.hasOwnProperty.call(updated,"passwordHash")&&!updated.passwordHash){
+    console.error("[safeMergeProfile] tentativa de gravar passwordHash vazio (Art 6.6) — bloqueada.");
+    return false;
+  }
+  // Merge aditivo
+  const merged={...cur,...updated};
+  // Garante que campos críticos do existente nunca somem
+  merged.id=cur.id;
+  merged.handle=cur.handle;
+  if(!merged.passwordHash)merged.passwordHash=cur.passwordHash;
+  if(!merged.recoveryHash&&cur.recoveryHash)merged.recoveryHash=cur.recoveryHash;
+  if(!merged.createdAt&&cur.createdAt)merged.createdAt=cur.createdAt;
+  createProfilesBackup();
+  ps[idx]=merged;
+  safeLS.set(PROFILES_KEY,ps);
+  return true;
+};
+
+// saveProfiles substitui o array INTEIRO. Mantém retrocompat, mas com backup obrigatório.
+// Code paths novos devem preferir safeMergeProfile.
+const saveProfiles=ps=>{
+  if(!Array.isArray(ps)){console.error("[saveProfiles] arg inválido");return;}
+  // Detector de regressão: nunca permitir cair pra zero perfis se havia perfis antes
+  const prev=loadProfiles();
+  if(prev.length>0&&ps.length===0){
+    console.error("[saveProfiles] BLOCKED: tentativa de zerar perfis quando havia",prev.length,"— ABORTADO (Art 6.1)");
+    return;
+  }
+  createProfilesBackup();
+  safeLS.set(PROFILES_KEY,ps);
+};
+
+// Boot recovery (Art 6.4) — chamado uma vez no carregamento.
+// Se PROFILES_KEY vier vazio/corrompido E houver backup com perfis válidos, restaura.
+const bootRecoverProfiles=()=>{
+  try{
+    const cur=loadProfiles();
+    if(cur&&cur.length>0)return{recovered:false,reason:"profiles ok"};
+    const backups=listProfilesBackups();
+    for(const b of backups){
+      try{
+        const raw=safeLS.raw(b.key);
+        if(!raw)continue;
+        const parsed=JSON.parse(raw);
+        if(Array.isArray(parsed)&&parsed.length>0&&parsed.every(p=>p.id&&p.handle)){
+          safeLS.rawSet(PROFILES_KEY,raw);
+          console.warn("[Veeda] PERFIS RESTAURADOS do backup",b.key,"—",parsed.length,"perfis (Art 6.4)");
+          window._veedaProfilesRecovered={count:parsed.length,from:b.key,ts:b.ts};
+          return{recovered:true,count:parsed.length,from:b.key};
+        }
+      }catch{continue;}
+    }
+    return{recovered:false,reason:"no valid backup"};
+  }catch(e){console.error("[bootRecoverProfiles]",e);return{recovered:false,error:String(e)};}
+};
+// Executa imediatamente — antes de qualquer leitura subsequente
+bootRecoverProfiles();
 
 // ── Session (persiste entre fechamentos do app) ─────────────
 const loadSession=()=>safeLS.get(SESSION_KEY,null);
