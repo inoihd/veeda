@@ -10,6 +10,16 @@
 <meta name="description" content="Viva primeiro, compartilhe depois."/>
 <link rel="manifest" href="manifest.json"/>
 <title>Veeda</title>
+<!-- ── Security headers ──────────────────────────────────────────────────
+     Nota: X-Frame-Options e X-Content-Type-Options devem ser reforçados
+     via HTTP headers no servidor (Supabase/CDN). Os meta tags abaixo são
+     uma segunda camada de defesa para clientes que os respeitam.
+     CSP completa não é aplicável enquanto Babel rodar no browser (eval).
+     ─────────────────────────────────────────���────────────────────────── -->
+<meta http-equiv="X-Content-Type-Options" content="nosniff"/>
+<meta http-equiv="X-Frame-Options" content="DENY"/>
+<meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin"/>
+<meta http-equiv="Permissions-Policy" content="camera=(), microphone=(self), geolocation=(self), payment=()"/>
 <style>
 /* ═══════════════════════════════════════════════════════════
    VEEDA ADVANCED STYLES — v2.0
@@ -479,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.2";
+const APP_VERSION  = "2.1.3";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
