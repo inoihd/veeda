@@ -542,3 +542,7 @@ const VeedaSupabase = (() => {
     }
   };
 })();
+
+// Expor explicitamente em window para o React (Babel) — const top-level
+// NÃO vira propriedade de window automaticamente.
+if (typeof window !== "undefined") window.VeedaSupabase = VeedaSupabase;
