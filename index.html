@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.1.6";
+  var EMBEDDED_VERSION = "2.1.7";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.6";
+const APP_VERSION  = "2.1.7";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -3058,7 +3058,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       // Confirmações → vira contato
       const sbConfs=await VeedaSupabase.connections.getConfirmations(myH);
       if(sbConfs.length){
-        // Re-read dataRef to get absolutely latest contacts before saving
+        // Lê dataRef AGORA para ter os dados mais atuais possíveis antes do save
         const latestData=dataRef.current||currentData;
         const newContacts=[];
         for(const conf of sbConfs){
@@ -3071,7 +3071,12 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           }
           if(conf._sbId)VeedaSupabase.connections.markConfirmationConsumed(conf._sbId);
         }
-        if(newContacts.length>0)await save({...latestData,contacts:[...(latestData.contacts||[]),...newContacts]});
+        if(newContacts.length>0){
+          // Re-lê uma última vez IMEDIATAMENTE antes do save para capturar qualquer
+          // momento ou contato adicionado enquanto as chamadas API estavam em andamento
+          const freshest=dataRef.current||latestData;
+          await save({...freshest,contacts:[...(freshest.contacts||[]),...newContacts.filter(nc=>!(freshest.contacts||[]).find(c=>(c.handle||"").replace(/^@/,"")===(nc.handle||"").replace(/^@/,"")))]});
+        }
       }
     }catch(e){console.warn("[VeedaSupabase sync]",e);}
   },[profile,checkInbox,save,addToast]);
@@ -3125,8 +3130,13 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     }
   },[data,loading]);
 
-  // Monthly snapshot on every save + queue cloud push
-  const save=useCallback(async d=>{
+  // ── save: persiste dados com proteção contra race conditions ─────────────
+  // opts.allowReduce=true: permite salvar com menos registros (exclusões intencionais)
+  // Sem allowReduce: após a criptografia (async), mescla com dataRef.current para
+  // garantir que saves concorrentes nunca percam momentos ou contatos.
+  const save=useCallback(async(d,opts={})=>{
+    if(!d)return;
+    // Produz versão "lightweight": mídia grande vai para IDB, mantém referência
     const lightweight={...d,moments:{},lastSaved:Date.now()};
     Object.keys(d.moments||{}).forEach(day=>{
       lightweight.moments[day]=(d.moments[day]||[]).map(m=>{
@@ -3137,16 +3147,66 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         return m;
       });
     });
-    setData({...d,lastSaved:lightweight.lastSaved});
+    // Criptografa (operação async — outros saves podem ocorrer durante este await)
     let enc;
     if(sessionKey.current&&sessionSalt.current){
       enc=await encryptFast(lightweight,sessionKey.current,sessionSalt.current);
     } else {
       enc=await encryptObj(lightweight,password);
     }
+    // ── GUARD: após o await, mescla com o estado atual para não perder dados ──
+    // Race condition: se outro save aconteceu durante a criptografia e adicionou
+    // contatos ou momentos, incorporamos aqui antes de gravar no localStorage.
+    let finalD=d;
+    let finalLW=lightweight;
+    if(!opts.allowReduce&&dataRef.current){
+      const cur=dataRef.current;
+      // Mescla contatos: pega a união de d.contacts e cur.contacts
+      const dC=d.contacts||[];const curC=cur.contacts||[];
+      let needsReencrypt=false;
+      if(curC.length>dC.length){
+        const merged=[...dC];
+        for(const c of curC){
+          if(!merged.find(x=>(x.handle||"").replace(/^@/,"")===(c.handle||"").replace(/^@/,""))){merged.push(c);}
+        }
+        if(merged.length>dC.length){finalD={...finalD,contacts:merged};finalLW={...finalLW,contacts:merged};needsReencrypt=true;}
+      }
+      // Mescla momentos: para cada dia, pega o array com mais registros
+      const dM=d.moments||{};const curM=cur.moments||{};
+      for(const day of Object.keys(curM)){
+        const curDay=curM[day]||[];const dDay=dM[day]||[];
+        if(curDay.length>dDay.length){
+          // Dia no estado atual tem mais momentos — incorporar os que faltam
+          const dIds=new Set(dDay.map(m=>m.id));
+          const extra=curDay.filter(m=>!dIds.has(m.id));
+          if(extra.length>0){
+            const mergedDay=[...dDay,...extra];
+            // Reconverte data: para IDB se necessário
+            const mergedDayLW=mergedDay.map(m=>{
+              if((m.type==="foto"||m.type==="video"||m.type==="arte")&&m.content?.startsWith("data:")){
+                idbSave(`${m.id}`,m.content);return{...m,content:"IDB:"+m.id};
+              }
+              return m;
+            });
+            finalD={...finalD,moments:{...(finalD.moments||{}),[day]:mergedDay}};
+            finalLW={...finalLW,moments:{...(finalLW.moments||{}),[day]:mergedDayLW}};
+            needsReencrypt=true;
+          }
+        }
+      }
+      if(needsReencrypt){
+        finalLW={...finalLW,lastSaved:lightweight.lastSaved};
+        if(sessionKey.current&&sessionSalt.current){
+          enc=await encryptFast(finalLW,sessionKey.current,sessionSalt.current);
+        } else {
+          enc=await encryptObj(finalLW,password);
+        }
+      }
+    }
+    // Grava: primeiro atualiza estado React, depois persistência
+    setData({...finalD,lastSaved:finalLW.lastSaved});
     safeLS.rawSet(dataKey,enc);
     saveMonthlySnapshot(profile.id,enc);
-    // Cloud push (debounced): só se o perfil é cloud-enabled
     if(profile.cloud){cloudSync.queuePush(profile.id,enc);}
   },[dataKey,password,profile.id,profile.cloud]);
 
@@ -3240,17 +3300,19 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   },[profile]);
 
   const acceptNotif=useCallback(async()=>{
-    if(!pendingNotif||!data)return;
+    const cur=dataRef.current;
+    if(!pendingNotif||!cur)return;
     clearInbox(pendingNotif);
-    await save({...data,received:[...(data.received||[]),pendingNotif]});
+    await save({...cur,received:[...(cur.received||[]),pendingNotif]});
     setPendingNotif(null);setUnreadCount(0);
     setView("recebidos");setViewRec(pendingNotif);
-  },[pendingNotif,data,clearInbox,save]);
+  },[pendingNotif,clearInbox,save]);
 
   const dismissNotif=useCallback(()=>{if(!pendingNotif)return;clearInbox(pendingNotif);setPendingNotif(null);},[pendingNotif,clearInbox]);
 
   const addMoment=useCallback((extra={})=>{
-    if(!data)return;
+    const cur=dataRef.current;
+    if(!cur)return;
     const isMedia=addType==="foto"||addType==="video";
     if(isMedia&&!addMedia)return;
     if(addType==="musica"&&!extra.trackTitle&&!addContent.trim())return;
@@ -3259,14 +3321,15 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     if(type==="link"&&isVideoLink(content))type="videolink";
     const id=Date.now();
     const m={id,ts:id,type,content,caption:addCaption.trim()||undefined,tags:addTags.length?addTags:undefined,location:addLocation||undefined,...extra};
-    save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});
+    save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});
     resetModal();setLastId(id);
-  },[addType,addMedia,addContent,addCaption,addTags,addLocation,data,save,resetModal]);
+  },[addType,addMedia,addContent,addCaption,addTags,addLocation,save,resetModal]);
 
   const delMoment=useCallback((day,id)=>{
-    if(!data)return;
-    save({...data,moments:{...(data.moments||{}),[day]:((data.moments||{})[day]||[]).filter(m=>m.id!==id)}});
-  },[data,save]);
+    const cur=dataRef.current;
+    if(!cur)return;
+    save({...cur,moments:{...(cur.moments||{}),[day]:((cur.moments||{})[day]||[]).filter(m=>m.id!==id)}},{allowReduce:true});
+  },[save]);
 
   const updateAv=useCallback(updated=>{
     const ps=loadProfiles();const idx=ps.findIndex(p=>p.id===updated.id);
@@ -3293,8 +3356,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     <div style={{maxWidth:480,margin:"0 auto",background:`linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradEnd} 100%)`,minHeight:"100vh",fontFamily:SANS}}>
       <ToastContainer/>
       {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
-      {showAcceptSharedDay&&pendingSharedDay&&<AcceptSharedDayModal shared={pendingSharedDay} onClose={()=>{setShowAcceptSharedDay(false);setPendingSharedDay(null);}} onAccept={async()=>{if(!data||!pendingSharedDay)return;await save({...data,received:[...(data.received||[]),pendingSharedDay]});setShowAcceptSharedDay(false);setPendingSharedDay(null);setUnreadCount(c=>c+1);setView("recebidos");setViewRec(pendingSharedDay);addToast?.("Dia recebido e salvo! 🌿","success");}}/>}
-      {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
+      {showAcceptSharedDay&&pendingSharedDay&&<AcceptSharedDayModal shared={pendingSharedDay} onClose={()=>{setShowAcceptSharedDay(false);setPendingSharedDay(null);}} onAccept={async()=>{const cur=dataRef.current;if(!cur||!pendingSharedDay)return;await save({...cur,received:[...(cur.received||[]),pendingSharedDay]});setShowAcceptSharedDay(false);setPendingSharedDay(null);setUnreadCount(c=>c+1);setView("recebidos");setViewRec(pendingSharedDay);addToast?.("Dia recebido e salvo! 🌿","success");}}/>}
+      {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const cur=dataRef.current;if(!cur)return;const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
       {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
       {/* Visualização read-only de REGISTRO da PESSOA DO MEU CÍRCULO: sem onDelete */}
       {expandedRecMoment&&<MomentDetail m={expandedRecMoment} onClose={()=>setExpandedRecMoment(null)}/>}
@@ -3389,7 +3452,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
               <div key={i} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
                 <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={44}/>
                 <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{c.name}</p><p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{c.handle}</p></div>
-                <button onClick={()=>{const nc=[...activeData.contacts];nc.splice(i,1);save({...data,contacts:nc});}} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer",padding:"6px"}}>remover</button>
+                <button onClick={()=>{const cur=dataRef.current;if(!cur)return;const nc=(cur.contacts||[]).filter((_,idx)=>idx!==i);save({...cur,contacts:nc},{allowReduce:true});}} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer",padding:"6px"}}>remover</button>
               </div>
             ))
           }
@@ -3507,12 +3570,12 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       )}
 
       {/* ── Modals ── */}
-      {showShare&&<ShareDayModal profile={profile} data={activeData} curDay={curDay} onClose={()=>setShowShare(false)} onShared={async log=>{await save({...data,sharedLog:log});}} addToast={addToast}/>}
-      {showEvents&&<EventsModal data={activeData} profile={profile} onSave={events=>save({...data,events})} onClose={()=>setShowEvents(false)}/>}
-      {showReminders&&<RemindersModal reminders={activeData.reminders||[]} onSave={list=>save({...data,reminders:list})} onClose={()=>setShowReminders(false)}/>}
+      {showShare&&<ShareDayModal profile={profile} data={activeData} curDay={curDay} onClose={()=>setShowShare(false)} onShared={async log=>{const cur=dataRef.current;if(cur)await save({...cur,sharedLog:log});}} addToast={addToast}/>}
+      {showEvents&&<EventsModal data={activeData} profile={profile} onSave={events=>{const cur=dataRef.current;if(cur)save({...cur,events});}} onClose={()=>setShowEvents(false)}/>}
+      {showReminders&&<RemindersModal reminders={activeData.reminders||[]} onSave={list=>{const cur=dataRef.current;if(cur)save({...cur,reminders:list});}} onClose={()=>setShowReminders(false)}/>}
       {showInviteApp&&<InviteModal onClose={()=>setShowInviteApp(false)}/>}
       {showSettings&&<SettingsModal profile={profile} data={activeData} password={password} onUpdateProfile={p=>{updateAv(p);onUpdateProfile(p);}} onSave={save} onLogout={onLogout} onClose={()=>setShowSettings(false)} addToast={addToast}/>}
-      {showMusicPicker&&<MusicPicker onClose={()=>setShowMusicPicker(false)} onSelect={r=>{setShowMusicPicker(false);const id=Date.now();const m={id,ts:id,type:"musica",content:r.title,trackTitle:r.title,trackArtist:r.artist,trackAlbum:r.album,albumArt:r.art,previewUrl:r.preview,appleMusicUrl:r.appleMusicUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});setLastId(id);resetModal();}}/>}
+      {showMusicPicker&&<MusicPicker onClose={()=>setShowMusicPicker(false)} onSelect={r=>{setShowMusicPicker(false);const cur=dataRef.current;if(!cur)return;const id=Date.now();const m={id,ts:id,type:"musica",content:r.title,trackTitle:r.title,trackArtist:r.artist,trackAlbum:r.album,albumArt:r.art,previewUrl:r.preview,appleMusicUrl:r.appleMusicUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});setLastId(id);resetModal();}}/>}
 
       {/* ADD MOMENT MODAL */}
       {showModal&&(
@@ -3560,7 +3623,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
           {addType==="voz"&&<div style={{marginBottom:12}}>
             {showVoice
-              ?<VoiceRecorder onClose={()=>setShowVoice(false)} onSave={(dataUrl,dur)=>{setShowVoice(false);const id=Date.now();const m={id,ts:id,type:"voz",content:dataUrl,duration:dur,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});setLastId(id);resetModal();}}/>
+              ?<VoiceRecorder onClose={()=>setShowVoice(false)} onSave={(dataUrl,dur)=>{setShowVoice(false);const cur=dataRef.current;if(!cur)return;const id=Date.now();const m={id,ts:id,type:"voz",content:dataUrl,duration:dur,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});setLastId(id);resetModal();}}/>
               :<Btn onClick={()=>setShowVoice(true)} variant="teal">🎙️ Iniciar gravação de voz</Btn>
             }
           </div>}
@@ -3580,13 +3643,13 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
       {showEditDay&&<Modal title="Cor do dia" onClose={()=>setShowEditDay(false)}>
         <div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>
-          {DAY_COLORS.map(col=><button key={col.label} onClick={()=>{save({...data,dayColors:{...(data.dayColors||{}),[curDay]:col.label}});setShowEditDay(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",padding:8}}><div style={{width:52,height:52,borderRadius:"50%",background:col.bg,border:`3px solid ${col.dot}`,outline:dayColor.label===col.label?`3px solid ${C.purple}`:"none",outlineOffset:2}}/><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{col.label}</span></button>)}
+          {DAY_COLORS.map(col=><button key={col.label} onClick={()=>{const cur=dataRef.current;if(cur){save({...cur,dayColors:{...(cur.dayColors||{}),[curDay]:col.label}});}setShowEditDay(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",padding:8}}><div style={{width:52,height:52,borderRadius:"50%",background:col.bg,border:`3px solid ${col.dot}`,outline:dayColor.label===col.label?`3px solid ${C.purple}`:"none",outlineOffset:2}}/><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{col.label}</span></button>)}
         </div>
       </Modal>}
 
       {showFeeling&&<Modal title="Como foi este Dia de Veeda?" onClose={()=>setShowFeeling(false)}>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",padding:"8px 0"}}>
-          {FEELINGS.map(f=><button key={f.label} onClick={()=>{save({...data,dayFeelings:{...(data.dayFeelings||{}),[curDay]:f}});setShowFeeling(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:feeling?.label===f.label?C.purpleLight:"#F5F3FB",border:`2px solid ${feeling?.label===f.label?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",cursor:"pointer",minWidth:72}}><span style={{fontSize:30}}>{f.emoji}</span><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{f.label}</span></button>)}
+          {FEELINGS.map(f=><button key={f.label} onClick={()=>{const cur=dataRef.current;if(cur){save({...cur,dayFeelings:{...(cur.dayFeelings||{}),[curDay]:f}});}setShowFeeling(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,background:feeling?.label===f.label?C.purpleLight:"#F5F3FB",border:`2px solid ${feeling?.label===f.label?C.purple:C.cardBorder}`,borderRadius:14,padding:"12px 14px",cursor:"pointer",minWidth:72}}><span style={{fontSize:30}}>{f.emoji}</span><span style={{fontSize:11,color:C.textMid,fontWeight:500}}>{f.label}</span></button>)}
         </div>
       </Modal>}
 
@@ -3607,12 +3670,12 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       </Modal>}
 
       {showInvite&&<Modal title="Adicionar ao Meu Círculo" onClose={()=>{setShowInvite(false);setPendingAddCode(null);}}>
-        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} profile={profile} prefillCard={pendingAddCode} onAdd={c=>{save({...data,contacts:[...(data.contacts||[]),c]});setShowInvite(false);setPendingAddCode(null);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>{setShowInvite(false);setPendingAddCode(null);}} addToast={addToast}/>
+        <AddContactModal contacts={activeData.contacts||[]} myHandle={profile.handle||nameToHandle(profile.name)} profile={profile} prefillCard={pendingAddCode} onAdd={c=>{const cur=dataRef.current;if(cur){save({...cur,contacts:[...(cur.contacts||[]),c]});}setShowInvite(false);setPendingAddCode(null);addToast?.(`${c.name} adicionado ao Meu Círculo! 🤝`,"success");}} onClose={()=>{setShowInvite(false);setPendingAddCode(null);}} addToast={addToast}/>
       </Modal>}
 
       {showGroupName&&<Modal title="Renomear" onClose={()=>setShowGroupName(false)}>
         <input value={newGroup} onChange={e=>setNewGroup(e.target.value)} placeholder="Nome do grupo" style={{marginBottom:16}}/>
-        <Btn onClick={()=>{if(newGroup.trim()){save({...data,groupName:newGroup.trim()});setShowGroupName(false);}}}>Salvar</Btn>
+        <Btn onClick={()=>{if(newGroup.trim()){const cur=dataRef.current;if(cur)save({...cur,groupName:newGroup.trim()});setShowGroupName(false);}}}>Salvar</Btn>
       </Modal>}
 
       {viewProfile&&<ProfileModal
