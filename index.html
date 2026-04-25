@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.1.0";
+  var EMBEDDED_VERSION = "2.1.5";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.4";
+const APP_VERSION  = "2.1.5";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1107,9 +1107,11 @@ const cloudSync={
         const ll=dl?.lastSaved||0,rr=dr?.lastSaved||0;
         // Conta total de registros em cada versão
         const countM=d=>Object.values(d?.moments||{}).reduce((s,a)=>s+(a||[]).length,0);
+        const countC=d=>(d?.contacts||[]).length;
         const localCount=countM(dl),remoteCount=countM(dr);
-        // Usa remoto somente se for mais recente E não tiver menos registros que o local
-        if(rr>ll&&remoteCount>=localCount){
+        const localContacts=countC(dl),remoteContacts=countC(dr);
+        // Usa remoto somente se for mais recente E não tiver menos registros nem contatos
+        if(rr>ll&&remoteCount>=localCount&&remoteContacts>=localContacts){
           safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
           return{used:"remote",reason:"newer"};
         }
@@ -2904,15 +2906,24 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
             } else { throw decErr; }
           }
         } else {
-          const d=EMPTY_DATA();
-          const enc=await encryptObj(d,password);
-          const{key,salt}=await decryptObj(enc,password);
-          sessionKey.current=key;sessionSalt.current=salt;
-          setData(d);
-          safeLS.rawSet(dataKey,enc);
-          saveMonthlySnapshot(profile.id,enc);
-          // Primeiro save na nuvem (se conectado)
-          if(gTok&&profile.cloud){cloudSync.queuePush(profile.id,enc);}
+          // Sem dados locais — tenta recuperar snapshot antes de criar vazio
+          const snap=await loadLatestSnapshot(profile.id,password);
+          if(snap){
+            sessionKey.current=snap.key;sessionSalt.current=snap.salt;
+            setData(migrateData(snap.data));
+            addToast?.("Dados restaurados do backup mensal ✅","success");
+          } else {
+            // Realmente novo usuário — cria dados vazios (nunca empurra nuvem com vazio)
+            const d=EMPTY_DATA();
+            const enc=await encryptObj(d,password);
+            const{key,salt}=await decryptObj(enc,password);
+            sessionKey.current=key;sessionSalt.current=salt;
+            setData(d);
+            safeLS.rawSet(dataKey,enc);
+            saveMonthlySnapshot(profile.id,enc);
+            // Só envia para nuvem se for conta nova com dados reais (não vazio)
+            if(gTok&&profile.cloud){cloudSync.queuePush(profile.id,enc);}
+          }
         }
       }catch(fatalErr){
         console.error("Boot error — tentando recuperar snapshot",fatalErr);
