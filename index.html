@@ -3095,10 +3095,33 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     return()=>{window.removeEventListener("pagehide",flush);window.removeEventListener("beforeunload",flush);};
   },[profile.cloud]);
 
+  // Keep a ref to the latest hydratedData so the effect can read it without
+  // adding it as a dependency (which would create an infinite loop).
+  const hydratedDataRef=useRef(null);
+  useEffect(()=>{hydratedDataRef.current=hydratedData;},[hydratedData]);
+
   // Hydrate IDB media
   useEffect(()=>{
     if(!data)return;
     let cancelled=false;
+
+    // ── Immediate sync update ──────────────────────────────────────────────
+    // Before the async IDB reads, produce the best possible snapshot right now:
+    // • moments that have real content (new saves, text) appear immediately
+    // • moments already hydrated in the previous hydratedData are reused (no flicker)
+    // • remaining IDB refs stay as-is until the async pass resolves them
+    const prev=hydratedDataRef.current;
+    const merged={...data,moments:{}};
+    for(const day of Object.keys(data.moments||{})){
+      merged.moments[day]=(data.moments[day]||[]).map(m=>{
+        if(!m.content?.startsWith("IDB:"))return m; // already has real content
+        const prevM=(prev?.moments||{})[day]?.find(p=>p.id===m.id&&!p.content?.startsWith("IDB:"));
+        return prevM||m; // reuse cached hydrated value if available
+      });
+    }
+    setHydratedData(merged); // makes new moments visible RIGHT AWAY
+
+    // ── Async pass: load any remaining IDB refs ────────────────────────────
     (async()=>{
       const hd={...data,moments:{}};
       for(const day of Object.keys(data.moments||{})){
