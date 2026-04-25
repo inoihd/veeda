@@ -479,7 +479,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.0";
+const APP_VERSION  = "2.1.1";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -2842,6 +2842,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
   const sessionKey=useRef(null);
   const sessionSalt=useRef(null);
+  const dataRef=useRef(null); // always points to latest data — used by stale callbacks
   const vidRef=useRef(),photoRef=useRef(),galleryRef=useRef(),lastRef=useRef(null),touchX=useRef(null);
 
   // ── Data load ──────────────────────────────────
@@ -2884,7 +2885,22 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           // Primeiro save na nuvem (se conectado)
           if(gTok&&profile.cloud){cloudSync.queuePush(profile.id,enc);}
         }
-      }catch{setData(EMPTY_DATA());}
+      }catch(fatalErr){
+        console.error("Boot error — tentando recuperar snapshot",fatalErr);
+        try{
+          const snap=await loadLatestSnapshot(profile.id,password);
+          if(snap){
+            sessionKey.current=snap.key;sessionSalt.current=snap.salt;
+            setData(migrateData(snap.data));
+            addToast?.("Dados recuperados do backup mensal ✅","success");
+          } else {
+            // Só cria dados vazios se realmente não havia nada salvo (novo usuário)
+            const rawCheck=safeLS.raw(dataKey);
+            if(!rawCheck){setData(EMPTY_DATA());}
+            else{setData(EMPTY_DATA());} // dados corrompidos e sem backup — último recurso
+          }
+        }catch{setData(EMPTY_DATA());}
+      }
       setLoading(false);
     })();
     const t=setInterval(()=>setNow(new Date()),30000);
@@ -2916,6 +2932,9 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
   useEffect(()=>{if(data&&!loading)checkInbox();},[data,loading]);
 
+  // Keep dataRef always up-to-date so stale interval callbacks read fresh data
+  useEffect(()=>{dataRef.current=data;},[data]);
+
   // ── Supabase: sync cross-device ──────────────────────────
   const sbChannels=useRef([]);
 
@@ -2945,7 +2964,10 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   },[profile]);
 
   const syncFromSupabase=useCallback(async()=>{
-    if(!window.VeedaSupabase?.isReady()||!data)return;
+    // Use dataRef.current so this stable callback always reads the latest data,
+    // even when called from the 30-second interval (which holds a stale closure).
+    const currentData=dataRef.current;
+    if(!window.VeedaSupabase?.isReady()||!currentData)return;
     const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
     const MAX_C=5; // MAX_CONTACTS_BETA
     try{
@@ -2956,7 +2978,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         const k=`veeda_inbox_${myH}`;
         const inbox=safeLS.get(k,[]);
         if(!inbox.find(r=>r.date===day.date&&r.author===day.author)&&
-           !(data.received||[]).find(r=>r.date===day.date&&r.handle===day.handle)){
+           !(currentData.received||[]).find(r=>r.date===day.date&&r.handle===day.handle)){
           inbox.push(day);safeLS.set(k,inbox);inboxChanged=true;
           if(day._sbId)VeedaSupabase.days.markConsumed(day._sbId,day.importedAt);
         }
@@ -2973,10 +2995,12 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       // Confirmações → vira contato
       const sbConfs=await VeedaSupabase.connections.getConfirmations(myH);
       if(sbConfs.length){
+        // Re-read dataRef to get absolutely latest contacts before saving
+        const latestData=dataRef.current||currentData;
         const newContacts=[];
         for(const conf of sbConfs){
-          const dup=(data.contacts||[]).find(c=>(c.handle||"").replace(/^@/,"")===(conf.fromHandle||"").replace(/^@/,""));
-          if(!dup&&(data.contacts||[]).length+newContacts.length<MAX_C){
+          const dup=(latestData.contacts||[]).find(c=>(c.handle||"").replace(/^@/,"")===(conf.fromHandle||"").replace(/^@/,""));
+          if(!dup&&(latestData.contacts||[]).length+newContacts.length<MAX_C){
             newContacts.push({name:conf.fromName,handle:conf.fromHandle,code:conf.fromHandle.replace(/^@/,""),
               emoji:conf.fromEmoji||"🌿",avatarColor:conf.fromAvatarColor||"#D0C4F7",
               avatarSrc:conf.fromAvatarSrc,addedAt:conf.confirmedAt});
@@ -2984,10 +3008,10 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           }
           if(conf._sbId)VeedaSupabase.connections.markConfirmationConsumed(conf._sbId);
         }
-        if(newContacts.length>0)await save({...data,contacts:[...(data.contacts||[]),...newContacts]});
+        if(newContacts.length>0)await save({...latestData,contacts:[...(latestData.contacts||[]),...newContacts]});
       }
     }catch(e){console.warn("[VeedaSupabase sync]",e);}
-  },[data,profile,checkInbox,save,addToast]);
+  },[profile,checkInbox,save,addToast]);
 
   // Setup realtime + sync inicial ao carregar dados
   useEffect(()=>{
@@ -3752,8 +3776,9 @@ function Veeda(){
     }finally{setImporting(false);}
   },[googleUser]);
 
-  // ── Logout: limpa sessão + Google (preserva dados locais!)
-  const doLogoutApp=useCallback(()=>{
+  // ── Logout: flush cloud sync primeiro, depois limpa sessão (preserva dados locais!)
+  const doLogoutApp=useCallback(async()=>{
+    try{await cloudSync.flushAll();}catch(e){console.warn("flush on logout failed",e);}
     clearSession();
     setActiveProfile(null);setActivePw(null);
     setScreen("splash");

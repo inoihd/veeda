@@ -88,7 +88,28 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
           saveMonthlySnapshot(profile.id, enc);
           if (gTok && profile.cloud) cloudSync.queuePush(profile.id, enc);
         }
-      } catch { setData(EMPTY_DATA()); }
+      } catch (fatalErr) {
+        console.error('Boot error — attempting snapshot recovery', fatalErr);
+        try {
+          const snap = await loadLatestSnapshot(profile.id, password);
+          if (snap) {
+            sessionKey.current = snap.key; sessionSalt.current = snap.salt;
+            setData(migrateData(snap.data));
+            addToast?.('Dados recuperados do backup mensal ✅', 'success');
+          } else {
+            // Only create empty data if there was truly nothing (new user with no data)
+            const rawCheck = safeLS.raw(dataKey);
+            if (!rawCheck) {
+              setData(EMPTY_DATA());
+            } else {
+              // Local data exists but is unreadable — do NOT wipe it, show error
+              setDecryptionError(fatalErr);
+              setShowDecryptionRecovery(true);
+              setData(EMPTY_DATA());
+            }
+          }
+        } catch { setData(EMPTY_DATA()); }
+      }
       setLoading(false);
     })();
     const t = setInterval(() => setNow(new Date()), 30000);
@@ -136,13 +157,18 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     if (!data || loading) return;
     const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
     const confirmations = getConnectionConfirmations(myH);
-    
-    if (confirmations.length > 0) {
-      confirmations.forEach(async (confirmation) => {
-        const exists = (data.contacts || []).find(c => 
+    if (confirmations.length === 0) return;
+
+    // Clear all confirmations immediately to prevent re-processing on re-render
+    confirmations.forEach(c => clearConnectionConfirmation(myH, c.fromId));
+
+    // Process sequentially, threading currentData to avoid stale closure race
+    (async () => {
+      let currentData = data;
+      for (const confirmation of confirmations) {
+        const exists = (currentData.contacts || []).find(c =>
           (c.handle || '').replace(/^@/, '') === confirmation.fromHandle.replace(/^@/, '')
         );
-        
         if (!exists) {
           const newContact = {
             name: confirmation.fromName,
@@ -153,18 +179,16 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             avatarSrc: confirmation.fromAvatarSrc,
             addedAt: confirmation.confirmedAt
           };
-          
-          await save({
-            ...data,
-            contacts: [...(data.contacts || []), newContact]
-          });
-          
+          const nextData = {
+            ...currentData,
+            contacts: [...(currentData.contacts || []), newContact]
+          };
+          await save(nextData);
+          currentData = nextData;
           addToast?.(`${confirmation.fromName} aceitou seu convite! 🤝`, 'success');
         }
-        
-        clearConnectionConfirmation(myH, confirmation.fromId);
-      });
-    }
+      }
+    })();
   }, [data, loading, profile, save, addToast]);
 
   useEffect(() => {
@@ -806,7 +830,11 @@ function Veeda() {
     finally { setImporting(false); }
   }, [googleUser]);
 
-  const doLogoutApp = useCallback(() => { clearSession(); setActiveProfile(null); setActivePw(null); setScreen('splash'); }, []);
+  const doLogoutApp = useCallback(async () => {
+    // Flush pending cloud writes before clearing session so next pullOnBoot gets latest data
+    try { await cloudSync.flushAll(); } catch (e) { console.warn('flush on logout failed', e); }
+    clearSession(); setActiveProfile(null); setActivePw(null); setScreen('splash');
+  }, []);
   const doLogoutGoogle = useCallback(() => { clearGoogleAuth(); setGoogleUser(null); setCloudProfiles([]); setScreen('splash'); }, []);
 
   if (screen === 'loading') return <div style={{minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.splashBg}}><Spinner size={36} color={C.purple} /></div>;
