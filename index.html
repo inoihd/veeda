@@ -304,7 +304,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.0.9";
+  var EMBEDDED_VERSION = "2.1.0";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -479,7 +479,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.0.9";
+const APP_VERSION  = "2.1.0";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1596,7 +1596,9 @@ function MomentDetail({m,onClose,onDelete}){
       </div>}
 
       {canSave&&<Btn onClick={saveToDevice} disabled={saving} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>{saving?<><Spinner size={14} color={C.purple}/>Preparando…</>:"↓ Salvar no dispositivo"}</Btn>}
-      <Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>
+      {/* Botão de remover só aparece se onDelete foi passado (modo edição do próprio DONO).
+          Em visualização da LINHA DO TEMPO de PESSOA DO MEU CÍRCULO, fica oculto. */}
+      {typeof onDelete==="function"&&<Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>}
     </Modal>
   );
 }
@@ -2827,6 +2829,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [viewRec,setViewRec]=useState(null);
   const [pendingNotif,setPendingNotif]=useState(null);
   const [expandedMoment,setExpandedMoment]=useState(null);
+  // Estado separado para visualização read-only de REGISTROS de PESSOAS DO MEU CÍRCULO
+  const [expandedRecMoment,setExpandedRecMoment]=useState(null);
   const [viewProfile,setViewProfile]=useState(null);
   const [newGroup,setNewGroup]=useState("");
   const [lastId,setLastId]=useState(null);
@@ -3182,6 +3186,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       {showAcceptSharedDay&&pendingSharedDay&&<AcceptSharedDayModal shared={pendingSharedDay} onClose={()=>{setShowAcceptSharedDay(false);setPendingSharedDay(null);}} onAccept={async()=>{if(!data||!pendingSharedDay)return;await save({...data,received:[...(data.received||[]),pendingSharedDay]});setShowAcceptSharedDay(false);setPendingSharedDay(null);setUnreadCount(c=>c+1);setView("recebidos");setViewRec(pendingSharedDay);addToast?.("Dia recebido e salvo! 🌿","success");}}/>}
       {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...data,moments:{...(data.moments||{}),[todayStr()]:[...((data.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
       {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
+      {/* Visualização read-only de REGISTRO da PESSOA DO MEU CÍRCULO: sem onDelete */}
+      {expandedRecMoment&&<MomentDetail m={expandedRecMoment} onClose={()=>setExpandedRecMoment(null)}/>}
 
       {/* ── Header ── */}
       <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,position:"sticky",top:0,zIndex:100,paddingTop:"env(safe-area-inset-top)"}}>
@@ -3314,26 +3320,65 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           }
         </div>}
 
-        {view==="recebidos"&&viewRec&&(
-          <div style={{paddingBottom:20}}>
-            <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,display:"flex",flexDirection:"column",alignItems:"center",padding:"18px 16px 14px"}}>
-              <AvatarBubble src={viewRec.avatarSrc} emoji={viewRec.emoji||"🌿"} color={viewRec.avatarColor||C.purpleLight} size={70} ring/>
-              <p style={{margin:"10px 0 2px",fontSize:16,fontWeight:700,color:C.text,fontFamily:PASSO}}>{viewRec.author}</p>
-              <p style={{margin:0,fontSize:12,color:C.textLight}}>Dia de Veeda · {fmtFull(viewRec.date)}</p>
-              {viewRec.feeling&&<div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:8,background:C.purpleLight,borderRadius:20,padding:"4px 12px"}}><span>{viewRec.feeling.emoji}</span><span style={{fontSize:11,color:C.tabActive,fontWeight:500}}>{viewRec.feeling.label}</span></div>}
-              {viewRec.message&&<div style={{margin:"12px 0 0",background:C.purpleLight,borderRadius:12,padding:"12px 16px",width:"100%",boxSizing:"border-box"}}><p style={{margin:0,fontSize:14,color:C.purple,fontStyle:"italic",lineHeight:1.6}}>"{viewRec.message}"</p></div>}
-              <button onClick={()=>setViewRec(null)} style={{marginTop:12,fontSize:13,color:C.textMid,background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:20,padding:"6px 18px",cursor:"pointer"}}>‹ Voltar</button>
+        {view==="recebidos"&&viewRec&&(()=>{
+          // Mesma estrutura de slots do MEU DIA, agrupando por horário (HH:MM).
+          // O DONO DA VEEDA vê a LINHA DO TEMPO da PESSOA DO MEU CÍRCULO igual à dele,
+          // mas sem botões de adicionar/remover. Read-only puro.
+          const recMoments=(viewRec.moments||[]).slice().sort((a,b)=>a.ts-b.ts);
+          const by={};
+          recMoments.forEach(m=>{const k=fmt(m.ts);if(!by[k])by[k]=[];by[k].push(m);});
+          const recSlots=Object.keys(by).sort().map(t=>({time:t,moments:by[t]}));
+          // Cor do dia: usa o que veio no payload, senão padrão
+          const recDayColor=DAY_COLORS.find(c=>c.label===viewRec.dayColor)||DAY_COLORS[0];
+          return(
+            <div style={{paddingBottom:20}}>
+              {/* Header do autor + sentimento + mensagem */}
+              <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,display:"flex",flexDirection:"column",alignItems:"center",padding:"18px 16px 14px"}}>
+                <AvatarBubble src={viewRec.avatarSrc} emoji={viewRec.emoji||"🌿"} color={viewRec.avatarColor||C.purpleLight} size={70} ring/>
+                <p style={{margin:"10px 0 2px",fontSize:16,fontWeight:700,color:C.text,fontFamily:PASSO}}>{viewRec.author}</p>
+                {viewRec.handle&&<p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{viewRec.handle.startsWith("@")?viewRec.handle:"@"+viewRec.handle}</p>}
+                <p style={{margin:"4px 0 0",fontSize:12,color:C.textLight}}>Dia de Veeda · {fmtFull(viewRec.date)}</p>
+                {viewRec.feeling&&<div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:8,background:C.purpleLight,borderRadius:20,padding:"4px 12px"}}><span>{viewRec.feeling.emoji}</span><span style={{fontSize:11,color:C.tabActive,fontWeight:500}}>{viewRec.feeling.label}</span></div>}
+                {viewRec.message&&<div style={{margin:"12px 0 0",background:C.purpleLight,borderRadius:12,padding:"12px 16px",width:"100%",boxSizing:"border-box"}}><p style={{margin:0,fontSize:14,color:C.purple,fontStyle:"italic",lineHeight:1.6}}>"{viewRec.message}"</p></div>}
+                <button onClick={()=>setViewRec(null)} style={{marginTop:12,fontSize:13,color:C.textMid,background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:20,padding:"6px 18px",cursor:"pointer"}}>‹ Voltar</button>
+                <p style={{margin:"10px 0 0",fontSize:10,color:C.textLight,fontStyle:"italic"}}>Visualização somente leitura — você não pode editar a LINHA DO TEMPO de outra pessoa.</p>
+              </div>
+
+              {/* LINHA DO TEMPO vertical zig-zag idêntica à de MEU DIA, mas read-only */}
+              <div style={{position:"relative",padding:"16px 0 24px"}}>
+                {recSlots.length>0&&<div style={{position:"absolute",left:"50%",top:0,bottom:0,width:3,borderRadius:3,background:`linear-gradient(to bottom,${recDayColor.dot}44,${recDayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`,transform:"translateX(-50%)",zIndex:0}}/>}
+                {recSlots.length===0&&<div style={{textAlign:"center",padding:"3rem 1.5rem"}}><div style={{fontSize:48,marginBottom:12}}>🌿</div><p style={{fontSize:14,color:C.textLight,margin:0}}>Nenhum REGISTRO neste dia.</p></div>}
+                {recSlots.map((slot,i)=>{
+                  const isLeft=i%2===0;
+                  return(
+                    <div key={slot.time} style={{position:"relative",display:"flex",alignItems:"flex-start",marginBottom:30,zIndex:1}}>
+                      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-end",paddingRight:20,paddingLeft:10,gap:6}}>
+                        {isLeft&&slot.moments.map(m=>(
+                          <div key={m.id}>
+                            <MomentCircle m={m} onTap={()=>setExpandedRecMoment(m)}/>
+                            <span style={{display:"block",textAlign:"right",fontSize:10,color:C.textLight,marginTop:2}}>{fmt(m.ts)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0,zIndex:2}}>
+                        <div style={{width:12,height:12,borderRadius:"50%",background:recDayColor.dot,border:`2.5px solid ${C.white}`,boxShadow:"0 1px 4px rgba(0,0,0,.1)"}}/>
+                        <span style={{fontSize:9,color:C.textLight,marginTop:3,whiteSpace:"nowrap"}}>{slot.time}</span>
+                      </div>
+                      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"flex-start",paddingLeft:20,paddingRight:10,gap:6}}>
+                        {!isLeft&&slot.moments.map(m=>(
+                          <div key={m.id}>
+                            <MomentCircle m={m} onTap={()=>setExpandedRecMoment(m)}/>
+                            <span style={{display:"block",fontSize:10,color:C.textLight,marginTop:2}}>{fmt(m.ts)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{padding:16,display:"flex",flexWrap:"wrap",gap:12}}>
-              {(viewRec.moments||[]).slice().sort((a,b)=>a.ts-b.ts).map(m=>(
-                <div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                  <MomentCircle m={m} onTap={()=>setExpandedMoment(m)} size={58}/>
-                  <span style={{fontSize:10,color:C.textLight}}>{fmt(m.ts)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* ── FAB Buttons ── */}
