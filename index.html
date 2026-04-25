@@ -304,7 +304,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.0.7";
+  var EMBEDDED_VERSION = "2.0.8";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -418,6 +418,40 @@ window.veedaDebug = {
     const ok = await VeedaSupabase.days.share(myProfile, [cleanTo], payload);
     console.log(ok ? "✅ Insert no Supabase OK" : "❌ Insert FALHOU — abra Network e veja o erro RLS");
     return ok;
+  },
+  // ── REPARO DE SESSÃO ──
+  // Tenta restabelecer sessão Supabase a partir do perfil/passwordHash locais.
+  // Útil quando: o usuário criou a conta antes do Supabase existir,
+  // ou quando a sessão expirou silenciosamente.
+  async fixAuth(){
+    if(!VeedaSupabase.isReady()){console.log("❌ Supabase OFFLINE");return false;}
+    const psRaw = localStorage.getItem("veeda_profiles_v2");
+    const ps = psRaw ? JSON.parse(psRaw) : [];
+    if(!ps.length){console.log("❌ Nenhum perfil local");return false;}
+    // Tenta o perfil mais recente. Se há vários, usa a sessão local atual como dica.
+    const sessRaw = localStorage.getItem("veeda_session");
+    let target = ps[ps.length-1];
+    if(sessRaw){
+      try{
+        const s = JSON.parse(sessRaw);
+        const found = ps.find(p => p.id === s.profileId);
+        if(found) target = found;
+      }catch{}
+    }
+    console.log("→ Reparando auth para", target.handle, "(", target.name, ")");
+    if(!target.passwordHash){console.log("❌ Perfil sem passwordHash — não dá para autenticar");return false;}
+    const ok = await VeedaSupabase.auth.ensureAuth(target.handle, target.passwordHash);
+    if(ok){
+      console.log("✅ Sessão Supabase estabelecida.");
+      await VeedaSupabase.profiles.register(target);
+      console.log("✅ Perfil registrado/atualizado no Supabase.");
+      const sess = await VeedaSupabase.auth.getSession();
+      console.log("Session:", sess);
+      return true;
+    }else{
+      console.log("❌ ensureAuth falhou. Verifique se 'Confirm email' está DESATIVADO em Supabase Auth Settings.");
+      return false;
+    }
   }
 };
 console.log("[Veeda] Debug disponível: veedaDebug.diag() / veedaDebug.testShare('@handle')");
@@ -445,7 +479,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.0.7";
+const APP_VERSION  = "2.0.8";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -2880,6 +2914,31 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
   // ── Supabase: sync cross-device ──────────────────────────
   const sbChannels=useRef([]);
+
+  // ── Auto-heal de sessão Supabase ─────────────────────────
+  // Garante que toda vez que o app carrega, há sessão Supabase válida.
+  // Sem isso, RLS bloqueia tudo e o cross-device falha silenciosamente.
+  useEffect(()=>{
+    if(!profile||!window.VeedaSupabase?.isReady())return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        const sess=await VeedaSupabase.auth.getSession();
+        if(sess&&!cancelled){
+          // Sessão existe — garante que perfil está espelhado
+          await VeedaSupabase.profiles.register(profile).catch(()=>{});
+          return;
+        }
+        if(!profile.passwordHash){console.warn("[Veeda heal] perfil sem passwordHash, não dá para autenticar");return;}
+        console.log("[Veeda heal] sem sessão Supabase, restabelecendo...");
+        const ok=await VeedaSupabase.auth.ensureAuth(profile.handle,profile.passwordHash);
+        if(!ok){console.warn("[Veeda heal] ensureAuth falhou — RLS vai bloquear sync");return;}
+        console.log("[Veeda heal] sessão restabelecida");
+        if(!cancelled)await VeedaSupabase.profiles.register(profile).catch(()=>{});
+      }catch(e){console.warn("[Veeda heal]",e);}
+    })();
+    return()=>{cancelled=true;};
+  },[profile]);
 
   const syncFromSupabase=useCallback(async()=>{
     if(!window.VeedaSupabase?.isReady()||!data)return;
