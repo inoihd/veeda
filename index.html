@@ -479,7 +479,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.1";
+const APP_VERSION  = "2.1.2";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1067,7 +1067,8 @@ const cloudSync={
     }catch(e){console.warn("cloud push failed",e);}
   },
   async flushAll(){for(const id of[..._pendingBlobs.keys()])await cloudSync.flushPush(id);},
-  // pullOnBoot: compara Drive vs local; se Drive maior/mais recente, substitui local.
+  // pullOnBoot: compara Drive vs local; usa o remoto somente se for mais recente
+  // E tiver pelo menos tantos registros quanto o local — nunca apaga histórico.
   async pullOnBoot(profileId,password,t){
     try{
       const remote=await cloudData.load(profileId,t);
@@ -1077,17 +1078,19 @@ const cloudSync={
         safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
         return{used:"remote",reason:"no_local"};
       }
-      // Se idênticos, nada a fazer
       if(localRaw===remote.content)return{used:"equal"};
-      // Tenta decifrar ambos e escolher o com moments mais recente
       try{
         const[{data:dl},{data:dr}]=await Promise.all([decryptObj(localRaw,password),decryptObj(remote.content,password)]);
         const ll=dl?.lastSaved||0,rr=dr?.lastSaved||0;
-        if(rr>ll){
+        // Conta total de registros em cada versão
+        const countM=d=>Object.values(d?.moments||{}).reduce((s,a)=>s+(a||[]).length,0);
+        const localCount=countM(dl),remoteCount=countM(dr);
+        // Usa remoto somente se for mais recente E não tiver menos registros que o local
+        if(rr>ll&&remoteCount>=localCount){
           safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
           return{used:"remote",reason:"newer"};
         }
-        return{used:"local",reason:"newer_or_equal"};
+        return{used:"local",reason:"local_has_more_or_equal"};
       }catch(e){return{used:"local",reason:"decrypt_failed"};}
     }catch(e){console.warn("cloudSync.pullOnBoot failed",e);return{used:"local",reason:"error"};}
   },
@@ -1177,8 +1180,11 @@ const getVideoEmbed=url=>{
 };
 const isVideoLink=url=>!!getVideoEmbed(url);
 const fmt=ts=>new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-const todayStr=()=>new Date().toISOString().slice(0,10);
-const offsetDay=(d,n)=>{const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
+// Use LOCAL calendar date so users in UTC-3 (Brazil) don't get moments bucketed
+// into the next UTC day when created after 21:00 local time.
+const todayStr=()=>{const d=new Date();const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,"0");const dy=String(d.getDate()).padStart(2,"0");return`${y}-${m}-${dy}`;};
+// offsetDay: create date at local noon to stay on the correct calendar day in any timezone
+const offsetDay=(d,n)=>{const[y,mo,dy]=d.split("-").map(Number);const dt=new Date(y,mo-1,dy,12,0,0);dt.setDate(dt.getDate()+n);const yr=dt.getFullYear();const mm=String(dt.getMonth()+1).padStart(2,"0");const dd=String(dt.getDate()).padStart(2,"0");return`${yr}-${mm}-${dd}`;};
 const fmtLabel=d=>{const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
 const fmtFull=d=>{const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};
 // ═══════════════════════════════════════════════════════════

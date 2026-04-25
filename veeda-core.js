@@ -610,11 +610,13 @@ const cloudSync={
       try{
         const[{data:dl},{data:dr}]=await Promise.all([decryptObj(localRaw,password),decryptObj(remote.content,password)]);
         const ll=dl?.lastSaved||0,rr=dr?.lastSaved||0;
-        if(rr>ll){
+        const countM=d=>Object.values(d?.moments||{}).reduce((s,a)=>s+(a||[]).length,0);
+        const localCount=countM(dl),remoteCount=countM(dr);
+        if(rr>ll&&remoteCount>=localCount){
           safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
           return{used:"remote",reason:"newer"};
         }
-        return{used:"local",reason:"newer_or_equal"};
+        return{used:"local",reason:"local_has_more_or_equal"};
       }catch(e){return{used:"local",reason:"decrypt_failed"};}
     }catch(e){console.warn("cloudSync.pullOnBoot failed",e);return{used:"local",reason:"error"};}
   },
