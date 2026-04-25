@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.3";
+const APP_VERSION  = "2.1.4";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -905,31 +905,44 @@ const _isPWAStandalone=()=>
 const gdriveAuth=()=>new Promise((res,rej)=>{
   const authUrl=_buildOAuthUrl();
   if(_isPWAStandalone()){
-    // Em PWA não há popup — faz redirect completo da página
-    window.location.href=authUrl;
-    return; // promise nunca resolve; a página navega
-  }
-  const popup=window.open(authUrl,"gauth","width=500,height=620");
-  if(!popup||popup.closed){
-    // Popup bloqueado pelo browser — fallback para redirect
     window.location.href=authUrl;
     return;
   }
-  const t=setInterval(()=>{
+  const popup=window.open(authUrl,"gauth","width=500,height=620");
+  if(!popup||popup.closed){
+    window.location.href=authUrl;
+    return;
+  }
+  let done=false;
+  const finish=token=>{
+    if(done)return;done=true;
+    clearInterval(poll);
+    window.removeEventListener("message",onMsg);
+    safeLS.set(GDRIVE_KEY,token);
+    res(token.access_token);
+  };
+  // Primary: postMessage from popup (popup detects token and signals us)
+  const onMsg=e=>{
+    if(e.origin!==window.location.origin)return;
+    if(e.data?.type==="veeda_oauth"&&e.data.access_token){
+      try{popup.close();}catch{}
+      finish({access_token:e.data.access_token,expires_in:parseInt(e.data.expires_in||"3600",10),scope:e.data.scope||"",ts:Date.now()});
+    }
+  };
+  window.addEventListener("message",onMsg);
+  // Fallback: poll for hash in case postMessage fails (old cached popup)
+  const poll=setInterval(()=>{
     try{
-      if(!popup||popup.closed){clearInterval(t);rej(new Error("Janela fechada."));return;}
+      if(!popup||popup.closed){
+        clearInterval(poll);window.removeEventListener("message",onMsg);
+        if(!done)rej(new Error("Janela fechada."));return;
+      }
       const hash=popup.location.hash;
       if(hash&&hash.includes("access_token")){
-        clearInterval(t);popup.close();
+        clearInterval(poll);
         const p=new URLSearchParams(hash.slice(1));
-        const token={
-          access_token:p.get("access_token"),
-          expires_in:parseInt(p.get("expires_in")||"3600",10),
-          scope:p.get("scope"),
-          ts:Date.now(),
-        };
-        safeLS.set(GDRIVE_KEY,token);
-        res(token.access_token);
+        try{popup.close();}catch{}
+        finish({access_token:p.get("access_token"),expires_in:parseInt(p.get("expires_in")||"3600",10),scope:p.get("scope")||"",ts:Date.now()});
       }
     }catch{}
   },500);
@@ -3615,6 +3628,14 @@ function Veeda(){
       const hp=new URLSearchParams(hash.slice(1));
       const at=hp.get("access_token");
       if(at){
+        // Se estamos dentro de um popup, sinaliza o pai e fecha — não faz boot completo
+        if(window.opener&&!window.opener.closed){
+          try{
+            window.opener.postMessage({type:"veeda_oauth",access_token:at,expires_in:hp.get("expires_in"),scope:hp.get("scope")},window.location.origin);
+          }catch(e){console.warn("postMessage to opener failed",e);}
+          window.close();
+          return; // popup fecha; pai continua o fluxo
+        }
         const token={access_token:at,expires_in:parseInt(hp.get("expires_in")||"3600",10),scope:hp.get("scope"),ts:Date.now()};
         safeLS.set(GDRIVE_KEY,token);
         // Limpa o hash da URL sem recarregar
