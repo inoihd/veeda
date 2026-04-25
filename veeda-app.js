@@ -45,12 +45,12 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   const [showConnectionRequests, setShowConnectionRequests] = useState(false);
   const [pendingSharedDay, setPendingSharedDay] = useState(null);
   const [showAcceptSharedDay, setShowAcceptSharedDay] = useState(false);
-  const [timelineView, setTimelineView] = useState('vertical'); // 'vertical' or 'horizontal'
+  const [decryptionError, setDecryptionError] = useState(null);
+  const [showDecryptionRecovery, setShowDecryptionRecovery] = useState(false);
 
   const sessionKey = useRef(null);
   const sessionSalt = useRef(null);
   const vidRef = useRef(), photoRef = useRef(), galleryRef = useRef(), lastRef = useRef(null), touchX = useRef(null);
-  const sbChannels = useRef([]);
 
   useEffect(() => {
     (async () => {
@@ -69,6 +69,8 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             sessionKey.current = key; sessionSalt.current = salt;
             setData(migrateData(d));
           } catch (decErr) {
+            setDecryptionError(decErr);
+            setShowDecryptionRecovery(true);
             const snap = await loadLatestSnapshot(profile.id, password);
             if (snap) {
               sessionKey.current = snap.key; sessionSalt.current = snap.salt;
@@ -88,10 +90,6 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
         }
       } catch { setData(EMPTY_DATA()); }
       setLoading(false);
-      
-      // Mark user as active when app loads
-      const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
-      markUserActive(myH);
     })();
     const t = setInterval(() => setNow(new Date()), 30000);
     const onStorage = e => {
@@ -109,7 +107,12 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
       const inbox = safeLS.get(k, []);
       if (inbox.length > 0) {
         const notif = inbox[0];
-        if (!(data.received || []).find(r => r.date === notif.date && r.author === notif.author && r.importedAt === notif.importedAt)) {
+        const isDuplicate = (data.received || []).find(r => 
+          r.date === notif.date && 
+          (r.author === notif.author || r.handle === notif.handle) && 
+          Math.abs((r.importedAt || 0) - (notif.importedAt || 0)) < 1000
+        );
+        if (!isDuplicate) {
           setPendingNotif(notif);
           setUnreadCount(c => c + 1);
           showNativeNotif('Veeda', `${notif.author} compartilhou o dia com você! 🌿`);
@@ -120,104 +123,6 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   }, [data, profile]);
 
   useEffect(() => { if (data && !loading) checkInbox(); }, [data, loading]);
-
-  // ── Supabase: sync cross-device ────────────────────────────
-  const syncFromSupabase = useCallback(async () => {
-    if (!window.VeedaSupabase?.isReady() || !data) return;
-    const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
-    try {
-      // 1. Dias compartilhados recebidos
-      const sbDays = await VeedaSupabase.days.getInbox(myH);
-      let inboxChanged = false;
-      for (const day of sbDays) {
-        const inboxKey = `veeda_inbox_${myH}`;
-        const inbox = safeLS.get(inboxKey, []);
-        const alreadyInbox = inbox.find(r => r.date === day.date && r.author === day.author);
-        const alreadyReceived = (data.received || []).find(r => r.date === day.date && r.handle === day.handle);
-        if (!alreadyInbox && !alreadyReceived) {
-          inbox.push(day); safeLS.set(inboxKey, inbox); inboxChanged = true;
-          if (day._sbId) VeedaSupabase.days.markConsumed(day._sbId, day.importedAt);
-        }
-      }
-      if (inboxChanged) checkInbox();
-
-      // 2. Pedidos de conexão recebidos
-      const sbReqs = await VeedaSupabase.connections.getRequests(myH);
-      if (sbReqs.length) {
-        const lsKey = `veeda_conn_requests_${myH}`;
-        const lsReqs = safeLS.get(lsKey, []);
-        let changed = false;
-        for (const req of sbReqs) {
-          if (!lsReqs.find(r => r.fromId === req.fromId)) { lsReqs.push(req); changed = true; }
-        }
-        if (changed) safeLS.set(lsKey, lsReqs);
-        const pending = lsReqs.filter(r => r.status === 'pending');
-        if (pending.length > 0) setPendingConnections(pending);
-      }
-
-      // 3. Confirmações: o remetente original vira contato
-      const sbConfs = await VeedaSupabase.connections.getConfirmations(myH);
-      if (sbConfs.length) {
-        const newContacts = [];
-        for (const conf of sbConfs) {
-          const alreadyContact = (data.contacts || []).find(
-            c => (c.handle || '').replace(/^@/, '') === (conf.fromHandle || '').replace(/^@/, '')
-          );
-          if (!alreadyContact && (data.contacts || []).length + newContacts.length < MAX_CONTACTS_BETA) {
-            newContacts.push({
-              name: conf.fromName, handle: conf.fromHandle,
-              code: conf.fromHandle.replace(/^@/, ''), emoji: conf.fromEmoji || '🌿',
-              avatarColor: conf.fromAvatarColor || C.purpleLight,
-              avatarSrc: conf.fromAvatarSrc, addedAt: conf.confirmedAt
-            });
-            addToast?.(`${conf.fromName} aceitou seu convite! 🤝`, 'success');
-          }
-          if (conf._sbId) VeedaSupabase.connections.markConfirmationConsumed(conf._sbId);
-        }
-        if (newContacts.length > 0) {
-          await save({ ...data, contacts: [...(data.contacts || []), ...newContacts] });
-        }
-      }
-    } catch (e) { console.warn('[VeedaSupabase sync]', e); }
-  }, [data, profile, checkInbox, save, addToast]);
-
-  // Setup realtime + sync inicial quando os dados carregam
-  useEffect(() => {
-    if (loading || !data || !window.VeedaSupabase?.isReady()) return;
-    const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
-
-    syncFromSupabase();
-
-    // Realtime: novos dias no inbox
-    const inboxSub = VeedaSupabase.realtime.subscribeInbox(myH, day => {
-      const k = `veeda_inbox_${myH}`;
-      const inbox = safeLS.get(k, []);
-      if (!inbox.find(r => r.date === day.date && r.author === day.author)) {
-        inbox.push(day); safeLS.set(k, inbox); checkInbox();
-      }
-    });
-
-    // Realtime: novos pedidos de conexão
-    const reqSub = VeedaSupabase.realtime.subscribeRequests(myH, req => {
-      const k = `veeda_conn_requests_${myH}`;
-      const reqs = safeLS.get(k, []);
-      if (!reqs.find(r => r.fromId === req.fromId)) {
-        reqs.push(req); safeLS.set(k, reqs);
-        setPendingConnections(prev => [...prev, req]);
-      }
-    });
-
-    sbChannels.current = [inboxSub, reqSub].filter(Boolean);
-
-    // Polling periódico como fallback (complementa realtime)
-    const syncInterval = setInterval(() => syncFromSupabase(), 30000);
-
-    return () => {
-      clearInterval(syncInterval);
-      sbChannels.current.forEach(c => VeedaSupabase.realtime.removeChannel(c));
-      sbChannels.current = [];
-    };
-  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!data || loading) return;
@@ -352,7 +257,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     moments.forEach(m => { const k = fmt(m.ts); if (!by[k]) by[k] = []; by[k].push(m); });
     const times = new Set(Object.keys(by));
     if (isToday) times.add(nowKey);
-    return Array.from(times).sort().map(t => ({time: t, moments: (by[t] || []).sort((a, b) => a.ts - b.ts), isNow: isToday && t === nowKey}));
+    return Array.from(times).sort().map(t => ({time: t, moments: by[t] || [], isNow: isToday && t === nowKey}));
   }, [moments, isToday, nowKey]);
 
   const dayColor = useMemo(() => DAY_COLORS.find(c => c.label === (activeData?.dayColors || {})[curDay]) || DAY_COLORS[0], [activeData, curDay]);
@@ -367,7 +272,11 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
     [`veeda_inbox_${myH}`, `veeda_inbox_${profile.id}`].forEach(k => {
       const inbox = safeLS.get(k, []);
-      safeLS.set(k, inbox.filter(x => !(x.date === notif.date && x.author === notif.author && x.importedAt === notif.importedAt)));
+      safeLS.set(k, inbox.filter(x => !(
+         x.date === notif.date && 
+         (x.author === notif.author || x.handle === notif.handle) && 
+         Math.abs((x.importedAt || 0) - (notif.importedAt || 0)) < 1000
+       )));
     });
   }, [profile]);
 
@@ -386,13 +295,6 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     const accepted = acceptConnectionRequest(myH, request.fromId);
     
     if (accepted) {
-      // Verificar limite de contatos para Beta 1.0
-      const currentContacts = data.contacts || [];
-      if (currentContacts.length >= MAX_CONTACTS_BETA) {
-        addToast?.(`Limite de ${MAX_CONTACTS_BETA} contatos atingido (versão Beta).`, 'error');
-        return;
-      }
-      
       const newContact = { 
         name: request.fromName, 
         handle: request.fromHandle, 
@@ -403,7 +305,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
         addedAt: Date.now() 
       };
       
-      save({...data, contacts: [...currentContacts, newContact]});
+      save({...data, contacts: [...(data.contacts || []), newContact]});
       
       const senderProfile = {
         id: request.fromId,
@@ -425,15 +327,11 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
       
       confirmConnectionToSender(senderProfile, myProfile);
       
-      // Verificar se a confirmação foi salva
-      const confirmations = getConnectionConfirmations(senderProfile.handle.replace(/^@/, ''));
-      const confirmationSent = confirmations.some(c => c.fromId === myProfile.id);
-      
       setPendingConnections(prev => 
         prev.filter(r => r.fromId !== request.fromId)
       );
       
-      addToast?.(`${request.fromName} adicionado ao seu Círculo! ${confirmationSent ? '🤝' : '⚠️'}`, 'success');
+      addToast?.(`${request.fromName} adicionado ao seu Círculo! 🤝`, 'success');
     }
   }, [data, profile, save, addToast]);
 
@@ -480,7 +378,8 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     <div style={{maxWidth: 480, margin: '0 auto', background: `linear-gradient(180deg,${dayColor.bg} 0%,${C.bgGradEnd} 100%)`, minHeight: '100vh', fontFamily: SANS}}>
       <ToastContainer />
       {pendingNotif && <ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif} />}
-      {showAcceptSharedDay && pendingSharedDay && <AcceptSharedDayModal shared={pendingSharedDay} currentUserProfile={profile} onClose={() => { setShowAcceptSharedDay(false); setPendingSharedDay(null); }} onAccept={async () => { if (!data || !pendingSharedDay) return; await save({...data, received: [...(data.received || []), pendingSharedDay]}); setShowAcceptSharedDay(false); setPendingSharedDay(null); setUnreadCount(c => c + 1); setView('recebidos'); setViewRec(pendingSharedDay); addToast?.('Dia recebido e salvo! 🌿', 'success'); }} onSaveComment={async (dayId, comment) => { const updated = {...data, comments: {...(data.comments || {}), [dayId]: [...((data.comments || {})[dayId] || []), comment]}}; await save(updated); addToast?.('Comentário adicionado! 💬', 'success'); }} />}
+      {showDecryptionRecovery && <Modal title="⚠️ Dados Corrompidos" onClose={() => { setShowDecryptionRecovery(false); setDecryptionError(null); }}><p style={{fontSize: 14, color: C.text, marginBottom: 16}}>Detectamos um problema ao descriptografar seus dados locais. Estamos usando um backup seguro de 30 dias atrás.</p><p style={{fontSize: 12, color: C.textMid, marginBottom: 20}}>Se você tiver dados mais recentes, considere fazer um novo backup agora.</p><Btn onClick={() => { setShowDecryptionRecovery(false); setDecryptionError(null); }}>Entendi</Btn></Modal>}
+      {showAcceptSharedDay && pendingSharedDay && <AcceptSharedDayModal shared={pendingSharedDay} currentUserProfile={profile} onClose={() => { setShowAcceptSharedDay(false); setPendingSharedDay(null); }} onAccept={async () => { if (!data || !pendingSharedDay) return; const isDuplicate = (data.received || []).find(r => r.date === pendingSharedDay.date && (r.author === pendingSharedDay.author || r.handle === pendingSharedDay.handle) && Math.abs((r.importedAt || 0) - (pendingSharedDay.importedAt || 0)) < 1000); if (isDuplicate) { addToast?.('Este dia já foi recebido.', 'info'); setShowAcceptSharedDay(false); setPendingSharedDay(null); return; } await save({...data, received: [...(data.received || []), pendingSharedDay]}); setShowAcceptSharedDay(false); setPendingSharedDay(null); setView('recebidos'); setViewRec(pendingSharedDay); addToast?.('Dia recebido e salvo! 🌿', 'success'); }} onSaveComment={async (dayId, comment) => { const updated = {...data, comments: {...(data.comments || {}), [dayId]: [...((data.comments || {})[dayId] || []), comment]}}; await save(updated); addToast?.('Comentário adicionado! 💬', 'success'); }} />}
       {showDrawing && <DrawingCanvas onClose={() => setShowDrawing(false)} onSave={dataUrl => { setShowDrawing(false); const id = Date.now(); const m = {id, ts: id, type: 'arte', content: dataUrl, caption: addCaption.trim() || undefined, location: addLocation || undefined}; save({...data, moments: {...(data.moments || {}), [todayStr()]: [...((data.moments || {})[todayStr()] || []), m]}}); setLastId(id); setAddCaption(''); setAddLocation(null); }} />}
       {expandedMoment && <MomentDetail m={expandedMoment} onClose={() => setExpandedMoment(null)} onDelete={() => { delMoment(curDay, expandedMoment.id); setExpandedMoment(null); }} />}
 
@@ -529,15 +428,11 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
           {feeling && <div style={{display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, background: C.purpleLight, borderRadius: 20, padding: '3px 12px'}}><span style={{fontSize: 13}}>{feeling.emoji}</span><span style={{fontSize: 11, color: C.tabActive, fontWeight: 500}}>{feeling.label}</span></div>}
           {view === 'hoje' && <span style={{fontSize: 11, color: C.textLight, marginTop: 4}}>toque para editar perfil</span>}
         </div>
-        <TabBar
-          options={[
-            {key: 'hoje', label: 'Hoje'},
-            {key: 'grupo', label: group},
-            {key: 'recebidos', label: unreadCount > 0 ? `Recebidos (${unreadCount})` : 'Recebidos'}
-          ]}
-          value={view}
-          onChange={v => { setView(v); if (v === 'recebidos') setUnreadCount(0); }}
-        />
+        <div style={{display: 'flex', padding: '0 4px', overflowX: 'auto'}}>
+          {[['hoje', 'Hoje'], ['grupo', group], ['recebidos', unreadCount > 0 ? `Recebidos (${unreadCount})` : 'Recebidos']].map(([v, l]) => (
+            <button key={v} onClick={() => { setView(v); if (v === 'recebidos') setUnreadCount(0); }} style={{padding: '10px 14px', fontSize: 13, fontWeight: view === v ? 600 : 400, background: 'none', border: 'none', borderBottom: `2.5px solid ${view === v ? C.tabActive : 'transparent'}`, color: view === v ? C.tabActive : C.textMid, cursor: 'pointer', whiteSpace: 'nowrap'}}>{l}</button>
+          ))}
+        </div>
       </div>
 
       <div style={{paddingBottom: 120}}>
@@ -549,7 +444,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
               <button onClick={() => setDayOffset(o => Math.max(0, o - 1))} style={{background: 'none', border: 'none', fontSize: 24, color: dayOffset === 0 ? 'transparent' : C.textMid, cursor: dayOffset === 0 ? 'default' : 'pointer', padding: '4px 12px', pointerEvents: dayOffset === 0 ? 'none' : 'auto', fontFamily: PASSO}}>›</button>
             </div>
             <div style={{display: 'flex', gap: 6, padding: '6px 16px 10px', justifyContent: 'center', flexWrap: 'wrap'}}>
-              {[['🎨 cor', () => setShowEditDay(true), ''], ['', () => setShowFeeling(true), feeling ? `${feeling.emoji} ${feeling.label}` : '😊 sentimento'], ['🔔', () => setShowReminders(true), ''], ['📅', () => setShowEvents(true), upcoming.length > 0 ? `📅 (${upcoming.length})` : '📅'], [timelineView === 'vertical' ? '⬌' : '⬍', () => setTimelineView(timelineView === 'vertical' ? 'horizontal' : 'vertical'), timelineView === 'vertical' ? 'carrossel' : 'linha']].map(([icon, action, label], i) => (
+              {[['🎨 cor', () => setShowEditDay(true), ''], ['', () => setShowFeeling(true), feeling ? `${feeling.emoji} ${feeling.label}` : '😊 sentimento'], ['🔔', () => setShowReminders(true), ''], ['📅', () => setShowEvents(true), upcoming.length > 0 ? `📅 (${upcoming.length})` : '📅']].map(([icon, action, label], i) => (
                 <button key={i} onClick={action} style={{fontSize: 12, padding: '4px 12px', background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 20, color: C.textMid, cursor: 'pointer', fontFamily: SANS}}>{label || icon}</button>
               ))}
             </div>
@@ -557,55 +452,25 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             {isToday && upcoming[0] && <div style={{margin: '0 16px 10px', background: C.amberLight, border: `1px solid ${C.amber}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10}}><span style={{fontSize: 18}}>{EVENT_TYPES.find(t => t.id === upcoming[0].type)?.emoji || '📅'}</span><div><p style={{margin: 0, fontSize: 13, fontWeight: 600, color: C.amber}}>{upcoming[0].title}</p><p style={{margin: 0, fontSize: 11, color: C.textMid}}>{fmtLabel(upcoming[0].date)}{upcoming[0].time ? ` às ${upcoming[0].time}` : ''}</p></div></div>}
 
             <div style={{position: 'relative', padding: '16px 0 24px'}}>
-              {timelineView === 'vertical' ? (
-                <>
-                  {slots.length > 0 && <div style={{position: 'absolute', left: '50%', top: 0, bottom: 0, width: 3, borderRadius: 3, background: `linear-gradient(to bottom,${dayColor.dot}44,${dayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`, transform: 'translateX(-50%)', zIndex: 0}} />}
-                  {slots.length === 0 && <div style={{textAlign: 'center', padding: '3rem 1.5rem'}}><div style={{fontSize: 48, marginBottom: 12}}>🌿</div><p style={{fontSize: 14, color: C.textLight, margin: 0}}>{isToday ? 'Registre o primeiro momento do seu dia.' : 'Nenhum momento registrado neste dia.'}</p></div>}
-                  {slots.map((slot, i) => {
-                    const isLeft = i % 2 === 0;
-                    return (
-                      <div key={slot.time} style={{position: 'relative', display: 'flex', alignItems: 'flex-start', marginBottom: 30, zIndex: 1}}>
-                        <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', paddingRight: 20, paddingLeft: 10, gap: 6}}>
-                          {isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', textAlign: 'right', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
-                        </div>
-                        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, zIndex: 2}}>
-                          {slot.isNow ? <PulsingDot onClick={() => setShowModal(true)} color={dayColor.dot} /> : <div style={{width: 12, height: 12, borderRadius: '50%', background: dayColor.dot, border: `2.5px solid ${C.white}`, boxShadow: '0 1px 4px rgba(0,0,0,.1)'}} />}
-                          <span style={{fontSize: 9, color: C.textLight, marginTop: 3, whiteSpace: 'nowrap'}}>{slot.time}</span>
-                        </div>
-                        <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', paddingLeft: 20, paddingRight: 10, gap: 6}}>
-                          {!isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
-              ) : (
-                <>
-                  {slots.length === 0 && <div style={{textAlign: 'center', padding: '3rem 1.5rem'}}><div style={{fontSize: 48, marginBottom: 12}}>🌿</div><p style={{fontSize: 14, color: C.textLight, margin: 0}}>{isToday ? 'Registre o primeiro momento do seu dia.' : 'Nenhum momento registrado neste dia.'}</p></div>}
-                  <div style={{display: 'flex', overflowX: 'auto', padding: '0 16px', gap: 16, scrollSnapType: 'x mandatory'}}>
-                    {slots.map((slot, i) => (
-                      <div key={slot.time} style={{flexShrink: 0, width: 120, scrollSnapAlign: 'start'}}>
-                        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 12}}>
-                          {slot.isNow ? <PulsingDot onClick={() => setShowModal(true)} color={dayColor.dot} /> : <div style={{width: 12, height: 12, borderRadius: '50%', background: dayColor.dot, border: `2.5px solid ${C.white}`, boxShadow: '0 1px 4px rgba(0,0,0,.1)'}} />}
-                          <span style={{fontSize: 10, color: C.textLight, marginTop: 4, textAlign: 'center'}}>{slot.time}</span>
-                        </div>
-                        <div style={{display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center'}}>
-                          {slot.isNow ? (
-                            <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 16, padding: '8px 12px', fontSize: 11, color: C.purple, cursor: 'pointer', fontWeight: 600, textAlign: 'center', width: '100%'}}>registrar<br/>acontecimento</button>
-                          ) : (
-                            slot.moments.map(m => (
-                              <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null} style={{width: '100%'}}>
-                                <MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} />
-                                <span style={{display: 'block', textAlign: 'center', fontSize: 9, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    ))}
+              {slots.length > 0 && <div style={{position: 'absolute', left: '50%', top: 0, bottom: 0, width: 3, borderRadius: 3, background: `linear-gradient(to bottom,${dayColor.dot}44,${dayColor.dot} 30%,${C.blueMid} 70%,${C.blueLight})`, transform: 'translateX(-50%)', zIndex: 0}} />}
+              {slots.length === 0 && <div style={{textAlign: 'center', padding: '3rem 1.5rem'}}><div style={{fontSize: 48, marginBottom: 12}}>🌿</div><p style={{fontSize: 14, color: C.textLight, margin: 0}}>{isToday ? 'Registre o primeiro momento do seu dia.' : 'Nenhum momento registrado neste dia.'}</p></div>}
+              {slots.map((slot, i) => {
+                const isLeft = i % 2 === 0;
+                return (
+                  <div key={slot.time} style={{position: 'relative', display: 'flex', alignItems: 'flex-start', marginBottom: 30, zIndex: 1}}>
+                    <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', paddingRight: 20, paddingLeft: 10, gap: 6}}>
+                      {isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', textAlign: 'right', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
+                    </div>
+                    <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, zIndex: 2}}>
+                      {slot.isNow ? <PulsingDot onClick={() => setShowModal(true)} color={dayColor.dot} /> : <div style={{width: 12, height: 12, borderRadius: '50%', background: dayColor.dot, border: `2.5px solid ${C.white}`, boxShadow: '0 1px 4px rgba(0,0,0,.1)'}} />}
+                      <span style={{fontSize: 9, color: C.textLight, marginTop: 3, whiteSpace: 'nowrap'}}>{slot.time}</span>
+                    </div>
+                    <div style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', paddingLeft: 20, paddingRight: 10, gap: 6}}>
+                      {!isLeft && (slot.isNow ? <button onClick={() => setShowModal(true)} style={{background: C.white, border: `2px solid ${dayColor.dot}`, borderRadius: 20, padding: '10px 16px', fontSize: 12, color: C.purple, cursor: 'pointer', fontWeight: 600, lineHeight: 1.45, textAlign: 'center', maxWidth: 148}}>registrar<br/>acontecimento</button> : slot.moments.map(m => <div key={m.id} ref={m.id === lastMId && lastId === null ? lastRef : null}><MomentCircle m={m} isNew={m.id === lastMId && lastId === null} onTap={() => setExpandedMoment(m)} /><span style={{display: 'block', fontSize: 10, color: C.textLight, marginTop: 2}}>{fmt(m.ts)}</span></div>))}
+                    </div>
                   </div>
-                </>
-              )}
+                );
+              })}
             </div>
           </div>
         )}
@@ -615,49 +480,41 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
             <button onClick={() => { setNewGroup(group); setShowGroupName(true); }} style={{fontSize: 12, color: C.purple, background: 'none', border: 'none', cursor: 'pointer'}}>renomear</button>
           </div>
           <Btn onClick={() => setShowInvite(true)} style={{marginBottom: 20}}>+ Adicionar ao Círculo</Btn>
-          <div style={{background: C.amberLight, border: `1px solid ${C.amber}44`, borderRadius: 12, padding: '12px 16px', marginBottom: 16}}>
-            <p style={{margin: 0, fontSize: 12, color: C.amber, fontWeight: 600}}>Beta 1.0: Máximo {MAX_CONTACTS_BETA} contatos</p>
-            <p style={{margin: '4px 0 0', fontSize: 11, color: C.textMid}}>Atualmente: {(activeData.contacts || []).length} de {MAX_CONTACTS_BETA}</p>
-          </div>
-          {(!activeData.contacts || activeData.contacts.length === 0) ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>👥</div><p style={{fontSize: 14, color: C.textLight, marginBottom: 16}}>Nenhum contato ainda.</p><button onClick={() => setShowInviteApp(true)} style={{background: 'none', border: `1.5px solid ${C.purple}`, borderRadius: 20, padding: '9px 20px', color: C.purple, cursor: 'pointer', fontSize: 13, fontWeight: 600}}>Convidar para o Veeda</button></div> : getContactsStatus(activeData.contacts || []).map((c, i) => (
-            <ProfileCard
-              key={i}
-              profile={c}
-              status={c.status}
-              onClick={() => setViewProfile(c)}
-              onRemove={() => { const nc = [...activeData.contacts]; nc.splice(i, 1); save({...data, contacts: nc}); }}
-            />
+          {(!activeData.contacts || activeData.contacts.length === 0) ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>👥</div><p style={{fontSize: 14, color: C.textLight, marginBottom: 16}}>Nenhum contato ainda.</p><button onClick={() => setShowInviteApp(true)} style={{background: 'none', border: `1.5px solid ${C.purple}`, borderRadius: 20, padding: '9px 20px', color: C.purple, cursor: 'pointer', fontSize: 13, fontWeight: 600}}>Convidar para o Veeda</button></div> : activeData.contacts.map((c, i) => (
+            <div key={i} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12}}>
+              <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={44} />
+              <div style={{flex: 1}}><p style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.text}}>{c.name}</p><p style={{margin: 0, fontSize: 12, color: C.purple, fontWeight: 500}}>{c.handle}</p></div>
+              <button onClick={() => { const nc = [...activeData.contacts]; nc.splice(i, 1); save({...data, contacts: nc}); }} style={{fontSize: 12, color: C.textLight, background: 'none', border: 'none', cursor: 'pointer', padding: '6px'}}>remover</button>
+            </div>
           ))}
         </div>}
 
         {view === 'recebidos' && !viewRec && <div style={{padding: '20px 16px'}}>
-          <SectionTitle style={{marginBottom: 16}}>Dias recebidos</SectionTitle>
+          <p style={{fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16, fontFamily: PASSO}}>Dias recebidos</p>
           {(activeData.received || []).length === 0 ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>💌</div><p style={{fontSize: 14, color: C.textLight}}>Nenhum Dia de Veeda recebido ainda.</p></div> : (activeData.received || []).slice().sort((a, b) => b.importedAt - a.importedAt).map((r, i) => (
-            <Card key={i} onClick={() => setViewRec(r)} style={{marginBottom: 10}}>
-              <div style={{display: 'flex', alignItems: 'center', gap: 12}}>
-                <AvatarBubble src={r.avatarSrc} emoji={r.emoji || '🌿'} color={r.avatarColor || C.purpleLight} size={44} ring />
-                <div style={{flex: 1}}>
-                  <p
-                    style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.purple, cursor: 'pointer'}}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setViewProfile({
-                        name: r.author,
-                        handle: r.handle,
-                        emoji: r.emoji,
-                        avatarColor: r.avatarColor,
-                        avatarSrc: r.avatarSrc,
-                        id: r.authorId
-                      });
-                    }}
-                  >
-                    {r.author}
-                  </p>
-                  <p style={{margin: 0, fontSize: 12, color: C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length !== 1 ? 's' : ''}{r.feeling ? ` · ${r.feeling.emoji}` : ''}</p>
-                </div>
-                <span style={{color: C.textLight, fontSize: 22}}>›</span>
+            <div key={i} onClick={() => setViewRec(r)} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12}}>
+              <AvatarBubble src={r.avatarSrc} emoji={r.emoji || '🌿'} color={r.avatarColor || C.purpleLight} size={44} ring />
+              <div style={{flex: 1}}>
+                <p
+                  style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.purple, cursor: 'pointer'}}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setViewProfile({
+                      name: r.author,
+                      handle: r.handle,
+                      emoji: r.emoji,
+                      avatarColor: r.avatarColor,
+                      avatarSrc: r.avatarSrc,
+                      id: r.authorId
+                    });
+                  }}
+                >
+                  {r.author}
+                </p>
+                <p style={{margin: 0, fontSize: 12, color: C.textMid}}>{fmtLabel(r.date)} · {r.moments.length} momento{r.moments.length !== 1 ? 's' : ''}{r.feeling ? ` · ${r.feeling.emoji}` : ''}</p>
               </div>
-            </Card>
+              <span style={{color: C.textLight, fontSize: 22}}>›</span>
+            </div>
           ))}
         </div>}
 
@@ -671,22 +528,16 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
               {viewRec.message && <div style={{margin: '12px 0 0', background: C.purpleLight, borderRadius: 12, padding: '12px 16px', width: '100%', boxSizing: 'border-box'}}><p style={{margin: 0, fontSize: 14, color: C.purple, fontStyle: 'italic', lineHeight: 1.6}}>"{viewRec.message}"</p></div>}
               <button onClick={() => setViewRec(null)} style={{marginTop: 12, fontSize: 13, color: C.textMid, background: 'none', border: `1px solid ${C.cardBorder}`, borderRadius: 20, padding: '6px 18px', cursor: 'pointer'}}>‹ Voltar</button>
             </div>
-            <div style={{padding: 16, display: 'flex', flexWrap: 'wrap', gap: 12}}>
+            <div style={{padding: 16, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center'}}>
               {(viewRec.moments || []).slice().sort((a, b) => a.ts - b.ts).map(m => (
-                <div key={m.id} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4}}>
-                  <MomentCircle m={m} onTap={() => setExpandedMoment(m)} size={58} />
-                  <span style={{fontSize: 10, color: C.textLight}}>{fmt(m.ts)}</span>
+                <div key={m.id} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer', transition: 'transform 0.2s ease', _hover: {transform: 'scale(1.08)'}}}>
+                  <div style={{transition: 'transform 0.2s ease'}} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+                    <MomentCircle m={m} onTap={() => setExpandedMoment(m)} size={58} />
+                  </div>
+                  <span style={{fontSize: 10, color: C.textLight, textAlign: 'center'}}>{fmt(m.ts)}</span>
                 </div>
               ))}
             </div>
-            
-            <ReceivedDayComments
-              dayId={`${viewRec.handle}_${viewRec.date}`}
-              comments={(data.comments || {})[`${viewRec.handle}_${viewRec.date}`] || []}
-              profile={profile}
-              onSaveComment={(dayId, comment) => save({...data, comments: {...(data.comments || {}), [dayId]: [...((data.comments || {})[dayId] || []), comment]}})}
-              addToast={addToast}
-            />
           </div>
         )}
       </div>
@@ -971,67 +822,7 @@ function Veeda() {
   return (<>{showGuide && <InstallGuide onClose={() => setShowGuide(false)} />}<SplashScreen onGoogle={doGoogleLogin} onRecover={() => setScreen('select')} onGuide={() => setShowGuide(true)} loading={googleLoading} hasLocal={hasLocal} error={googleError} /></>);
 }
 
-function ReceivedDayComments({dayId, comments, profile, onSaveComment, addToast}) {
-  const [showCommentInput, setShowCommentInput] = useState(false);
-  const [commentText, setCommentText] = useState('');
-
-  const addComment = () => {
-    if (!commentText.trim()) return;
-    const newComment = {
-      id: Date.now(),
-      from: profile.name,
-      fromHandle: profile.handle,
-      fromEmoji: profile.emoji,
-      type: 'texto',
-      content: commentText.trim(),
-      ts: Date.now()
-    };
-    onSaveComment(dayId, newComment);
-    setCommentText('');
-    setShowCommentInput(false);
-    addToast?.('Comentário adicionado! 💬', 'success');
-  };
-
-  return (
-    <div style={{marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.headerBorder}`}}>
-      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12}}>
-        <h3 style={{margin: 0, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: PASSO}}>💬 Comentários ({comments.length})</h3>
-        <button onClick={() => setShowCommentInput(!showCommentInput)} style={{fontSize: 12, color: C.purple, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px'}}>{showCommentInput ? 'Cancelar' : '+ Comentar'}</button>
-      </div>
-
-      {showCommentInput && (
-        <div style={{marginBottom: 12}}>
-          <textarea
-            value={commentText}
-            onChange={e => setCommentText(e.target.value)}
-            placeholder="Deixe um comentário sobre este dia…"
-            style={{width: '100%', minHeight: 60, borderRadius: 12, padding: '10px 12px', border: `1px solid ${C.cardBorder}`, fontSize: 13, marginBottom: 8, boxSizing: 'border-box', fontFamily: 'inherit'}}
-          />
-          <div style={{display: 'flex', gap: 8}}>
-            <button onClick={addComment} style={{flex: 1, padding: '8px 0', background: C.purple, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600}}>Comentar ✏️</button>
-            <button onClick={() => setShowCommentInput(false)} style={{flex: 1, padding: '8px 0', background: C.white, color: C.textMid, border: `1px solid ${C.cardBorder}`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600}}>Cancelar</button>
-          </div>
-        </div>
-      )}
-
-      {comments.map(c => (
-        <div key={c.id} style={{background: C.white, borderRadius: 12, padding: '10px 12px', marginBottom: 8, border: `1px solid ${C.cardBorder}`}}>
-          <div style={{display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6}}>
-            <div style={{fontSize: 16}}>{c.fromEmoji || '🌿'}</div>
-            <div style={{flex: 1}}>
-              <p style={{margin: 0, fontSize: 12, fontWeight: 600, color: C.text}}>{c.from}</p>
-              <p style={{margin: 0, fontSize: 11, color: C.textLight}}>{new Date(c.ts).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</p>
-            </div>
-          </div>
-          {c.type === 'texto' && <p style={{margin: 0, fontSize: 13, color: C.text, lineHeight: 1.4}}>{c.content}</p>}
-          {c.type === 'voz' && <p style={{fontSize: 12, color: C.purple, fontWeight: 500}}>🎙️ Comentário de voz</p>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Veeda() {
+ReactDOM.createRoot(document.getElementById('root')).render(<Veeda />);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

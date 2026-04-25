@@ -4,155 +4,277 @@
 // ═══════════════════════════════════════════════════════════
 
 function AddContactModal({contacts, myHandle, profile, onAdd, onClose, addToast, prefillCard}) {
+  const [cardCode, setCardCode] = useState(prefillCard || '');
+  const [tab, setTab] = useState('add');
+  const [step, setStep] = useState(1);
+  const [found, setFound] = useState(null);
   const [q, setQ] = useState('');
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
+  const [sending, setSending] = useState(false);
+
   const myH = (myHandle || '').replace(/^@/, '');
   const isAtLimit = contacts.length >= MAX_CONTACTS_BETA;
 
-  // Retrocompat: prefillCard (vc2_) decodifica e preenche a busca
   useEffect(() => {
     if (!prefillCard) return;
-    try {
-      const parsed = parseProfileCard(prefillCard.trim());
-      if (parsed?.handle) setQ(parsed.handle);
-    } catch {}
+    if (isAtLimit) {
+      addToast?.(`Você atingiu o máximo de ${MAX_CONTACTS_BETA} contatos (Beta 1.0).`, 'warn');
+      return;
+    }
+    const parsed = parseProfileCard(prefillCard.trim());
+    if (parsed) {
+      const targetHandle = parsed.handle.replace(/^@/, '');
+      if (targetHandle === myH) {
+        addToast?.('Este é o seu próprio código.', 'warn');
+        return;
+      }
+      if (contacts.find(c => (c.handle || '').replace(/^@/, '') === targetHandle)) {
+        addToast?.(`${parsed.name} já está no seu Círculo.`, 'info');
+        return;
+      }
+      setFound(parsed);
+      setStep(2);
+    } else {
+      addToast?.('Link de convite inválido ou corrompido.', 'error');
+    }
   }, [prefillCard]);
 
-  // Busca debounced no Supabase
-  useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) { setResults([]); setSearching(false); return; }
-    if (!window.VeedaSupabase?.isReady?.()) { setResults([]); setSearching(false); return; }
-    setSearching(true);
-    const h = setTimeout(async () => {
-      try {
-        const found = await window.VeedaSupabase.profiles.search(term, myHandle);
-        const filtered = (found || []).filter(p => {
-          const targetH = (p.handle || '').replace(/^@/, '');
-          if (targetH === myH) return false;
-          if (contacts.find(c => (c.handle || '').replace(/^@/, '') === targetH)) return false;
-          return true;
-        });
-        setResults(filtered);
-      } catch (e) { setResults([]); }
-      setSearching(false);
-    }, 350);
-    return () => clearTimeout(h);
-  }, [q, contacts, myHandle]);
+  const tryParseCard = () => {
+    if (isAtLimit) {
+      addToast?.(`Você atingiu o máximo de ${MAX_CONTACTS_BETA} contatos permitidos na Beta 1.0.`, 'warn');
+      return;
+    }
+    
+    let raw = cardCode.trim();
+    try {
+      const u = new URL(raw);
+      const p = u.searchParams.get('add');
+      if (p) raw = p;
+    } catch {}
+    
+    const parsed = parseProfileCard(raw);
+    if (!parsed) {
+      addToast?.('Código inválido.', 'error');
+      return;
+    }
+    
+    const targetHandle = parsed.handle.replace(/^@/, '');
+    if (targetHandle === myH) {
+      addToast?.('Este é o seu próprio código.', 'warn');
+      return;
+    }
+    
+    if (contacts.find(c => (c.handle || '').replace(/^@/, '') === targetHandle)) {
+      addToast?.(`${parsed.name} já está no seu Círculo.`, 'info');
+      return;
+    }
+    
+    setFound(parsed);
+    setStep(2);
+  };
 
-  const addContact = (p) => {
+  const sendRequest = async () => {
+    if (!found) return;
     if (isAtLimit) {
       addToast?.(`Limite atingido. Máximo ${MAX_CONTACTS_BETA} contatos na Beta.`, 'error');
       return;
     }
-    onAdd({
-      name: p.name,
-      handle: p.handle,
-      code: (p.handle || '').replace(/^@/, ''),
-      emoji: p.emoji,
-      avatarColor: p.avatarColor,
-      avatarSrc: p.avatarSrc
-    });
-    if (window.VeedaSupabase?.isReady?.()) {
-      window.VeedaSupabase.profiles.register(profile).catch(() => {});
-      window.VeedaSupabase.connections.confirmToSender(profile, p).catch(() => {});
+    setSending(true);
+    
+    const success = saveConnectionRequest(profile, found.handle);
+    
+    if (success) {
+      addToast?.(`Convite enviado para ${found.name}! ${found.name} receberá uma notificação e poderá aceitar para conectar seus perfis.`, 'success');
+      setSending(false);
+      onClose();
+    } else {
+      addToast?.('Erro ao enviar convite.', 'error');
+      setSending(false);
     }
-    setResults(rs => rs.filter(r => (r.handle || '').replace(/^@/, '') !== (p.handle || '').replace(/^@/, '')));
-    addToast?.(`${p.name} adicionado ao Meu Círculo! 🤝`, 'success');
   };
+
+  const localResults = useMemo(() => {
+    return registrySearch(q).filter(p => {
+      const targetH = (p.handle || '').replace(/^@/, '');
+      if (targetH === myH) return false;
+      if (contacts.find(c => (c.handle || '').replace(/^@/, '') === targetH)) return false;
+      return true;
+    });
+  }, [q, myH, contacts]);
 
   return (
     <div>
-      {isAtLimit && (
-        <div style={{ background: C.redLight, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
-          <p style={{ margin: 0, fontSize: 12, color: C.red, fontWeight: 600, lineHeight: 1.5 }}>
-            🔒 Limite atingido! Máximo de {MAX_CONTACTS_BETA} contatos permitidos na Beta 1.0.
-          </p>
-        </div>
-      )}
-      {myHandle && (
-        <div style={{ background: C.purpleLight, borderRadius: 10, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: C.textMid }}>
-          Seu handle: <strong style={{ color: C.purple }}>{myHandle}</strong>
-        </div>
-      )}
-      <input
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        placeholder="Ex: Maria ou @mariasilva"
-        autoFocus
-        disabled={isAtLimit}
-        style={{ marginBottom: 10 }}
-      />
-      {searching && (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}>
-          <Spinner size={20} color={C.purple} />
-        </div>
-      )}
-      {!searching && q.trim().length >= 2 && results.length === 0 && (
-        <div style={{ padding: 14, background: C.amberLight, borderRadius: 10, border: `1px solid ${C.amber}44` }}>
-          <p style={{ margin: 0, fontSize: 12, color: '#7A5800', lineHeight: 1.5 }}>
-            Nenhum usuário encontrado. Verifique o nome ou @handle e tente novamente.
-          </p>
-        </div>
-      )}
-      {!searching && q.trim().length < 2 && (
-        <p style={{ fontSize: 12, color: C.textMid, lineHeight: 1.5, margin: '8px 0 0' }}>
-          Digite ao menos 2 caracteres para buscar por nome ou @handle.
-        </p>
-      )}
-      {results.map(p => (
-        <div
-          key={p.id || p.handle}
-          style={{
-            background: C.white,
-            border: `1px solid ${C.cardBorder}`,
-            borderRadius: 14,
-            padding: '10px 12px',
-            marginBottom: 8,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12
-          }}
-        >
-          <AvatarBubble
-            src={p.avatarSrc}
-            emoji={p.emoji || '🌿'}
-            color={p.avatarColor || C.purpleLight}
-            size={42}
-          />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {p.name}
-            </p>
-            <p style={{ margin: 0, fontSize: 12, color: C.purple, fontWeight: 500 }}>
-              {p.handle}
-            </p>
+      {step === 1 && (
+        <>
+          {isAtLimit && (
+            <div style={{ background: C.redLight, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+              <p style={{ margin: 0, fontSize: 12, color: C.red, fontWeight: 600, lineHeight: 1.5 }}>
+                🔒 Limite atingido! Você tem o máximo de {MAX_CONTACTS_BETA} contatos permitidos na Beta 1.0.
+              </p>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+            {[
+              ['add', '📋 Por código'],
+              ['search', '🔍 Buscar aqui']
+            ].map(([k, l]) => (
+              <button
+                key={k}
+                onClick={() => setTab(k)}
+                disabled={isAtLimit}
+                style={{
+                  flex: 1,
+                  padding: '9px 0',
+                  background: tab === k ? C.purple : C.purpleLight,
+                  color: tab === k ? C.white : C.purple,
+                  border: 'none',
+                  borderRadius: 10,
+                  fontWeight: 600,
+                  cursor: isAtLimit ? 'not-allowed' : 'pointer',
+                  fontSize: 12,
+                  opacity: isAtLimit ? 0.5 : 1
+                }}
+              >
+                {l}
+              </button>
+            ))}
           </div>
-          <button
-            onClick={() => addContact(p)}
-            disabled={isAtLimit}
-            style={{
-              padding: '8px 14px',
-              background: C.purple,
-              color: C.white,
-              border: 'none',
-              borderRadius: 20,
-              fontWeight: 600,
-              fontSize: 12,
-              cursor: isAtLimit ? 'not-allowed' : 'pointer',
-              opacity: isAtLimit ? 0.5 : 1,
-              flexShrink: 0
-            }}
-          >
-            + Adicionar
-          </button>
-        </div>
-      ))}
+
+          {tab === 'add' && (
+            <>
+              <p style={{ fontSize: 13, color: C.textMid, marginBottom: 10, lineHeight: 1.5 }}>
+                Cole o <strong>link ou código</strong> que seu contato compartilhou:
+              </p>
+              <textarea
+                value={cardCode}
+                onChange={e => setCardCode(e.target.value)}
+                placeholder="Cole aqui o link ou código vc2_…"
+                disabled={isAtLimit}
+                style={{ marginBottom: 12, minHeight: 72, borderRadius: 14, opacity: isAtLimit ? 0.6 : 1 }}
+              />
+              <Btn onClick={tryParseCard} disabled={!cardCode.trim() || isAtLimit}>
+                Identificar perfil
+              </Btn>
+            </>
+          )}
+
+          {tab === 'search' && (
+            <>
+              <input
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                placeholder="Buscar por nome ou @handle…"
+                disabled={isAtLimit}
+                autoFocus
+                style={{ marginBottom: 8 }}
+              />
+              {q.trim() && localResults.length === 0 && (
+                <div style={{ 
+                  padding: '14px', 
+                  background: C.amberLight, 
+                  borderRadius: 10, 
+                  border: `1px solid ${C.amber}44`, 
+                  marginTop: 4 
+                }}>
+                  <p style={{ margin: '0 0 4px', fontSize: 12, color: '#7A5800', fontWeight: 600 }}>
+                    Nenhum usuário encontrado aqui
+                  </p>
+                  <p style={{ margin: 0, fontSize: 12, color: '#7A5800', lineHeight: 1.5 }}>
+                    A busca funciona apenas para perfis deste dispositivo.
+                    Para adicionar alguém de outro celular, use a aba "Por código".
+                  </p>
+                </div>
+              )}
+              {localResults.map(p => (
+                <button
+                  key={p.id || p.handle}
+                  onClick={() => {
+                    setFound(p);
+                    setStep(2);
+                  }}
+                  disabled={isAtLimit}
+                  style={{
+                    width: '100%',
+                    background: C.white,
+                    border: `1px solid ${C.cardBorder}`,
+                    borderRadius: 14,
+                    padding: '12px 14px',
+                    marginBottom: 8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    cursor: isAtLimit ? 'not-allowed' : 'pointer',
+                    textAlign: 'left',
+                    opacity: isAtLimit ? 0.5 : 1
+                  }}
+                >
+                  <AvatarBubble
+                    src={p.avatarSrc}
+                    emoji={p.emoji || '🌿'}
+                    color={p.avatarColor || C.purpleLight}
+                    size={44}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: C.text }}>
+                      {p.name}
+                    </p>
+                    <p style={{ margin: 0, fontSize: 12, color: C.purple, fontWeight: 500 }}>
+                      {p.handle}
+                    </p>
+                  </div>
+                  <span style={{ fontSize: 18, color: C.textLight }}>+</span>
+                </button>
+              ))}
+            </>
+          )}
+        </>
+      )}
+
+      {step === 2 && found && (
+        <>
+          <div style={{ textAlign: 'center', marginBottom: 20 }}>
+            <AvatarBubble
+              src={found.avatarSrc}
+              emoji={found.emoji}
+              color={found.avatarColor || C.purpleLight}
+              size={64}
+              ring
+            />
+            <p style={{ margin: '10px 0 2px', fontSize: 16, fontWeight: 700, color: C.text }}>
+              {found.name}
+            </p>
+            <p style={{ margin: 0, fontSize: 14, color: C.purple, fontWeight: 600 }}>
+              {found.handle}
+            </p>
+            <div style={{ 
+              marginTop: 12, 
+              padding: '12px', 
+              background: C.blueLight, 
+              borderRadius: 10 
+            }}>
+              <p style={{ margin: 0, fontSize: 12, color: C.blue, lineHeight: 1.5 }}>
+                ✨ Um convite será enviado. {found.name} precisará aceitar para vocês 
+                começarem a compartilhar dias.
+              </p>
+            </div>
+          </div>
+          {isAtLimit && (
+            <div style={{ background: C.redLight, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <p style={{ margin: 0, fontSize: 12, color: C.red, fontWeight: 600 }}>
+                ⚠️ Limite atingido! Máximo {MAX_CONTACTS_BETA} contatos na Beta 1.0
+              </p>
+            </div>
+          )}
+          <Btn onClick={sendRequest} disabled={sending || isAtLimit} style={{ marginBottom: 10 }}>
+            {isAtLimit ? '⚠️ Limite atingido' : sending ? <><Spinner size={16} color="#fff" /> Enviando convite…</> : 'Enviar convite'}
+          </Btn>
+          <Btn onClick={() => { setStep(1); setFound(null); setCardCode(''); }} variant="ghost">
+            ← Voltar
+          </Btn>
+        </>
+      )}
     </div>
   );
 }
-
 
 function ConnectionCodeModal({profile, onClose}) {
   const [copied, setCopied] = useState(false);
@@ -246,7 +368,6 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [shareType, setShareType] = useState('contacts'); // 'contacts', 'specific', 'public'
   const contacts = data.contacts || [];
   const moments = (data.moments || {})[curDay] || [];
   const already = (data.sharedLog || {})[curDay] || [];
@@ -258,8 +379,8 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
   const sharedLink = sharedCode ? `${window.location.origin}${window.location.pathname}?day=${encodeURIComponent(sharedCode)}` : null;
   const copyShareLink = () => { if (sharedLink) { navigator.clipboard?.writeText(sharedLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2500); } };
 
-  const doShare = async (targetHandles = sel) => {
-    if (!targetHandles.length) return;
+  const doShare = async () => {
+    if (!sel.length) return;
     setLoading(true);
     
     const payload = {
@@ -277,24 +398,21 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
     
     let sharedCount = 0;
     
-    targetHandles.forEach(contactHandle => {
-      const cleanHandle = (contactHandle || '').replace(/^@/, '');
-      if (!cleanHandle) return;
+    sel.forEach(contactHandle => {
+      const cleanHandle = contactHandle.replace(/^@/, '');
       const inboxKey = `veeda_inbox_${cleanHandle}`;
-      const inbox = safeLS.get(inboxKey, []);
+      const inbox = safeLS.get(inboxKey, null);
       
-      inbox.push(payload);
-      safeLS.set(inboxKey, inbox);
-      sharedCount++;
+      if (inbox !== null) {
+        inbox.push(payload);
+        safeLS.set(inboxKey, inbox);
+        sharedCount++;
+      }
     });
     
     if (sharedCount > 0) {
       showNativeNotif('Veeda', `${profile.name} compartilhou o dia com você! 🌿`);
-      await onShared({ ...(data.sharedLog || {}), [curDay]: [...already, ...targetHandles] });
-      // Cross-device: envia via Supabase para destinatários em outros dispositivos
-      if (window.VeedaSupabase?.isReady()) {
-        VeedaSupabase.days.share(profile, targetHandles, payload).catch(() => {});
-      }
+      await onShared({ ...(data.sharedLog || {}), [curDay]: [...already, ...sel] });
       addToast?.(`Dia compartilhado com ${sharedCount} pessoa(s)! 🌿`, 'success');
       setDone(true);
     } else {
@@ -311,117 +429,30 @@ function ShareDayModal({profile, data, curDay, onClose, onShared, addToast}) {
       {moments.length === 0 ? <p style={{ fontSize: 14, color: C.textMid, textAlign: 'center', padding: '20px 0' }}>Nenhum momento registrado hoje ainda.</p> : (
         <>
           <p style={{ fontSize: 13, color: C.textMid, marginBottom: 12 }}>{moments.length} momento{moments.length !== 1 ? "s" : ""} · {fmtFull(curDay)}</p>
-          
-          {/* Seletor de privacidade */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Quem pode ver?</label>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {[
-                ['contacts', '👥 Todos do meu círculo', 'Compartilhar com todos os seus contatos conectados'],
-                ['specific', '🎯 Contatos específicos', 'Escolher quem vai receber'],
-                ['public', '🌐 Público (link)', 'Qualquer pessoa com o link pode ver']
-              ].map(([type, label, desc]) => (
-                <button
-                  key={type}
-                  onClick={() => setShareType(type)}
-                  style={{
-                    flex: 1,
-                    minWidth: '120px',
-                    padding: '10px 12px',
-                    background: shareType === type ? C.purple : C.white,
-                    border: `2px solid ${shareType === type ? C.purple : C.cardBorder}`,
-                    borderRadius: 12,
-                    color: shareType === type ? C.white : C.text,
-                    cursor: 'pointer',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    textAlign: 'center',
-                    lineHeight: 1.3
-                  }}
-                  title={desc}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
-            {[['local', '👥 Compartilhar'], ['link', '🔗 Gerar link']].map(([k, l]) => (
+            {[['local', '👥 Meu Círculo'], ['link', '🔗 Via link']].map(([k, l]) => (
               <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '9px 0', background: tab === k ? C.purple : C.purpleLight, color: tab === k ? C.white : C.purple, border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>{l}</button>
             ))}
           </div>
 
           {tab === 'local' && (
             <>
-              {shareType === 'contacts' && (
-                <>
-                  <div style={{ background: C.greenLight, borderRadius: 14, padding: 12, marginBottom: 14, border: `1px solid ${C.green}33` }}>
-                    <p style={{ margin: 0, fontSize: 12, color: C.green, fontWeight: 600 }}>👥 Compartilhar com todos os contatos</p>
-                    <p style={{ margin: '4px 0 0', fontSize: 11, color: C.textMid }}>Todos os {contacts.length} contatos conectados receberão este dia.</p>
-                  </div>
-                  <div style={{ marginBottom: 14 }}>
-                    <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
-                    <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
-                  </div>
-                  <Btn onClick={() => doShare(contacts.map(c => c.code))} disabled={loading || contacts.length === 0}>
-                    {loading ? <><Spinner size={16} color="#fff" />Compartilhando…</> : `Compartilhar com ${contacts.length} contato${contacts.length !== 1 ? 's' : ''}`}
-                  </Btn>
-                </>
-              )}
-
-              {shareType === 'specific' && (
-                <>
-                  <div style={{ background: C.blueLight, borderRadius: 14, padding: 12, marginBottom: 14, border: `1px solid ${C.blue}33` }}>
-                    <p style={{ margin: 0, fontSize: 12, color: C.blue, fontWeight: 600 }}>🎯 Escolher contatos específicos</p>
-                    <p style={{ margin: '4px 0 0', fontSize: 11, color: C.textMid }}>Selecione quem vai receber este dia.</p>
-                  </div>
-                  {available.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                      <p style={{ fontSize: 14, color: C.textMid, marginBottom: 8 }}>Todos os seus contatos já receberam este dia hoje.</p>
-                      <p style={{ fontSize: 12, color: C.textLight }}>Volte amanhã para compartilhar novamente! 🌿</p>
-                    </div>
-                  ) : (
-                    <>
-                      {available.map(c => (
-                        <button key={c.code} onClick={() => toggle(c.code)} style={{ width: '100%', background: sel.includes(c.code) ? C.purpleLight : C.white, border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, borderRadius: 14, padding: '12px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left' }}>
-                          <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={38} />
-                          <span style={{ fontSize: 14, fontWeight: 500, color: C.text, flex: 1 }}>{c.name}</span>
-                          <div style={{ width: 22, height: 22, borderRadius: '50%', border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, background: sel.includes(c.code) ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#fff' }}>{sel.includes(c.code) ? '✓' : ''}</div>
-                        </button>
-                      ))}
-                      <div style={{ marginTop: 12, marginBottom: 14 }}>
-                        <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
-                        <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
-                      </div>
-                      <Btn onClick={doShare} disabled={loading || !sel.length}>{loading ? <><Spinner size={16} color="#fff" />Compartilhando…</> : "Compartilhar linha do tempo"}</Btn>
-                    </>
-                  )}
-                </>
-              )}
-
-              {shareType === 'public' && (
-                <>
-                  <div style={{ background: C.amberLight, borderRadius: 14, padding: 12, marginBottom: 14, border: `1px solid ${C.amber}33` }}>
-                    <p style={{ margin: 0, fontSize: 12, color: C.amber, fontWeight: 600 }}>🌐 Compartilhamento público</p>
-                    <p style={{ margin: '4px 0 0', fontSize: 11, color: C.textMid }}>Qualquer pessoa com o link pode ver este dia.</p>
-                  </div>
-                  <div style={{ marginBottom: 14 }}>
-                    <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
-                    <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
-                  </div>
-                  {sharedLink && (
-                    <div style={{ background: C.greenLight, borderRadius: 14, padding: 12, marginBottom: 12, border: `1px solid ${C.green}33` }}>
-                      <p style={{ margin: '0 0 4px', fontSize: 10, fontWeight: 600, color: C.green, textTransform: 'uppercase', letterSpacing: '1px' }}>🔗 Link gerado</p>
-                      <p style={{ margin: 0, fontSize: 11, color: C.textMid, wordBreak: 'break-all', lineHeight: 1.5 }}>{sharedLink.slice(0, 80)}…</p>
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                    <Btn onClick={copyShareLink} variant={linkCopied ? "green" : "primary"} style={{ flex: 1, fontSize: 13, padding: '11px 0' }}>{linkCopied ? "✓ Copiado!" : "Copiar link"}</Btn>
-                    {navigator.share && sharedLink && <button onClick={() => navigator.share({ title: "Meu dia no Veeda 🌿", text: `${profile.name} quer compartilhar o dia ${fmtFull(curDay)} com você no Veeda 🌿\n\n${sharedLink}` }).catch(() => {})} style={{ flex: 1, padding: '11px 0', background: C.white, color: C.purple, border: `1.5px solid ${C.purple}`, borderRadius: 50, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Compartilhar ↑</button>}
-                  </div>
-                </>
-              )}
+              {available.length === 0 ? (
+                <div style={{ background: C.amberLight, borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+                  <p style={{ fontSize: 13, color: '#7A5800', margin: 0 }}>Você já compartilhou hoje com todos os seus contatos. Use "Via link" para compartilhar com alguém de outro dispositivo.</p>
+                </div>
+              ) : available.map(c => (
+                <button key={c.code} onClick={() => toggle(c.code)} style={{ width: '100%', background: sel.includes(c.code) ? C.purpleLight : C.white, border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, borderRadius: 14, padding: '12px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left' }}>
+                  <AvatarBubble src={c.avatarSrc} emoji={c.emoji || '🌿'} color={c.avatarColor || C.purpleLight} size={38} />
+                  <span style={{ fontSize: 14, fontWeight: 500, color: C.text, flex: 1 }}>{c.name}</span>
+                  <div style={{ width: 22, height: 22, borderRadius: '50%', border: `2px solid ${sel.includes(c.code) ? C.purple : C.cardBorder}`, background: sel.includes(c.code) ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#fff' }}>{sel.includes(c.code) ? '✓' : ''}</div>
+                </button>
+              ))}
+              <div style={{ marginTop: 12, marginBottom: 14 }}>
+                <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'block', marginBottom: 8 }}>Mensagem (opcional)</label>
+                <textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Uma frase sobre o seu dia…" style={{ width: '100%', minHeight: 64, borderRadius: 12 }} />
+              </div>
+              <Btn onClick={doShare} disabled={loading || !sel.length}>{loading ? <><Spinner size={16} color="#fff" />Compartilhando…</> : "Compartilhar linha do tempo"}</Btn>
             </>
           )}
 
@@ -800,10 +831,8 @@ function VersionsModal({onClose}) {
 function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays, onClose, addToast}) {
   // Verificar se o perfil visualizado está no círculo de contatos
   const isInCircle = contacts.some(c => c.handle === viewedProfile.handle || c.id === viewedProfile.id);
-  const hasReceivedFromThisProfile = receivedDays.some(d => d.handle === viewedProfile.handle);
-  const canViewProfile = isInCircle || hasReceivedFromThisProfile;
 
-  if (!canViewProfile) {
+  if (!isInCircle) {
     return (
       <Modal title="Perfil Privado" onClose={onClose}>
         <div style={{textAlign: 'center', padding: '40px 20px'}}>
@@ -993,4 +1022,3 @@ function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays
     </Modal>
   );
 }
-

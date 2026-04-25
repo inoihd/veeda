@@ -10,9 +10,6 @@ const DATA_VERSION = 4;
 
 // ── Version History ───────────────────────────────────────
 const VERSION_HISTORY = [
-  { version: "2.0.4", date: "2026-04-22", changes: ["Página de perfil detalhado com estatísticas e dias compartilhados"] },
-  { version: "2.0.3", date: "2026-04-22", changes: ["Visualização horizontal da timeline (carrossel) com alternância entre modos vertical e horizontal"] },
-  { version: "2.0.2", date: "2026-04-22", changes: ["Perfis de contatos clicáveis com listagem de dias compartilhados", "Sistema completo de comentários em dias compartilhados", "Status online/offline dos contatos com indicadores visuais"] },
   { version: "2.0.0", date: "2026-04-21", changes: ["Correção da ordenação da timeline (momentos antigos no topo)", "Melhorias no sistema de conexões bidirecionais", "Página de versões do aplicativo", "Limites de contatos para versão Beta (máximo 5)", "Interface aprimorada para criação de perfil local"] },
   { version: "1.9.1", date: "2026-04-21", changes: ["Sistema de conexão bidirecional com confirmação", "Melhorias na sincronização de perfis entre usuários"] },
   { version: "1.9.0", date: "2026-04-15", changes: ["Sistema de convites e compartilhamento", "Novo sistema de modais para adicionar contatos", "Aprimoramentos no sistema de backup"] },
@@ -272,8 +269,6 @@ const saveConnectionRequest = (fromProfile, toHandle) => {
       status: 'pending'
     });
     safeLS.set(key, requests);
-    // Cross-device: espelha no Supabase para o destinatário receber em outro dispositivo
-    if (window.VeedaSupabase?.isReady()) VeedaSupabase.connections.sendRequest(safeProfile, toHandle);
     return true;
   }
   return false;
@@ -336,8 +331,6 @@ const confirmConnectionToSender = (fromProfile, toProfile) => {
       confirmedAt: Date.now()
     });
     safeLS.set(key, confirmations);
-    // Cross-device: envia confirmação para o remetente original via Supabase
-    if (window.VeedaSupabase?.isReady()) VeedaSupabase.connections.confirmToSender(toProfile, fromProfile);
     return true;
   }
   return false;
@@ -454,34 +447,6 @@ const _buildOAuthUrl=()=>{
     state:Math.random().toString(36).slice(2),
   });
   return`https://accounts.google.com/o/oauth2/v2/auth?${params}`;
-};
-
-// ── Online Status Management ───────────────────────────────
-const markUserActive = (handle) => {
-  const key = `veeda_online_status_${handle.replace(/^@/, '')}`;
-  safeLS.set(key, { lastActive: Date.now(), isOnline: true });
-  // Cross-device presence
-  if (window.VeedaSupabase?.isReady()) VeedaSupabase.presence.update(handle);
-};
-
-const getUserStatus = (handle) => {
-  const key = `veeda_online_status_${handle.replace(/^@/, '')}`;
-  const status = safeLS.get(key, null);
-  if (!status) return { isOnline: false, lastActive: null };
-  
-  const now = Date.now();
-  const timeDiff = now - status.lastActive;
-  // Consider online if active within last 5 minutes
-  const isOnline = timeDiff < 5 * 60 * 1000;
-  
-  return { isOnline, lastActive: status.lastActive };
-};
-
-const getContactsStatus = (contacts) => {
-  return contacts.map(contact => ({
-    ...contact,
-    status: getUserStatus(contact.handle)
-  }));
 };
 const _isPWAStandalone=()=>
   (window.matchMedia?.("(display-mode: standalone)").matches)||
@@ -721,15 +686,7 @@ const getVideoEmbed=url=>{
 };
 const isVideoLink=url=>!!getVideoEmbed(url);
 const fmt=ts=>new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-const todayStr=()=>{
-  const d=new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-};
-const offsetDay=(d,n)=>{
-  const [yr,m,dy]=d.split("-");
-  const dt=new Date(Number(yr), Number(m)-1, Number(dy));
-  dt.setDate(dt.getDate()+n);
-  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-};
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const offsetDay=(d,n)=>{const dt=new Date(d+"T12:00:00");dt.setDate(dt.getDate()+n);return dt.toISOString().slice(0,10);};
 const fmtLabel=d=>{const t=todayStr(),y=offsetDay(t,-1);if(d===t)return"hoje";if(d===y)return"ontem";const[yr,m,dy]=d.split("-");return new Date(yr,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"});};
 const fmtFull=d=>{const[y,m,dy]=d.split("-");return new Date(y,m-1,dy).toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});};

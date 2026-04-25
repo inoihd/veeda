@@ -166,15 +166,6 @@ function ScreenPassword({profile,onSuccess,onBack,onForgot}){
     const hash=await hashPw(pw.trim());
     if(hash!==profile.passwordHash){setErr("Senha incorreta.");setPw("");setLoading(false);return;}
     onSuccess(pw.trim());
-    // Autentica no Supabase para habilitar features cross-device
-    if (window.VeedaSupabase?.isReady()) {
-      VeedaSupabase.auth.signIn(profile.handle, hash)
-        .then(({error}) => {
-          if (error) return VeedaSupabase.auth.signUp(profile.handle, hash)
-            .then(() => VeedaSupabase.profiles.register(profile));
-          return VeedaSupabase.profiles.register(profile);
-        }).catch(() => {});
-    }
   };
   return(
     <div style={{maxWidth:400,margin:"0 auto",padding:"3rem 21px",background:`linear-gradient(180deg,${C.splashBg} 0%,${C.bg} 40%,${C.bgGradEnd} 100%)`,minHeight:"100vh",display:"flex",flexDirection:"column"}}>
@@ -232,12 +223,6 @@ function ScreenCreate({onDone,onBack,googleUser}){
       safeLS.rawSet(`veeda_data_${id}`,enc);
       saveMonthlySnapshot(id,enc);
       onDone(profile,pw);
-      // Registra no Supabase para cross-device social (fire-and-forget)
-      if (window.VeedaSupabase?.isReady()) {
-        VeedaSupabase.auth.signUp(profile.handle, passwordHash)
-          .then(() => VeedaSupabase.profiles.register(profile))
-          .catch(() => {});
-      }
     }catch(e){setErr("Erro ao criar conta. Tente novamente.");setLoading(false);}
   };
 
