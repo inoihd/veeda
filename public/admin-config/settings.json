@@ -1,0 +1,7 @@
+{
+  "maintenance_mode": "false",
+  "circle_limit_global": "5",
+  "terms_text": "<p>Termos de uso do Veeda.</p>",
+  "privacy_text": "<p>Política de privacidade do Veeda.</p>",
+  "backup_schedule": "0 3 * * *"
+}
