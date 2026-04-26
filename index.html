@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.1.7";
+  var EMBEDDED_VERSION = "2.2.1";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -2083,12 +2083,13 @@ function AcceptSharedDayModal({shared,onAccept,onClose}){
 // ═══════════════════════════════════════════════════
 function EventsModal({data,profile,onSave,onClose}){
   const [tab,setTab]=useState("list");const [title,setTitle]=useState("");const [evType,setEvType]=useState("outro");const [date,setDate]=useState("");const [time,setTime]=useState("");const [notes,setNotes]=useState("");
+  const [confirmEvId,setConfirmEvId]=useState(null);
   const events=(data.events||[]).sort((a,b)=>a.date.localeCompare(b.date));
   const add=()=>{if(!title.trim()||!date)return;onSave([...events,{id:Date.now(),title:title.trim(),type:evType,date,time,notes:notes.trim(),createdBy:profile.name}]);setTitle("");setDate("");setTime("");setNotes("");setTab("list");};
   return(
     <Modal title="Eventos futuros" onClose={onClose}>
       <div style={{display:"flex",gap:8,marginBottom:18}}>{[["list","📋 Próximos"],["new","+ Novo"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"9px 0",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:10,fontWeight:600,cursor:"pointer",fontSize:13}}>{l}</button>)}</div>
-      {tab==="list"&&(events.length===0?<p style={{textAlign:"center",fontSize:14,color:C.textLight,padding:"24px 0"}}>Nenhum evento programado.</p>:events.map(ev=>{const t2=EVENT_TYPES.find(t=>t.id===ev.type)||EVENT_TYPES[4];return<div key={ev.id} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:14,marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:C.amberLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{t2.emoji}</div><div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{ev.title}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{fmtLabel(ev.date)}{ev.time?` às ${ev.time}`:""}</p></div><button onClick={()=>onSave(events.filter(e=>e.id!==ev.id))} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:12}}>remover</button></div>{ev.notes&&<p style={{margin:"8px 0 0",fontSize:13,color:C.textMid}}>{ev.notes}</p>}</div>}))}
+      {tab==="list"&&(events.length===0?<p style={{textAlign:"center",fontSize:14,color:C.textLight,padding:"24px 0"}}>Nenhum evento programado.</p>:events.map(ev=>{const t2=EVENT_TYPES.find(t=>t.id===ev.type)||EVENT_TYPES[4];return<div key={ev.id} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:14,marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:C.amberLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{t2.emoji}</div><div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{ev.title}</p><p style={{margin:0,fontSize:12,color:C.textMid}}>{fmtLabel(ev.date)}{ev.time?` às ${ev.time}`:""}</p></div>{confirmEvId!==ev.id?<button onClick={()=>setConfirmEvId(ev.id)} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:12}}>remover</button>:<div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:11,color:C.red,fontWeight:600}}>Remover?</span><button onClick={()=>setConfirmEvId(null)} style={{background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:6,cursor:"pointer",fontSize:11,padding:"3px 8px",color:C.textMid}}>Não</button><button onClick={()=>{onSave(events.filter(e=>e.id!==ev.id));setConfirmEvId(null);}} style={{background:C.red,border:"none",borderRadius:6,cursor:"pointer",fontSize:11,padding:"3px 8px",color:"#fff",fontWeight:600}}>Sim</button></div>}</div>{ev.notes&&<p style={{margin:"8px 0 0",fontSize:13,color:C.textMid}}>{ev.notes}</p>}</div>}))}
       {tab==="new"&&<div><div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>{EVENT_TYPES.map(et=><button key={et.id} onClick={()=>setEvType(et.id)} style={{padding:"6px 12px",background:evType===et.id?C.amberLight:C.white,border:`1.5px solid ${evType===et.id?C.amber:C.cardBorder}`,borderRadius:20,cursor:"pointer",fontSize:12,color:evType===et.id?C.amber:C.textMid}}>{et.emoji} {et.label}</button>)}</div><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Nome do evento" style={{marginBottom:12}}/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}><input type="date" value={date} onChange={e=>setDate(e.target.value)}/><input type="time" value={time} onChange={e=>setTime(e.target.value)}/></div><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Observações…" style={{marginBottom:14,minHeight:60}}/><Btn onClick={add} disabled={!title.trim()||!date}>Adicionar evento</Btn></div>}
     </Modal>
   );
@@ -2099,11 +2100,12 @@ function EventsModal({data,profile,onSave,onClose}){
 // ═══════════════════════════════════════════════════
 function RemindersModal({reminders,onSave,onClose}){
   const [list,setList]=useState(reminders||[]);const [newTime,setNewTime]=useState("20:00");
+  const [confirmTime,setConfirmTime]=useState(null);
   const req=()=>{if("Notification" in window&&Notification.permission==="default")Notification.requestPermission();};
   return(
     <Modal title="Lembretes" onClose={onClose}>
       <div style={{display:"flex",gap:8,marginBottom:14}}><input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{flex:1}}/><button onClick={()=>{if(!list.includes(newTime))setList(p=>[...p,newTime].sort());}} style={{padding:"0 16px",background:C.purple,color:"#fff",border:"none",borderRadius:50,cursor:"pointer",fontSize:13,fontWeight:600}}>+ Adicionar</button></div>
-      {list.length===0?<p style={{fontSize:13,color:C.textLight,textAlign:"center",padding:"12px 0"}}>Nenhum lembrete.</p>:<div style={{marginBottom:14}}>{list.map(t=><div key={t} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.purpleLight,borderRadius:10,padding:"10px 14px",marginBottom:8}}><span style={{fontSize:16,fontWeight:600,color:C.purple}}>{t}</span><button onClick={()=>setList(p=>p.filter(x=>x!==t))} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:13}}>remover</button></div>)}</div>}
+      {list.length===0?<p style={{fontSize:13,color:C.textLight,textAlign:"center",padding:"12px 0"}}>Nenhum lembrete.</p>:<div style={{marginBottom:14}}>{list.map(t=><div key={t} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.purpleLight,borderRadius:10,padding:"10px 14px",marginBottom:8}}><span style={{fontSize:16,fontWeight:600,color:C.purple}}>{t}</span>{confirmTime!==t?<button onClick={()=>setConfirmTime(t)} style={{background:"none",border:"none",color:C.textLight,cursor:"pointer",fontSize:13}}>remover</button>:<div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:11,color:C.red,fontWeight:600}}>Remover?</span><button onClick={()=>setConfirmTime(null)} style={{background:"none",border:`1px solid ${C.purple}`,borderRadius:6,cursor:"pointer",fontSize:11,padding:"3px 8px",color:C.purple}}>Não</button><button onClick={()=>{setList(p=>p.filter(x=>x!==t));setConfirmTime(null);}} style={{background:C.red,border:"none",borderRadius:6,cursor:"pointer",fontSize:11,padding:"3px 8px",color:"#fff",fontWeight:600}}>Sim</button></div>}</div>)}</div>}
       <div style={{background:C.amberLight,borderRadius:12,padding:"10px 14px",marginBottom:14}}><p style={{fontSize:12,color:"#7A5800",margin:0}}>Permita notificações para receber lembretes. <button onClick={req} style={{background:"none",border:"none",color:C.amber,cursor:"pointer",fontWeight:600,fontSize:12,padding:0}}>Permitir →</button></p></div>
       <Btn onClick={()=>{onSave(list);onClose();}}>Salvar lembretes</Btn>
     </Modal>
@@ -2875,6 +2877,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [showAvatar,setShowAvatar]=useState(false);
   const [showInvite,setShowInvite]=useState(false);
   const [showInviteApp,setShowInviteApp]=useState(false);
+  const [confirmContactIdx,setConfirmContactIdx]=useState(null);
   const [showGroupName,setShowGroupName]=useState(false);
   const [showShare,setShowShare]=useState(false);
   const [showReminders,setShowReminders]=useState(false);
@@ -3449,10 +3452,13 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           {(!activeData.contacts||activeData.contacts.length===0)
             ?<div style={{textAlign:"center",padding:"2rem 0"}}><div style={{fontSize:52,marginBottom:12}}>👥</div><p style={{fontSize:14,color:C.textLight,marginBottom:16}}>Nenhum contato ainda.</p><button onClick={()=>setShowInviteApp(true)} style={{background:"none",border:`1.5px solid ${C.purple}`,borderRadius:20,padding:"9px 20px",color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>Convidar para o Veeda</button></div>
             :activeData.contacts.map((c,i)=>(
-              <div key={i} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
+              <div key={i} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:14,padding:"14px",marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                 <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={44}/>
                 <div style={{flex:1}}><p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{c.name}</p><p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{c.handle}</p></div>
-                <button onClick={()=>{const cur=dataRef.current;if(!cur)return;const nc=(cur.contacts||[]).filter((_,idx)=>idx!==i);save({...cur,contacts:nc},{allowReduce:true});}} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer",padding:"6px"}}>remover</button>
+                {confirmContactIdx!==i
+                  ?<button onClick={()=>setConfirmContactIdx(i)} style={{fontSize:12,color:C.textLight,background:"none",border:"none",cursor:"pointer",padding:"6px"}}>remover</button>
+                  :<div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:11,color:C.red,fontWeight:600,whiteSpace:"nowrap"}}>Remover {c.name}?</span><button onClick={()=>setConfirmContactIdx(null)} style={{background:"none",border:`1px solid ${C.cardBorder}`,borderRadius:6,cursor:"pointer",fontSize:11,padding:"3px 8px",color:C.textMid}}>Não</button><button onClick={()=>{const cur=dataRef.current;if(!cur)return;const nc=(cur.contacts||[]).filter((_,idx)=>idx!==i);save({...cur,contacts:nc},{allowReduce:true});setConfirmContactIdx(null);}} style={{background:C.red,border:"none",borderRadius:6,cursor:"pointer",fontSize:11,padding:"3px 8px",color:"#fff",fontWeight:600}}>Sim</button></div>
+                }
               </div>
             ))
           }
