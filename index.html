@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.7";
+  var EMBEDDED_VERSION = "2.2.8";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.2.7";
+const APP_VERSION  = "2.2.8";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1664,9 +1664,10 @@ function MomentDetail({m,onClose,onDelete,onPlay}){
               <p style={{margin:"2px 0 0",fontSize:12,color:C.textMid}}>{m.trackArtist||""}</p>
             </div>
           </div>
-          {m.previewUrl&&(
-            <button onClick={()=>{onPlay?.({title:m.trackTitle||m.content,artist:m.trackArtist||"",art:m.albumArt,previewUrl:m.previewUrl});onClose();}} style={{width:"100%",marginTop:10,padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:14,cursor:"pointer"}}>▶ Ouvir prévia</button>
-          )}
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            {m.previewUrl&&<button onClick={()=>{onPlay?.({title:m.trackTitle||m.content,artist:m.trackArtist||"",art:m.albumArt,previewUrl:m.previewUrl});onClose();}} style={{flex:1,padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:13,cursor:"pointer"}}>▶ Prévia 30s</button>}
+            <button onClick={()=>window.open(`https://music.youtube.com/search?q=${encodeURIComponent((m.trackTitle||m.content)+" "+(m.trackArtist||""))}`,`_blank`)} style={{flex:1,padding:"9px 0",background:"#FF0000",border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:13,cursor:"pointer"}}>▶ YouTube Music</button>
+          </div>
         </div>
       )}
 
@@ -1844,18 +1845,15 @@ function AddContactModal({contacts,myHandle,profile,onAdd,onClose,addToast,prefi
     return()=>clearTimeout(h);
   },[q,contacts,myHandle]);
 
-  const addContact=(p)=>{
-    onAdd({
-      name:p.name,handle:p.handle,code:p.handle.replace(/^@/,""),
-      emoji:p.emoji||"🌿",avatarColor:p.avatarColor||C.purpleLight,
-      avatarSrc:p.avatarSrc||null,addedAt:Date.now()
-    });
-    if(window.VeedaSupabase?.isReady()){
-      VeedaSupabase.profiles.register(profile).catch(()=>{});
-      VeedaSupabase.connections.confirmToSender(profile,p).catch(()=>{});
-    }
-    setResults(rs=>rs.filter(r=>(r.handle||"").replace(/^@/,"")!==(p.handle||"").replace(/^@/,"")));
-    addToast?.(`${p.name} adicionado ao Meu Círculo! 🤝`,"success");
+  const [sent,setSent]=useState([]);
+  const addContact=async(p)=>{
+    if(!window.VeedaSupabase?.isReady()){addToast?.("Sem conexão com o servidor.","warn");return;}
+    try{
+      await VeedaSupabase.profiles.register(profile);
+      await VeedaSupabase.connections.sendRequest(profile,p.handle);
+      setSent(s=>[...s,p.handle]);
+      addToast?.(`Pedido enviado para ${p.name}! Aguardando confirmação.`,"success");
+    }catch(e){addToast?.("Erro ao enviar pedido. Tente novamente.","error");}
   };
 
   return(
@@ -1903,9 +1901,10 @@ function AddContactModal({contacts,myHandle,profile,onAdd,onClose,addToast,prefi
             <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</p>
             <p style={{margin:0,fontSize:12,color:C.purple,fontWeight:500}}>{p.handle}</p>
           </div>
-          <button onClick={()=>addContact(p)} style={{background:C.purple,color:C.white,border:"none",borderRadius:50,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-            + Adicionar
-          </button>
+          {sent.includes(p.handle)
+            ?<span style={{fontSize:12,color:C.green,fontWeight:600}}>✓ Enviado</span>
+            :<button onClick={()=>addContact(p)} style={{background:C.purple,color:C.white,border:"none",borderRadius:50,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Convidar</button>
+          }
         </div>
       ))}
     </div>
@@ -2978,6 +2977,12 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [showInvite,setShowInvite]=useState(false);
   const [showInviteApp,setShowInviteApp]=useState(false);
   const [confirmContactIdx,setConfirmContactIdx]=useState(null);
+  const [connRequests,setConnRequests]=useState([]);
+  const checkConnRequests=useCallback(()=>{
+    const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+    const reqs=safeLS.get(`veeda_conn_requests_${myH}`,[]);
+    setConnRequests(reqs);
+  },[profile]);
   const [showGroupName,setShowGroupName]=useState(false);
   const [showShare,setShowShare]=useState(false);
   const [showReminders,setShowReminders]=useState(false);
@@ -3158,8 +3163,9 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         const lsKey=`veeda_conn_requests_${myH}`;
         const lsReqs=safeLS.get(lsKey,[]);let changed=false;
         for(const req of sbReqs){if(!lsReqs.find(r=>r.fromId===req.fromId)){lsReqs.push(req);changed=true;}}
-        if(changed)safeLS.set(lsKey,lsReqs);
+        if(changed){safeLS.set(lsKey,lsReqs);checkConnRequests();}
       }
+      checkConnRequests();
       // Confirmações → vira contato
       const sbConfs=await VeedaSupabase.connections.getConfirmations(myH);
       if(sbConfs.length){
@@ -3184,7 +3190,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         }
       }
     }catch(e){console.warn("[VeedaSupabase sync]",e);}
-  },[profile,checkInbox,save,addToast]);
+  },[profile,checkInbox,checkConnRequests,save,addToast]);
 
   // Setup realtime + sync inicial ao carregar dados
   useEffect(()=>{
@@ -3555,6 +3561,34 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
             <p style={{margin:0,fontSize:16,fontWeight:700,color:C.text,fontFamily:PASSO}}>{group}</p>
             <button onClick={()=>{setNewGroup(group);setShowGroupName(true);}} style={{fontSize:12,color:C.purple,background:"none",border:"none",cursor:"pointer"}}>renomear</button>
           </div>
+          {/* Pedidos de conexão pendentes */}
+          {connRequests.length>0&&<div style={{marginBottom:20}}>
+            <p style={{margin:"0 0 10px",fontSize:13,fontWeight:700,color:C.text}}>📬 Pedidos de conexão ({connRequests.length})</p>
+            {connRequests.map((req,i)=>(
+              <div key={req.fromId||i} style={{background:C.purpleLight,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+                <AvatarBubble emoji={req.fromEmoji||"🌿"} color={req.fromAvatarColor||C.purpleLight} size={40}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <p style={{margin:0,fontSize:13,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{req.fromName}</p>
+                  <p style={{margin:0,fontSize:11,color:C.purple}}>{req.fromHandle}</p>
+                </div>
+                <button onClick={async()=>{
+                  const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+                  const lsKey=`veeda_conn_requests_${myH}`;
+                  if(window.VeedaSupabase?.isReady())await VeedaSupabase.connections.accept(req._sbId,profile,req.fromHandle).catch(()=>{});
+                  const cur=dataRef.current;
+                  if(cur){const nc={name:req.fromName,handle:req.fromHandle,code:req.fromHandle.replace(/^@/,""),emoji:req.fromEmoji||"🌿",avatarColor:req.fromAvatarColor||C.purpleLight,avatarSrc:req.fromAvatarSrc||null,addedAt:Date.now()};save({...cur,contacts:[...(cur.contacts||[]),nc]});}
+                  safeLS.set(lsKey,safeLS.get(lsKey,[]).filter(r=>r.fromId!==req.fromId));
+                  checkConnRequests();addToast?.(`${req.fromName} adicionado ao seu Círculo! 🤝`,"success");
+                }} style={{padding:"6px 12px",background:C.purple,color:"#fff",border:"none",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer"}}>Aceitar</button>
+                <button onClick={()=>{
+                  const myH=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+                  const lsKey=`veeda_conn_requests_${myH}`;
+                  safeLS.set(lsKey,safeLS.get(lsKey,[]).filter(r=>r.fromId!==req.fromId));
+                  checkConnRequests();addToast?.("Pedido recusado.","info");
+                }} style={{padding:"6px 12px",background:"none",color:C.textMid,border:`1px solid ${C.cardBorder}`,borderRadius:20,fontSize:12,cursor:"pointer"}}>Recusar</button>
+              </div>
+            ))}
+          </div>}
           <Btn onClick={()=>setShowInvite(true)} style={{marginBottom:20}}>+ Adicionar ao Círculo</Btn>
           {(!activeData.contacts||activeData.contacts.length===0)
             ?<div style={{textAlign:"center",padding:"2rem 0"}}><div style={{fontSize:52,marginBottom:12}}>👥</div><p style={{fontSize:14,color:C.textLight,marginBottom:16}}>Nenhum contato ainda.</p><button onClick={()=>setShowInviteApp(true)} style={{background:"none",border:`1.5px solid ${C.purple}`,borderRadius:20,padding:"9px 20px",color:C.purple,cursor:"pointer",fontSize:13,fontWeight:600}}>Convidar para o Veeda</button></div>
