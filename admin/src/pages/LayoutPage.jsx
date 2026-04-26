@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import toast from 'react-hot-toast'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { arrayMove, SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
@@ -6,195 +6,249 @@ import { CSS } from '@dnd-kit/utilities'
 import { supabase } from '../lib/supabase'
 import { logAction } from '../lib/audit'
 
-const CATEGORIES = [
-  { key: 'page',      label: '📄 Páginas' },
-  { key: 'modal',     label: '🪟 Modais' },
-  { key: 'component', label: '🧩 Componentes' },
+const PAGE_SECTIONS = [
+  { key: 'timeline', label: '📅 Linha do Tempo' },
+  { key: 'home',     label: '🏠 Home' },
+  { key: 'circle',   label: '👥 Meu Círculo' },
 ]
 
-function SortableRow({ item, selected, onSelect, onToggle }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
+const SECTION_BG = {
+  timeline: '#faf8ff',
+  home: '#f0fdf4',
+  circle: '#fff7ed',
+}
+
+function buildPreviewDoc(blocks) {
+  const body = blocks
+    .filter(b => b.enabled)
+    .map(b => b.block_html || '')
+    .join('\n')
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f0ff;min-height:100%}</style>
+</head><body>${body}</body></html>`
+}
+
+function SortableBlock({ block, onToggle }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.id })
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
-      onClick={() => onSelect(item)}
-      className={`flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer border transition-all ${
-        selected?.id === item.id
-          ? 'border-violet-400 bg-violet-50 shadow-sm'
-          : 'border-gray-100 bg-white hover:border-violet-200'
+      className={`flex items-center gap-2 rounded-xl px-3 py-2.5 border transition-all ${
+        block.enabled ? 'bg-white border-violet-200 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-60'
       }`}
     >
-      <button {...attributes} {...listeners} onClick={e => e.stopPropagation()} className="text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing text-lg">⋮⋮</button>
+      <button {...attributes} {...listeners} className="text-gray-300 hover:text-gray-400 cursor-grab active:cursor-grabbing text-base flex-shrink-0">⋮⋮</button>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-900 truncate">{item.label}</p>
-        <p className="text-xs text-gray-400 font-mono">{item.section_key}</p>
+        <p className="text-xs font-semibold text-gray-800 truncate">{block.label}</p>
+        <p className="text-[10px] text-gray-400 font-mono truncate">{block.section_key}</p>
       </div>
       <button
-        onClick={e => { e.stopPropagation(); onToggle(item) }}
-        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${item.enabled ? 'bg-violet-600' : 'bg-gray-200'}`}
+        onClick={() => onToggle(block)}
+        title={block.enabled ? 'Desativar' : 'Ativar'}
+        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${block.enabled ? 'bg-violet-600' : 'bg-gray-300'}`}
       >
-        <span className="inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform" style={{ transform: item.enabled ? 'translateX(18px)' : 'translateX(2px)' }} />
+        <span className="inline-block h-3 w-3 rounded-full bg-white shadow transition-transform"
+          style={{ transform: block.enabled ? 'translateX(14px)' : 'translateX(2px)' }} />
       </button>
     </div>
   )
 }
 
-function PreviewPanel({ item }) {
-  if (!item) return (
-    <div className="flex-1 card flex items-center justify-center text-gray-400 text-sm">
-      Selecione uma seção para visualizar
-    </div>
-  )
-  return (
-    <div className="flex-1 card p-0 overflow-hidden flex flex-col">
-      <div className="h-10 bg-gray-50 border-b border-gray-100 flex items-center justify-between px-4">
-        <span className="text-xs font-medium text-gray-700">{item.label}</span>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${item.enabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-          {item.enabled ? 'Ativo' : 'Desativado'}
-        </span>
-      </div>
-      {item.preview_html ? (
-        <iframe
-          srcDoc={`<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif}</style></head><body>${item.preview_html}</body></html>`}
-          className="flex-1 w-full border-none"
-          title={item.label}
-          style={{ minHeight: 200 }}
-        />
-      ) : (
-        <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-          Sem preview disponível
-        </div>
-      )}
-      <div className="h-10 bg-gray-50 border-t border-gray-100 flex items-center px-4 gap-2">
-        <span className="text-xs text-gray-500">Categoria:</span>
-        <span className="text-xs font-mono text-violet-600">{item.category}</span>
-        <span className="text-xs text-gray-500 ml-4">Ordem:</span>
-        <span className="text-xs font-mono text-violet-600">{item.order}</span>
-      </div>
-    </div>
-  )
-}
-
 export default function LayoutPage() {
-  const [itemsByCategory, setItemsByCategory] = useState({})
-  const [selected, setSelected] = useState(null)
+  const [allBlocks, setAllBlocks] = useState({}) // { section_key: [...blocks] }
+  const [allSections, setAllSections] = useState([]) // top-level pages/modals
+  const [activeSection, setActiveSection] = useState('timeline')
+  const [activeTab, setActiveTab] = useState('pages') // 'pages' | 'modals' | 'components'
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeCategory, setActiveCategory] = useState('page')
+  const [previewKey, setPreviewKey] = useState(0)
 
-  const sensors = useSensors(useSensor(PointerSensor))
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   useEffect(() => { load() }, [])
 
   async function load() {
     setLoading(true)
     const { data, error } = await supabase.from('layout_config').select('*').order('order')
-    if (error) { toast.error('Erro ao carregar layout'); setLoading(false); return }
-    const grouped = {}
-    for (const cat of CATEGORIES) {
-      grouped[cat.key] = (data ?? []).filter(i => (i.category ?? 'page') === cat.key)
+    if (error) { toast.error('Erro ao carregar'); setLoading(false); return }
+
+    // Separate top-level sections from blocks
+    const sections = (data ?? []).filter(r => !r.parent_section)
+    const blocks = {}
+    for (const r of (data ?? []).filter(r => r.parent_section)) {
+      if (!blocks[r.parent_section]) blocks[r.parent_section] = []
+      blocks[r.parent_section].push(r)
     }
-    setItemsByCategory(grouped)
+    setAllSections(sections)
+    setAllBlocks(blocks)
     setLoading(false)
   }
 
   function handleDragEnd(event) {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    setItemsByCategory(prev => {
-      const cat = activeCategory
-      const list = prev[cat] ?? []
-      const oldIdx = list.findIndex(i => i.id === active.id)
-      const newIdx = list.findIndex(i => i.id === over.id)
-      return { ...prev, [cat]: arrayMove(list, oldIdx, newIdx) }
+    setAllBlocks(prev => {
+      const list = prev[activeSection] ?? []
+      const oldIdx = list.findIndex(b => b.id === active.id)
+      const newIdx = list.findIndex(b => b.id === over.id)
+      const next = { ...prev, [activeSection]: arrayMove(list, oldIdx, newIdx) }
+      setPreviewKey(k => k + 1)
+      return next
     })
   }
 
-  function handleToggle(item) {
-    const cat = item.category ?? 'page'
-    setItemsByCategory(prev => ({
-      ...prev,
-      [cat]: prev[cat].map(i => i.id === item.id ? { ...i, enabled: !i.enabled } : i)
-    }))
-    if (selected?.id === item.id) setSelected(s => ({ ...s, enabled: !s.enabled }))
+  function handleToggleBlock(block) {
+    setAllBlocks(prev => {
+      const list = prev[block.parent_section] ?? []
+      const next = { ...prev, [block.parent_section]: list.map(b => b.id === block.id ? { ...b, enabled: !b.enabled } : b) }
+      setPreviewKey(k => k + 1)
+      return next
+    })
+  }
+
+  function handleToggleSection(section) {
+    setAllSections(prev => prev.map(s => s.id === section.id ? { ...s, enabled: !s.enabled } : s))
   }
 
   async function handleSave() {
     setSaving(true)
-    const allItems = Object.values(itemsByCategory).flat().map((item, _, arr) => ({
-      id: item.id,
-      section_key: item.section_key,
-      label: item.label,
-      enabled: item.enabled,
-      category: item.category,
-      order: (itemsByCategory[item.category ?? 'page'] ?? []).findIndex(i => i.id === item.id),
+    const blockRows = Object.values(allBlocks).flat().map((b, _, arr) => ({
+      id: b.id, section_key: b.section_key, label: b.label, enabled: b.enabled,
+      category: b.category, parent_section: b.parent_section, block_html: b.block_html,
+      order: (allBlocks[b.parent_section] ?? []).findIndex(x => x.id === b.id),
       updated_at: new Date().toISOString()
     }))
-    const { error } = await supabase.from('layout_config').upsert(allItems)
+    const sectionRows = allSections.map((s, i) => ({
+      id: s.id, section_key: s.section_key, label: s.label, enabled: s.enabled,
+      category: s.category, order: i, updated_at: new Date().toISOString()
+    }))
+    const { error } = await supabase.from('layout_config').upsert([...sectionRows, ...blockRows])
     if (error) { toast.error('Erro ao salvar'); setSaving(false); return }
-    await logAction('update_layout_config', { total: allItems.length })
+    await logAction('update_layout_config', { sections: sectionRows.length, blocks: blockRows.length })
     toast.success('Layout salvo')
     setSaving(false)
   }
 
-  const currentList = itemsByCategory[activeCategory] ?? []
+  const currentBlocks = allBlocks[activeSection] ?? []
+  const previewDoc = useMemo(() => buildPreviewDoc(currentBlocks), [previewKey, activeSection])
+
+  const tabSections = {
+    pages: allSections.filter(s => s.category === 'page'),
+    modals: allSections.filter(s => s.category === 'modal'),
+    components: allSections.filter(s => s.category === 'component'),
+  }
+
+  const hasBlocks = PAGE_SECTIONS.some(p => p.key === activeSection)
 
   return (
-    <div className="space-y-4 h-full">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col h-full" style={{ height: 'calc(100vh - 80px)' }}>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 flex-shrink-0">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Layout</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Gerencie seções por categoria. Clique para visualizar.</p>
+          <p className="text-sm text-gray-500 mt-0.5">Reordene blocos e veja o preview em tempo real</p>
         </div>
         <button onClick={handleSave} disabled={saving} className="btn-primary text-sm">
-          {saving ? 'Salvando...' : 'Salvar'}
+          {saving ? 'Salvando...' : 'Salvar layout'}
         </button>
       </div>
 
-      {/* Category tabs */}
-      <div className="flex gap-2">
-        {CATEGORIES.map(cat => (
-          <button
-            key={cat.key}
-            onClick={() => setActiveCategory(cat.key)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
-              activeCategory === cat.key
-                ? 'bg-violet-600 text-white shadow-sm'
-                : 'bg-white text-gray-600 border border-gray-200 hover:border-violet-300'
-            }`}
-          >
-            {cat.label}
-            <span className="ml-2 text-xs opacity-70">({(itemsByCategory[cat.key] ?? []).length})</span>
+      {/* Tab bar */}
+      <div className="flex gap-2 mb-4 flex-shrink-0">
+        {[['pages','📄 Páginas'],['modals','🪟 Modais'],['components','🧩 Componentes']].map(([tab, label]) => (
+          <button key={tab} onClick={() => { setActiveTab(tab); setActiveSection(tabSections[tab]?.[0]?.section_key ?? '') }}
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${activeTab === tab ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-violet-300'}`}>
+            {label} <span className="ml-1 opacity-60 text-xs">({tabSections[tab]?.length ?? 0})</span>
           </button>
         ))}
       </div>
 
-      {loading ? (
-        <p className="text-sm text-gray-400">Carregando...</p>
-      ) : (
-        <div className="flex gap-4" style={{ height: 'calc(100vh - 240px)' }}>
-          {/* List */}
-          <div className="w-72 flex-shrink-0 overflow-y-auto space-y-2 pr-1">
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={currentList.map(i => i.id)} strategy={verticalListSortingStrategy}>
-                {currentList.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-8">Nenhuma seção nesta categoria</p>
-                ) : currentList.map(item => (
-                  <SortableRow
-                    key={item.id}
-                    item={item}
-                    selected={selected}
-                    onSelect={setSelected}
-                    onToggle={handleToggle}
-                  />
-                ))}
-              </SortableContext>
-            </DndContext>
+      {loading ? <p className="text-sm text-gray-400">Carregando...</p> : (
+        <div className="flex gap-4 flex-1 min-h-0">
+
+          {/* Column 1: section list */}
+          <div className="w-44 flex-shrink-0 flex flex-col gap-2 overflow-y-auto">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-1">Seções</p>
+            {(tabSections[activeTab] ?? []).map(s => (
+              <button key={s.id}
+                onClick={() => setActiveSection(s.section_key)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-sm transition-all border ${
+                  activeSection === s.section_key
+                    ? 'bg-violet-600 text-white border-violet-600'
+                    : 'bg-white text-gray-700 border-gray-200 hover:border-violet-300'
+                }`}>
+                <span className="font-medium truncate">{s.label}</span>
+                <span onClick={e => { e.stopPropagation(); handleToggleSection(s) }}
+                  className={`ml-2 w-5 h-5 rounded-full flex-shrink-0 border-2 flex items-center justify-center text-[9px] ${
+                    s.enabled ? 'bg-green-400 border-green-400 text-white' : 'border-gray-300 text-gray-300'
+                  }`}>●</span>
+              </button>
+            ))}
           </div>
 
-          {/* Preview */}
-          <PreviewPanel item={selected} />
+          {/* Column 2: blocks DnD (only for pages with blocks) */}
+          {hasBlocks && activeTab === 'pages' && (
+            <div className="w-52 flex-shrink-0 flex flex-col min-h-0">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-1 mb-2">Blocos</p>
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {currentBlocks.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-6">Nenhum bloco</p>
+                ) : (
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={currentBlocks.map(b => b.id)} strategy={verticalListSortingStrategy}>
+                      {currentBlocks.map(block => (
+                        <SortableBlock key={block.id} block={block} onToggle={handleToggleBlock} />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Column 3: live preview */}
+          <div className="flex-1 min-w-0 flex flex-col rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
+            <div className="h-9 bg-gray-50 border-b border-gray-100 flex items-center justify-between px-4 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1.5">
+                  <div className="w-3 h-3 rounded-full bg-red-400"/>
+                  <div className="w-3 h-3 rounded-full bg-yellow-400"/>
+                  <div className="w-3 h-3 rounded-full bg-green-400"/>
+                </div>
+                <span className="text-xs text-gray-500 font-medium ml-2">
+                  {allSections.find(s => s.section_key === activeSection)?.label ?? activeSection}
+                </span>
+              </div>
+              <span className="text-[10px] text-gray-400">{currentBlocks.filter(b => b.enabled).length}/{currentBlocks.length} blocos ativos</span>
+            </div>
+            {/* Mobile frame */}
+            <div className="flex-1 bg-gray-200 flex items-start justify-center py-4 overflow-y-auto">
+              <div className="w-72 bg-white rounded-3xl overflow-hidden shadow-2xl border-4 border-gray-300" style={{ minHeight: 500 }}>
+                {activeTab === 'pages' && hasBlocks ? (
+                  <iframe
+                    key={previewKey}
+                    srcDoc={previewDoc}
+                    className="w-full border-none"
+                    style={{ minHeight: 500, display: 'block' }}
+                    title="preview"
+                  />
+                ) : (
+                  <iframe
+                    srcDoc={(() => {
+                      const s = allSections.find(x => x.section_key === activeSection)
+                      return s?.preview_html
+                        ? `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif}</style></head><body>${s.preview_html}</body></html>`
+                        : `<!DOCTYPE html><html><body style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#aaa;font-family:system-ui;font-size:13px">Sem preview</body></html>`
+                    })()}
+                    className="w-full border-none"
+                    style={{ minHeight: 500, display: 'block' }}
+                    title="preview"
+                  />
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
