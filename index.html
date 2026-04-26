@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.2";
+  var EMBEDDED_VERSION = "2.2.3";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.1.7";
+const APP_VERSION  = "2.2.3";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1950,7 +1950,15 @@ function ShareDayModal({profile,data,curDay,onClose,onShared,addToast}){
   // ── Compartilhamento local + cross-device via Supabase ──
   const doShare=async()=>{
     if(!sel.length)return;setLoading(true);
-    const payload={date:curDay,author:profile.name,handle:profile.handle||nameToHandle(profile.name),emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments,feeling,message:msg.trim(),importedAt:Date.now()};
+    // Resolve referências IDB → data URL para que o destinatário veja as imagens
+    const resolvedMoments=await Promise.all(moments.map(async m=>{
+      if(m.content?.startsWith("IDB:")){
+        const real=await idbLoad(m.content.slice(4));
+        return real?{...m,content:real}:m;
+      }
+      return m;
+    }));
+    const payload={date:curDay,author:profile.name,handle:profile.handle||nameToHandle(profile.name),emoji:profile.emoji,avatarColor:profile.avatarColor,avatarSrc:profile.avatarSrc||null,moments:resolvedMoments,feeling,message:msg.trim(),importedAt:Date.now()};
     sel.forEach(handle=>{
       const k=`veeda_inbox_${handle.replace(/^@/,"")}`;
       const ex=safeLS.get(k,[]);ex.push(payload);safeLS.set(k,ex);
