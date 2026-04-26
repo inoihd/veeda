@@ -1589,7 +1589,7 @@ function MomentCircle({m,isNew,onTap,size=52}){
 // ═══════════════════════════════════════════════════
 // MOMENT DETAIL
 // ═══════════════════════════════════════════════════
-function MomentDetail({m,onClose,onDelete,onPlay}){
+function MomentDetail({m,onClose,onDelete,onPlay,onTogglePrivacy}){
   const [saving,setSaving]=useState(false);
   const [confirmDelete,setConfirmDelete]=useState(false);
   const audioRef=useRef(null);
@@ -1679,6 +1679,10 @@ function MomentDetail({m,onClose,onDelete,onPlay}){
 
       {canSave&&<Btn onClick={saveToDevice} disabled={saving} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>{saving?<><Spinner size={14} color={C.purple}/>Preparando…</>:"↓ Salvar no dispositivo"}</Btn>}
       {/* Botão de excluir só aparece se onDelete foi passado (modo edição do próprio DONO). */}
+      {onTogglePrivacy&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,background:m.isPrivate?"#FFF3F3":C.purpleLight,borderRadius:10,padding:"10px 14px"}}>
+        <span style={{fontSize:12,color:m.isPrivate?C.red:C.textMid}}>{m.isPrivate?"🔒 Privado":"🌐 Público"}</span>
+        <button onClick={onTogglePrivacy} style={{fontSize:12,fontWeight:600,background:"none",border:`1px solid ${m.isPrivate?C.red:C.purple}`,borderRadius:20,padding:"4px 12px",color:m.isPrivate?C.red:C.purple,cursor:"pointer"}}>{m.isPrivate?"Tornar público":"Tornar privado"}</button>
+      </div>}
       {typeof onDelete==="function"&&!confirmDelete&&(
         <Btn onClick={()=>setConfirmDelete(true)} variant="ghost" style={{color:C.red,fontSize:13}}>Excluir registro</Btn>
       )}
@@ -2009,7 +2013,7 @@ function ShareDayModal({profile,data,curDay,onClose,onShared,addToast}){
   const [sel,setSel]=useState([]);const [msg,setMsg]=useState("");const [loading,setLoading]=useState(false);const [done,setDone]=useState(false);
   const [linkCopied,setLinkCopied]=useState(false);
   const contacts=data.contacts||[];
-  const moments=(data.moments||{})[curDay]||[];
+  const moments=((data.moments||{})[curDay]||[]).filter(m=>!m.isPrivate);
   const already=(data.sharedLog||{})[curDay]||[];
   const available=contacts.filter(c=>!already.includes(c.code));
   const toggle=code=>setSel(p=>p.includes(code)?p.filter(x=>x!==code):[...p,code]);
@@ -2967,6 +2971,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [addMedia,setAddMedia]=useState(null);
   const [addTags,setAddTags]=useState([]);
   const [addLocation,setAddLocation]=useState(null);
+  const [addPrivate,setAddPrivate]=useState(false);
   const [showModal,setShowModal]=useState(false);
   const [showMusicPicker,setShowMusicPicker]=useState(false);
   const [showDrawing,setShowDrawing]=useState(false);
@@ -3403,7 +3408,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const group=activeData?.groupName||"Meu Círculo";
   const lastMId=moments.length>0?moments[moments.length-1].id:null;
 
-  const resetModal=useCallback(()=>{setAddContent("");setAddCaption("");setAddMedia(null);setAddTags([]);setAddLocation(null);setShowModal(false);setShowMusicPicker(false);},[]);
+  const resetModal=useCallback(()=>{setAddContent("");setAddCaption("");setAddMedia(null);setAddTags([]);setAddLocation(null);setAddPrivate(false);setShowModal(false);setShowMusicPicker(false);},[]);
   const readFile=(f,cb)=>{const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(f);};
 
   const clearInbox=useCallback(notif=>{
@@ -3435,7 +3440,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     let type=addType,content=isMedia?addMedia:addContent.trim();
     if(type==="link"&&isVideoLink(content))type="videolink";
     const id=Date.now();
-    const m={id,ts:id,type,content,caption:addCaption.trim()||undefined,tags:addTags.length?addTags:undefined,location:addLocation||undefined,...extra};
+    const m={id,ts:id,type,content,caption:addCaption.trim()||undefined,tags:addTags.length?addTags:undefined,location:addLocation||undefined,isPrivate:addPrivate||undefined,...extra};
     save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});
     resetModal();setLastId(id);
   },[addType,addMedia,addContent,addCaption,addTags,addLocation,save,resetModal]);
@@ -3473,7 +3478,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
       {showAcceptSharedDay&&pendingSharedDay&&<AcceptSharedDayModal shared={pendingSharedDay} onClose={()=>{setShowAcceptSharedDay(false);setPendingSharedDay(null);}} onAccept={async()=>{const cur=dataRef.current;if(!cur||!pendingSharedDay)return;await save({...cur,received:[...(cur.received||[]),pendingSharedDay]});setShowAcceptSharedDay(false);setPendingSharedDay(null);setUnreadCount(c=>c+1);setView("recebidos");setViewRec(pendingSharedDay);addToast?.("Dia recebido e salvo! 🌿","success");}}/>}
       {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const cur=dataRef.current;if(!cur)return;const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
-      {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}} onPlay={setNowPlaying}/>}
+      {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}} onPlay={setNowPlaying} onTogglePrivacy={()=>{const cur=dataRef.current;if(!cur)return;const day=Object.keys(cur.moments||{}).find(d=>(cur.moments[d]||[]).find(x=>x.id===expandedMoment.id));if(!day)return;const updated={...cur,moments:{...cur.moments,[day]:(cur.moments[day]||[]).map(x=>x.id===expandedMoment.id?{...x,isPrivate:!x.isPrivate}:x)}};save(updated);setExpandedMoment(m=>({...m,isPrivate:!m.isPrivate}));}}/>}
       {/* Visualização read-only de REGISTRO da PESSOA DO MEU CÍRCULO: sem onDelete */}
       {expandedRecMoment&&<MomentDetail m={expandedRecMoment} onClose={()=>setExpandedRecMoment(null)} onPlay={setNowPlaying}/>}
       <MiniPlayer track={nowPlaying} onClose={()=>setNowPlaying(null)}/>
@@ -3864,6 +3869,10 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
           {addType!=="arte"&&addType!=="musica"&&!showVoice&&<>
             <input value={addCaption} onChange={e=>setAddCaption(e.target.value)} placeholder="Legenda (opcional)" style={{marginBottom:14}}/>
             <div style={{marginBottom:16}}><TagPicker selectedTags={addTags} onChange={setAddTags} customTags={activeData.customTags||[]}/></div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,background:addPrivate?"#FFF3F3":C.purpleLight,borderRadius:10,padding:"10px 14px"}}>
+              <span style={{fontSize:13,color:addPrivate?C.red:C.textMid}}>{addPrivate?"🔒 Privado — só você vê":"🌐 Público — visível ao compartilhar"}</span>
+              <button onClick={()=>setAddPrivate(p=>!p)} style={{fontSize:12,fontWeight:600,background:"none",border:`1px solid ${addPrivate?C.red:C.purple}`,borderRadius:20,padding:"4px 12px",color:addPrivate?C.red:C.purple,cursor:"pointer"}}>{addPrivate?"Tornar público":"Tornar privado"}</button>
+            </div>
             <Btn onClick={()=>addMoment()}>Adicionar momento</Btn>
           </>}
         </Modal>
