@@ -3,13 +3,11 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  base: '/admin/',
+  base: '/',
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      base: '/admin/',
-      scope: '/admin/',
       manifest: {
         name: 'Veeda Admin',
         short_name: 'VeedaAdmin',
@@ -17,34 +15,19 @@ export default defineConfig({
         theme_color: '#7c3aed',
         background_color: '#1e1b2e',
         display: 'standalone',
-        start_url: '/admin/',
-        scope: '/admin/',
+        start_url: '/',
+        scope: '/',
         icons: [
-          {
-            src: '/admin/icons/icon-192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: '/admin/icons/icon-512.png',
-            sizes: '512x512',
-            type: 'image/png'
-          }
+          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
         ]
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        navigateFallback: '/admin/index.html',
-        navigateFallbackAllowlist: [/^\/admin/]
+        navigateFallback: '/index.html'
       }
     })
   ],
-  resolve: {
-    alias: {
-      '@': '/src'
-    }
-  },
-  server: {
-    port: 5174
-  }
+  resolve: { alias: { '@': '/src' } },
+  server: { port: 5174 }
 })
