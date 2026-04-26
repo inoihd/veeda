@@ -891,7 +891,18 @@ const applyAdminConfig=async()=>{
       const layout=await lRes.json();
       if(layout?.length){
         window._adminLayout={};
-        layout.forEach(r=>{window._adminLayout[r.section_key]=r.enabled;});
+        window._adminBlocks={};
+        layout.forEach(r=>{
+          window._adminLayout[r.section_key]=r.enabled;
+          if(r.parent_section){
+            if(!window._adminBlocks[r.parent_section])window._adminBlocks[r.parent_section]=[];
+            window._adminBlocks[r.parent_section].push({key:r.section_key,enabled:r.enabled,order:r.order});
+          }
+        });
+        // Ordena blocos por order
+        Object.keys(window._adminBlocks).forEach(p=>{
+          window._adminBlocks[p].sort((a,b)=>a.order-b.order);
+        });
       }
     }
   }catch{}
