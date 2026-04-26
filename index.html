@@ -316,7 +316,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.3.1";
+  var EMBEDDED_VERSION = "2.3.2";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -491,7 +491,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.3.1";
+const APP_VERSION  = "2.3.2";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1706,20 +1706,35 @@ function MomentDetail({m,onClose,onDelete,onPlay,onTogglePrivacy}){
 // ═══════════════════════════════════════════════════
 function MusicPicker({onSelect,onClose}){
   const [q,setQ]=useState("");const [res,setRes]=useState([]);const [loading,setLoading]=useState(false);const [err,setErr]=useState("");
+  const [manual,setManual]=useState(false);const [mTitle,setMTitle]=useState("");const [mArtist,setMArtist]=useState("");
+
   const search=async()=>{
-    if(!q.trim())return;setLoading(true);setErr("");setRes([]);
-    try{const r=await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=8`);const d=await r.json();if(!d.results?.length){setErr("Nenhum resultado.");return;}setRes(d.results.map(r=>({id:r.trackId,title:r.trackName,artist:r.artistName,album:r.collectionName,art:r.artworkUrl100,preview:r.previewUrl,appleMusicUrl:r.trackViewUrl})));}
-    catch{setErr("Erro ao buscar. Verifique sua conexão.");}
+    if(!q.trim())return;
+    setLoading(true);setErr("");setRes([]);
+    try{
+      // Tenta direto; se CORS falhar, usa proxy
+      let d;
+      try{
+        const r=await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=10&country=BR`);
+        d=await r.json();
+      }catch{
+        const r=await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=10&country=BR`)}`);
+        d=await r.json();
+      }
+      if(!d.results?.length){setErr("Nenhum resultado. Tente outra busca ou adicione manualmente abaixo.");setRes([]);}
+      else setRes(d.results.map(r=>({id:r.trackId,title:r.trackName,artist:r.artistName,album:r.collectionName,art:r.artworkUrl100,preview:r.previewUrl,appleMusicUrl:r.trackViewUrl})));
+    }catch{setErr("Erro ao buscar. Verifique sua conexão ou adicione manualmente.");}
     setLoading(false);
   };
+
   return(
     <Modal title="Buscar música" onClose={onClose}>
       <div style={{display:"flex",gap:8,marginBottom:14}}>
-        <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()} placeholder="Nome da música ou artista…" style={{flex:1}}/>
+        <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()} placeholder="Nome da música ou artista…" style={{flex:1}} autoFocus/>
         <button onClick={search} disabled={loading} style={{padding:"0 16px",background:C.purple,color:"#fff",border:"none",borderRadius:50,cursor:"pointer",fontSize:13,fontWeight:600,flexShrink:0,display:"flex",alignItems:"center",gap:4}}>{loading?<Spinner size={14} color="#fff"/>:"Buscar"}</button>
       </div>
       {err&&<p style={{fontSize:13,color:C.red,marginBottom:10}}>{err}</p>}
-      <div style={{maxHeight:340,overflowY:"auto"}}>
+      {res.length>0&&<div style={{maxHeight:300,overflowY:"auto",marginBottom:12}}>
         {res.map(r=>(
           <div key={r.id} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.cardBorder}`,alignItems:"center"}}>
             {r.art&&<img src={r.art} alt="" style={{width:44,height:44,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
@@ -1727,10 +1742,17 @@ function MusicPicker({onSelect,onClose}){
               <p style={{margin:0,fontSize:13,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</p>
               <p style={{margin:0,fontSize:12,color:C.textMid,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.artist}</p>
             </div>
-            <button onClick={()=>onSelect(r)} style={{padding:"7px 12px",background:C.green,color:"#fff",border:"none",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>Adicionar</button>
+            <button onClick={()=>onSelect(r)} style={{padding:"7px 12px",background:C.green,color:"#fff",border:"none",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>+ Add</button>
           </div>
         ))}
-      </div>
+      </div>}
+      {/* Entrada manual — fallback sempre disponível */}
+      <button onClick={()=>setManual(m=>!m)} style={{background:"none",border:"none",color:C.purple,fontSize:12,cursor:"pointer",padding:"4px 0",marginBottom:8}}>✏️ {manual?"Fechar entrada manual":"Adicionar manualmente"}</button>
+      {manual&&<div style={{background:C.purpleLight,borderRadius:12,padding:"12px 14px"}}>
+        <input value={mTitle} onChange={e=>setMTitle(e.target.value)} placeholder="Nome da música *" style={{marginBottom:8}}/>
+        <input value={mArtist} onChange={e=>setMArtist(e.target.value)} placeholder="Artista (opcional)" style={{marginBottom:10}}/>
+        <button onClick={()=>{if(!mTitle.trim())return;onSelect({id:Date.now(),title:mTitle.trim(),artist:mArtist.trim(),album:"",art:null,preview:null,appleMusicUrl:null});}} style={{width:"100%",padding:"10px 0",background:C.green,color:"#fff",border:"none",borderRadius:10,fontWeight:600,fontSize:14,cursor:"pointer"}}>+ Adicionar à linha do tempo</button>
+      </div>}
     </Modal>
   );
 }
