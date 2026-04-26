@@ -15,7 +15,7 @@ export default function Login() {
     setLoading(true)
     try {
       await signIn(email, password)
-      navigate('/admin/', { replace: true })
+      navigate('/', { replace: true })
     } catch (err) {
       toast.error(err.message ?? 'Erro ao fazer login')
     } finally {

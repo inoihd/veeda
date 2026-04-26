@@ -21,18 +21,18 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s)
       setLoading(false)
-      if (s && !isAdmin(s) && location.pathname !== '/admin/login') {
-        navigate('/admin/login', { replace: true })
+      if (s && !isAdmin(s) && location.pathname !== '/login') {
+        navigate('/login', { replace: true })
       }
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s)
       if (!s) {
-        navigate('/admin/login', { replace: true })
+        navigate('/login', { replace: true })
       } else if (!isAdmin(s)) {
         supabase.auth.signOut()
-        navigate('/admin/login', { replace: true })
+        navigate('/login', { replace: true })
       }
     })
 
@@ -51,7 +51,7 @@ export function AuthProvider({ children }) {
 
   const signOut = async () => {
     await supabase.auth.signOut()
-    navigate('/admin/login', { replace: true })
+    navigate('/login', { replace: true })
   }
 
   return (

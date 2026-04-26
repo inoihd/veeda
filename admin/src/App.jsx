@@ -18,7 +18,7 @@ function ProtectedRoute({ children }) {
   }
 
   if (!session || !isAdmin) {
-    return <Navigate to="/admin/login" replace />
+    return <Navigate to="/login" replace />
   }
 
   return <Layout>{children}</Layout>
@@ -27,22 +27,21 @@ function ProtectedRoute({ children }) {
 export default function App() {
   return (
     <Routes>
-      <Route path="/admin/login" element={<Login />} />
+      <Route path="/login" element={<Login />} />
 
-      <Route path="/admin/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/admin/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
-      <Route path="/admin/layout" element={<ProtectedRoute><LayoutPage /></ProtectedRoute>} />
-      <Route path="/admin/polls" element={<ProtectedRoute><Polls /></ProtectedRoute>} />
-      <Route path="/admin/ads" element={<ProtectedRoute><Ads /></ProtectedRoute>} />
-      <Route path="/admin/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-      <Route path="/admin/style" element={<ProtectedRoute><StyleEditor /></ProtectedRoute>} />
-      <Route path="/admin/home-content" element={<ProtectedRoute><HomeContent /></ProtectedRoute>} />
-      <Route path="/admin/moderation" element={<ProtectedRoute><Moderation /></ProtectedRoute>} />
-      <Route path="/admin/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
-      <Route path="/admin/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
+      <Route path="/layout" element={<ProtectedRoute><LayoutPage /></ProtectedRoute>} />
+      <Route path="/polls" element={<ProtectedRoute><Polls /></ProtectedRoute>} />
+      <Route path="/ads" element={<ProtectedRoute><Ads /></ProtectedRoute>} />
+      <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+      <Route path="/style" element={<ProtectedRoute><StyleEditor /></ProtectedRoute>} />
+      <Route path="/home-content" element={<ProtectedRoute><HomeContent /></ProtectedRoute>} />
+      <Route path="/moderation" element={<ProtectedRoute><Moderation /></ProtectedRoute>} />
+      <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
-      {/* Catch-all: redirect to dashboard */}
-      <Route path="*" element={<Navigate to="/admin/" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }
