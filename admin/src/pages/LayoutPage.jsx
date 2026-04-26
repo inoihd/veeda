@@ -1,51 +1,64 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import toast from 'react-hot-toast'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { arrayMove, SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import Editor from '@monaco-editor/react'
 import { supabase } from '../lib/supabase'
 import { logAction } from '../lib/audit'
 
-const PAGE_SECTIONS = [
-  { key: 'timeline', label: '📅 Linha do Tempo' },
-  { key: 'home',     label: '🏠 Home' },
-  { key: 'circle',   label: '👥 Meu Círculo' },
-]
-
-const SECTION_BG = {
-  timeline: '#faf8ff',
-  home: '#f0fdf4',
-  circle: '#fff7ed',
+const APP_CSS = `
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+:root{
+  --gradient-primary:linear-gradient(135deg,#9000FF 0%,#7B6FA0 50%,#22FCB7 100%);
+  --gradient-secondary:linear-gradient(135deg,#EAFFF8 0%,#F0F6FD 50%,#FDF5F0 100%);
+  --shadow-soft:0 2px 8px rgba(0,0,0,0.08),0 1px 3px rgba(0,0,0,0.04);
+  --shadow-glow:0 0 20px rgba(144,0,255,0.3);
 }
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:linear-gradient(135deg,#EAFFF8 0%,#F0F6FD 50%,#FDF5F0 100%);color:#3A3350;min-height:100vh;}
+button{font-family:inherit;cursor:pointer;border:none;}
+[data-block]{cursor:pointer;transition:outline 0.15s;}
+[data-block]:hover{outline:2px dashed rgba(144,0,255,0.5);outline-offset:2px;}
+[data-block].selected{outline:2.5px solid #9000FF!important;outline-offset:2px;position:relative;}
+`
+
+const SELECTION_SCRIPT = `
+<script>
+document.addEventListener('click',function(e){
+  var el=e.target.closest('[data-block]');
+  if(!el)return;
+  document.querySelectorAll('[data-block].selected').forEach(function(x){x.classList.remove('selected');});
+  el.classList.add('selected');
+  window.parent.postMessage({type:'block-select',key:el.dataset.block,html:el.outerHTML},'*');
+},true);
+<\/script>`
+
+const PAGE_SECTIONS = ['timeline','home','circle']
 
 function buildPreviewDoc(blocks) {
-  const body = blocks
-    .filter(b => b.enabled)
-    .map(b => b.block_html || '')
-    .join('\n')
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f0ff;min-height:100%}</style>
-</head><body>${body}</body></html>`
+  const body = blocks.map(b => b.enabled ? b.block_html || '' : `<div data-block="${b.section_key}" style="opacity:0.3;padding:8px 18px;border-bottom:1px dashed #ccc;font-size:11px;color:#aaa;text-align:center">${b.label} (desativado)</div>`).join('\n')
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>${APP_CSS}</style></head><body>${body}${SELECTION_SCRIPT}</body></html>`
 }
 
-function SortableBlock({ block, onToggle }) {
+function SortableBlock({ block, selected, onToggle }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.id })
+  const isSelected = selected?.key === block.section_key
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
       className={`flex items-center gap-2 rounded-xl px-3 py-2.5 border transition-all ${
-        block.enabled ? 'bg-white border-violet-200 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-60'
+        isSelected ? 'border-violet-500 bg-violet-50 shadow-md' :
+        block.enabled ? 'bg-white border-violet-100 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-60'
       }`}
     >
       <button {...attributes} {...listeners} className="text-gray-300 hover:text-gray-400 cursor-grab active:cursor-grabbing text-base flex-shrink-0">⋮⋮</button>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-semibold text-gray-800 truncate">{block.label}</p>
-        <p className="text-[10px] text-gray-400 font-mono truncate">{block.section_key}</p>
+        <p className="text-[10px] text-gray-400 font-mono">{block.section_key}</p>
       </div>
       <button
-        onClick={() => onToggle(block)}
-        title={block.enabled ? 'Desativar' : 'Ativar'}
+        onClick={(e) => { e.stopPropagation(); onToggle(block) }}
         className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${block.enabled ? 'bg-violet-600' : 'bg-gray-300'}`}
       >
         <span className="inline-block h-3 w-3 rounded-full bg-white shadow transition-transform"
@@ -56,24 +69,35 @@ function SortableBlock({ block, onToggle }) {
 }
 
 export default function LayoutPage() {
-  const [allBlocks, setAllBlocks] = useState({}) // { section_key: [...blocks] }
-  const [allSections, setAllSections] = useState([]) // top-level pages/modals
+  const [allBlocks, setAllBlocks] = useState({})
+  const [allSections, setAllSections] = useState([])
   const [activeSection, setActiveSection] = useState('timeline')
-  const [activeTab, setActiveTab] = useState('pages') // 'pages' | 'modals' | 'components'
+  const [activeTab, setActiveTab] = useState('pages')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [selectedBlock, setSelectedBlock] = useState(null) // {key, html}
+  const [editHtml, setEditHtml] = useState('')
   const [previewKey, setPreviewKey] = useState(0)
-
+  const iframeRef = useRef(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   useEffect(() => { load() }, [])
+
+  // Listen for block selection from iframe
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.data?.type !== 'block-select') return
+      setSelectedBlock({ key: e.data.key, html: e.data.html })
+      setEditHtml(e.data.html)
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [])
 
   async function load() {
     setLoading(true)
     const { data, error } = await supabase.from('layout_config').select('*').order('order')
     if (error) { toast.error('Erro ao carregar'); setLoading(false); return }
-
-    // Separate top-level sections from blocks
     const sections = (data ?? []).filter(r => !r.parent_section)
     const blocks = {}
     for (const r of (data ?? []).filter(r => r.parent_section)) {
@@ -85,14 +109,11 @@ export default function LayoutPage() {
     setLoading(false)
   }
 
-  function handleDragEnd(event) {
-    const { active, over } = event
+  function handleDragEnd({ active, over }) {
     if (!over || active.id === over.id) return
     setAllBlocks(prev => {
       const list = prev[activeSection] ?? []
-      const oldIdx = list.findIndex(b => b.id === active.id)
-      const newIdx = list.findIndex(b => b.id === over.id)
-      const next = { ...prev, [activeSection]: arrayMove(list, oldIdx, newIdx) }
+      const next = { ...prev, [activeSection]: arrayMove(list, list.findIndex(b => b.id === active.id), list.findIndex(b => b.id === over.id)) }
       setPreviewKey(k => k + 1)
       return next
     })
@@ -107,13 +128,21 @@ export default function LayoutPage() {
     })
   }
 
-  function handleToggleSection(section) {
-    setAllSections(prev => prev.map(s => s.id === section.id ? { ...s, enabled: !s.enabled } : s))
+  // Apply inline HTML edit to the block data
+  function applyHtmlEdit() {
+    if (!selectedBlock || !editHtml) return
+    setAllBlocks(prev => {
+      const list = prev[activeSection] ?? []
+      const next = { ...prev, [activeSection]: list.map(b => b.section_key === selectedBlock.key ? { ...b, block_html: editHtml } : b) }
+      setPreviewKey(k => k + 1)
+      return next
+    })
+    toast.success('Preview atualizado — clique em Salvar para persistir')
   }
 
   async function handleSave() {
     setSaving(true)
-    const blockRows = Object.values(allBlocks).flat().map((b, _, arr) => ({
+    const blockRows = Object.values(allBlocks).flat().map(b => ({
       id: b.id, section_key: b.section_key, label: b.label, enabled: b.enabled,
       category: b.category, parent_section: b.parent_section, block_html: b.block_html,
       order: (allBlocks[b.parent_section] ?? []).findIndex(x => x.id === b.id),
@@ -125,39 +154,38 @@ export default function LayoutPage() {
     }))
     const { error } = await supabase.from('layout_config').upsert([...sectionRows, ...blockRows])
     if (error) { toast.error('Erro ao salvar'); setSaving(false); return }
-    await logAction('update_layout_config', { sections: sectionRows.length, blocks: blockRows.length })
-    toast.success('Layout salvo')
+    await logAction('update_layout_config', { blocks: blockRows.length })
+    toast.success('Layout salvo e publicado')
     setSaving(false)
   }
 
   const currentBlocks = allBlocks[activeSection] ?? []
-  const previewDoc = useMemo(() => buildPreviewDoc(currentBlocks), [previewKey, activeSection])
+  const previewDoc = useMemo(() => buildPreviewDoc(currentBlocks), [previewKey, activeSection, currentBlocks])
 
   const tabSections = {
     pages: allSections.filter(s => s.category === 'page'),
     modals: allSections.filter(s => s.category === 'modal'),
     components: allSections.filter(s => s.category === 'component'),
   }
-
-  const hasBlocks = PAGE_SECTIONS.some(p => p.key === activeSection)
+  const isPageWithBlocks = PAGE_SECTIONS.includes(activeSection) && activeTab === 'pages'
 
   return (
-    <div className="flex flex-col h-full" style={{ height: 'calc(100vh - 80px)' }}>
+    <div className="flex flex-col" style={{ height: 'calc(100vh - 80px)' }}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Layout</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Reordene blocos e veja o preview em tempo real</p>
+          <p className="text-sm text-gray-500 mt-0.5">Arraste blocos, clique no preview para editar HTML inline</p>
         </div>
         <button onClick={handleSave} disabled={saving} className="btn-primary text-sm">
-          {saving ? 'Salvando...' : 'Salvar layout'}
+          {saving ? 'Salvando...' : 'Salvar e publicar'}
         </button>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex gap-2 mb-4 flex-shrink-0">
+      {/* Tabs */}
+      <div className="flex gap-2 mb-3 flex-shrink-0">
         {[['pages','📄 Páginas'],['modals','🪟 Modais'],['components','🧩 Componentes']].map(([tab, label]) => (
-          <button key={tab} onClick={() => { setActiveTab(tab); setActiveSection(tabSections[tab]?.[0]?.section_key ?? '') }}
+          <button key={tab} onClick={() => { setActiveTab(tab); const first = tabSections[tab]?.[0]; if(first) setActiveSection(first.section_key) }}
             className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${activeTab === tab ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-violet-300'}`}>
             {label} <span className="ml-1 opacity-60 text-xs">({tabSections[tab]?.length ?? 0})</span>
           </button>
@@ -165,90 +193,116 @@ export default function LayoutPage() {
       </div>
 
       {loading ? <p className="text-sm text-gray-400">Carregando...</p> : (
-        <div className="flex gap-4 flex-1 min-h-0">
+        <div className="flex gap-3 flex-1 min-h-0">
 
-          {/* Column 1: section list */}
-          <div className="w-44 flex-shrink-0 flex flex-col gap-2 overflow-y-auto">
-            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-1">Seções</p>
+          {/* Col 1: section list */}
+          <div className="w-36 flex-shrink-0 flex flex-col gap-1.5 overflow-y-auto">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">Seções</p>
             {(tabSections[activeTab] ?? []).map(s => (
               <button key={s.id}
-                onClick={() => setActiveSection(s.section_key)}
-                className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-sm transition-all border ${
-                  activeSection === s.section_key
-                    ? 'bg-violet-600 text-white border-violet-600'
-                    : 'bg-white text-gray-700 border-gray-200 hover:border-violet-300'
+                onClick={() => { setActiveSection(s.section_key); setSelectedBlock(null) }}
+                className={`flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs transition-all border ${
+                  activeSection === s.section_key ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-700 border-gray-200 hover:border-violet-300'
                 }`}>
-                <span className="font-medium truncate">{s.label}</span>
-                <span onClick={e => { e.stopPropagation(); handleToggleSection(s) }}
-                  className={`ml-2 w-5 h-5 rounded-full flex-shrink-0 border-2 flex items-center justify-center text-[9px] ${
-                    s.enabled ? 'bg-green-400 border-green-400 text-white' : 'border-gray-300 text-gray-300'
-                  }`}>●</span>
+                <span className="font-medium truncate flex-1">{s.label}</span>
+                <span onClick={e => { e.stopPropagation(); setAllSections(prev => prev.map(x => x.id === s.id ? {...x, enabled:!x.enabled} : x)) }}
+                  className={`ml-1.5 w-4 h-4 rounded-full flex-shrink-0 border-2 flex items-center justify-center text-[8px] ${s.enabled ? 'bg-green-400 border-green-400 text-white' : 'border-gray-300'}`}>●</span>
               </button>
             ))}
           </div>
 
-          {/* Column 2: blocks DnD (only for pages with blocks) */}
-          {hasBlocks && activeTab === 'pages' && (
-            <div className="w-52 flex-shrink-0 flex flex-col min-h-0">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-1 mb-2">Blocos</p>
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                {currentBlocks.length === 0 ? (
-                  <p className="text-xs text-gray-400 text-center py-6">Nenhum bloco</p>
-                ) : (
-                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                    <SortableContext items={currentBlocks.map(b => b.id)} strategy={verticalListSortingStrategy}>
-                      {currentBlocks.map(block => (
-                        <SortableBlock key={block.id} block={block} onToggle={handleToggleBlock} />
-                      ))}
-                    </SortableContext>
-                  </DndContext>
-                )}
+          {/* Col 2: blocks DnD */}
+          {isPageWithBlocks && (
+            <div className="w-48 flex-shrink-0 flex flex-col min-h-0">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1.5">Blocos</p>
+              <div className="flex-1 overflow-y-auto space-y-1.5 pr-0.5">
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={currentBlocks.map(b => b.id)} strategy={verticalListSortingStrategy}>
+                    {currentBlocks.map(block => (
+                      <SortableBlock key={block.id} block={block} selected={selectedBlock} onToggle={handleToggleBlock} />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               </div>
             </div>
           )}
 
-          {/* Column 3: live preview */}
-          <div className="flex-1 min-w-0 flex flex-col rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
-            <div className="h-9 bg-gray-50 border-b border-gray-100 flex items-center justify-between px-4 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="flex gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-red-400"/>
-                  <div className="w-3 h-3 rounded-full bg-yellow-400"/>
-                  <div className="w-3 h-3 rounded-full bg-green-400"/>
-                </div>
-                <span className="text-xs text-gray-500 font-medium ml-2">
-                  {allSections.find(s => s.section_key === activeSection)?.label ?? activeSection}
-                </span>
-              </div>
-              <span className="text-[10px] text-gray-400">{currentBlocks.filter(b => b.enabled).length}/{currentBlocks.length} blocos ativos</span>
+          {/* Col 3: mobile preview */}
+          <div className="w-64 flex-shrink-0 flex flex-col rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100">
+            <div className="h-8 bg-gray-50 border-b border-gray-100 flex items-center justify-between px-3 flex-shrink-0">
+              <div className="flex gap-1"><div className="w-2.5 h-2.5 rounded-full bg-red-400"/><div className="w-2.5 h-2.5 rounded-full bg-yellow-400"/><div className="w-2.5 h-2.5 rounded-full bg-green-400"/></div>
+              <span className="text-[10px] text-gray-400">clique no preview para editar</span>
             </div>
-            {/* Mobile frame */}
-            <div className="flex-1 bg-gray-200 flex items-start justify-center py-4 overflow-y-auto">
-              <div className="w-72 bg-white rounded-3xl overflow-hidden shadow-2xl border-4 border-gray-300" style={{ minHeight: 500 }}>
-                {activeTab === 'pages' && hasBlocks ? (
-                  <iframe
-                    key={previewKey}
-                    srcDoc={previewDoc}
-                    className="w-full border-none"
-                    style={{ minHeight: 500, display: 'block' }}
-                    title="preview"
-                  />
-                ) : (
-                  <iframe
-                    srcDoc={(() => {
-                      const s = allSections.find(x => x.section_key === activeSection)
-                      return s?.preview_html
-                        ? `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif}</style></head><body>${s.preview_html}</body></html>`
-                        : `<!DOCTYPE html><html><body style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#aaa;font-family:system-ui;font-size:13px">Sem preview</body></html>`
-                    })()}
-                    className="w-full border-none"
-                    style={{ minHeight: 500, display: 'block' }}
-                    title="preview"
-                  />
-                )}
-              </div>
+            <div className="flex-1 overflow-y-auto">
+              {isPageWithBlocks ? (
+                <iframe
+                  key={previewKey}
+                  ref={iframeRef}
+                  srcDoc={previewDoc}
+                  className="w-full border-none"
+                  style={{ minHeight: '100%', height: '600px', display: 'block' }}
+                  title="preview"
+                />
+              ) : (
+                <iframe
+                  srcDoc={(() => {
+                    const s = allSections.find(x => x.section_key === activeSection)
+                    return s?.preview_html ? `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>${APP_CSS}</style></head><body>${s.preview_html}</body></html>` : `<!DOCTYPE html><html><body style="display:flex;align-items:center;justify-content:center;min-height:300px;color:#aaa;font-family:system-ui;font-size:13px">Sem preview</body></html>`
+                  })()}
+                  className="w-full border-none"
+                  style={{ minHeight: '100%', height: '600px', display: 'block' }}
+                  title="preview"
+                />
+              )}
             </div>
           </div>
+
+          {/* Col 4: HTML/CSS editor */}
+          <div className="flex-1 min-w-0 flex flex-col rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
+            <div className="h-8 bg-gray-50 border-b border-gray-100 flex items-center justify-between px-4 flex-shrink-0">
+              <span className="text-xs font-mono text-gray-500">
+                {selectedBlock ? `${selectedBlock.key}.html` : '← clique em um bloco no preview'}
+              </span>
+              {selectedBlock && (
+                <button onClick={applyHtmlEdit} className="text-xs bg-violet-600 text-white px-3 py-1 rounded-lg hover:bg-violet-700 transition-colors">
+                  Aplicar preview
+                </button>
+              )}
+            </div>
+            <div className="flex-1">
+              {selectedBlock ? (
+                <Editor
+                  height="100%"
+                  language="html"
+                  value={editHtml}
+                  onChange={v => setEditHtml(v ?? '')}
+                  theme="light"
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 12,
+                    lineNumbers: 'on',
+                    wordWrap: 'on',
+                    scrollBeyondLastLine: false,
+                    padding: { top: 12 },
+                    formatOnPaste: true,
+                  }}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-gray-300 text-sm flex-col gap-3">
+                  <span className="text-4xl">👆</span>
+                  <p>Clique em qualquer elemento no preview</p>
+                  <p className="text-xs text-gray-200">O HTML do bloco aparece aqui para edição</p>
+                </div>
+              )}
+            </div>
+            {selectedBlock && (
+              <div className="h-10 border-t border-gray-100 bg-gray-50 flex items-center justify-between px-4 flex-shrink-0">
+                <span className="text-[10px] text-gray-400">Edite o HTML → Aplicar preview → Salvar e publicar</span>
+                <button onClick={() => { setSelectedBlock(null); setEditHtml('') }} className="text-[10px] text-gray-400 hover:text-gray-600">✕ fechar</button>
+              </div>
+            )}
+          </div>
+
         </div>
       )}
     </div>
