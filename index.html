@@ -2990,6 +2990,9 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     const reqs=safeLS.get(`veeda_conn_requests_${myH}`,[]);
     setConnRequests(reqs);
   },[profile]);
+  const [pullY,setPullY]=useState(0);
+  const [refreshing,setRefreshing]=useState(false);
+  const pullRef=useRef({startY:0,active:false});
   const [showGroupName,setShowGroupName]=useState(false);
   const [showShare,setShowShare]=useState(false);
   const [showReminders,setShowReminders]=useState(false);
@@ -3220,6 +3223,29 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       sbChannels.current=[];
     };
   },[loading]); // eslint-disable-line
+
+  // Pull-to-refresh — listener não-passivo para poder chamar preventDefault
+  const contentRef=useRef(null);
+  useEffect(()=>{
+    const el=contentRef.current;if(!el)return;
+    const onStart=e=>{if(window.scrollY===0)pullRef.current={startY:e.touches[0].clientY,active:true};};
+    const onMove=e=>{
+      if(!pullRef.current.active)return;
+      const dy=e.touches[0].clientY-pullRef.current.startY;
+      if(dy>0){e.preventDefault();setPullY(Math.min(dy*0.5,64));}
+    };
+    const onEnd=()=>{
+      if(pullRef.current.active&&pullY>48){
+        setRefreshing(true);setPullY(0);
+        syncFromSupabase().finally(()=>setRefreshing(false));
+      }else{setPullY(0);}
+      pullRef.current.active=false;
+    };
+    el.addEventListener("touchstart",onStart,{passive:true});
+    el.addEventListener("touchmove",onMove,{passive:false});
+    el.addEventListener("touchend",onEnd,{passive:true});
+    return()=>{el.removeEventListener("touchstart",onStart);el.removeEventListener("touchmove",onMove);el.removeEventListener("touchend",onEnd);};
+  },[pullY,syncFromSupabase]);
 
   // Pending add from invite link (?add=vc2_…)
   useEffect(()=>{
@@ -3508,8 +3534,13 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
         </div></>}
       </div>
 
+      {/* Pull-to-refresh indicator */}
+      {(pullY>0||refreshing)&&<div style={{display:"flex",justifyContent:"center",alignItems:"center",height:pullY||40,transition:pullY?"none":"height .3s ease",overflow:"hidden"}}>
+        {refreshing?<Spinner size={20} color={C.purple}/>:<div style={{width:20,height:20,borderRadius:"50%",border:`2.5px solid ${C.purple}`,opacity:Math.min(pullY/48,1)}}/>}
+      </div>}
+
       {/* ── Content ── */}
-      <div style={{paddingBottom:120}}>
+      <div ref={contentRef} style={{paddingBottom:120}}>
         {/* HOME */}
         {view==="home"&&(()=>{
           const allMoments=Object.entries(activeData.moments||{}).flatMap(([d,ms])=>(ms||[]).map(m=>({...m,day:d})));
