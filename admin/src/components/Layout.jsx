@@ -6,17 +6,17 @@ import { useAuth } from '../contexts/AuthContext'
 import ConfirmDialog from './ConfirmDialog'
 
 const NAV = [
-  { to: '/admin/',              label: 'Dashboard',       icon: '📊' },
-  { to: '/admin/users',         label: 'Usuários',        icon: '👥' },
-  { to: '/admin/layout',        label: 'Layout',          icon: '🧩' },
-  { to: '/admin/home-content',  label: 'Home Content',    icon: '🏠' },
-  { to: '/admin/polls',         label: 'Enquetes',        icon: '🗳️' },
-  { to: '/admin/ads',           label: 'Anúncios',        icon: '📢' },
-  { to: '/admin/notifications', label: 'Notificações',    icon: '🔔' },
-  { to: '/admin/style',         label: 'Estilos',         icon: '🎨' },
-  { to: '/admin/moderation',    label: 'Moderação',       icon: '🛡️' },
-  { to: '/admin/audit',         label: 'Audit Log',       icon: '📋' },
-  { to: '/admin/settings',      label: 'Configurações',   icon: '⚙️' }
+  { to: '/',              label: 'Dashboard',       icon: '📊' },
+  { to: '/users',         label: 'Usuários',        icon: '👥' },
+  { to: '/layout',        label: 'Layout',          icon: '🧩' },
+  { to: '/home-content',  label: 'Home Content',    icon: '🏠' },
+  { to: '/polls',         label: 'Enquetes',        icon: '🗳️' },
+  { to: '/ads',           label: 'Anúncios',        icon: '📢' },
+  { to: '/notifications', label: 'Notificações',    icon: '🔔' },
+  { to: '/style',         label: 'Estilos',         icon: '🎨' },
+  { to: '/moderation',    label: 'Moderação',       icon: '🛡️' },
+  { to: '/audit',         label: 'Audit Log',       icon: '📋' },
+  { to: '/settings',      label: 'Configurações',   icon: '⚙️' }
 ]
 
 export default function Layout({ children }) {
@@ -77,7 +77,7 @@ export default function Layout({ children }) {
             <NavLink
               key={to}
               to={to}
-              end={to === '/admin/'}
+              end={to === '/'}
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 text-sm font-medium transition-colors duration-150 ` +
