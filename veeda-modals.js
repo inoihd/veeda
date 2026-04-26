@@ -1021,4 +1021,102 @@ function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays
       </div>
     </Modal>
   );
+
+
+// ═══════════════════════════════════════════════════════════
+// VIEWED BY MODAL — Quem visualizou meu dia
+// ═══════════════════════════════════════════════════════════
+function ViewedByModal({sharedDay, contacts, readReceipts=[], onClose}){
+  const receiptsForDay = readReceipts.filter(r => r.date === sharedDay.date);
+  const viewedHandles = new Set(receiptsForDay.map(r => r.fromHandle));
+
+  const viewed = receiptsForDay.map(r => {
+    const contact = contacts.find(c => (c.handle||'').replace(/^@/,'') === r.fromHandle.replace(/^@/,''));
+    return {
+      handle: r.fromHandle,
+      name: contact ? contact.name : r.fromHandle,
+      avatar: contact ? contact.avatar : null,
+      color: contact ? contact.color : C.purpleMid,
+      ts: r.ts
+    };
+  }).sort((a,b) => b.ts - a.ts);
+
+  const notViewed = contacts.filter(c => {
+    const h = (c.handle||'').replace(/^@/,'');
+    return !viewedHandles.has(h);
+  });
+
+  const fmtTime = ts => {
+    const d = new Date(ts);
+    return d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+  };
+
+  const fmtDate = ts => {
+    const d = new Date(ts);
+    const today = new Date();
+    const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+    if(d.toDateString()===today.toDateString()) return 'hoje às '+fmtTime(ts);
+    if(d.toDateString()===yesterday.toDateString()) return 'ontem às '+fmtTime(ts);
+    return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})+' às '+fmtTime(ts);
+  };
+
+  return(
+    <Modal title="👁️ Quem visualizou" onClose={onClose}>
+      <p style={{fontSize:13,color:C.textMid,marginBottom:16,marginTop:-8}}>
+        Dia compartilhado com {contacts.length} contato{contacts.length!==1?'s':''}
+      </p>
+
+      {viewed.length > 0 ? (
+        <div style={{marginBottom:20}}>
+          <p style={{fontSize:12,fontWeight:700,color:C.purple,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>
+            ✅ Visualizaram ({viewed.length})
+          </p>
+          {viewed.map((v,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 0',borderBottom:i<viewed.length-1?'1px solid '+C.cardBorder:'none'}}>
+              <AvatarBubble src={v.avatar} emoji={v.name?.[0]||'?'} color={v.color} size={36}/>
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontSize:14,fontWeight:600,color:C.text}}>{v.name}</p>
+                <p style={{margin:0,fontSize:12,color:C.textLight}}>{'@'+v.handle.replace(/^@/,'')}</p>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <p style={{margin:0,fontSize:11,color:C.textLight}}>{fmtDate(v.ts)}</p>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4,marginTop:2}}>
+                  <div style={{width:6,height:6,borderRadius:'50%',background:C.teal}}/>
+                  <span style={{fontSize:10,color:C.teal,fontWeight:600}}>Viu</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{padding:'20px 0',textAlign:'center',marginBottom:20}}>
+          <p style={{fontSize:32,marginBottom:8}}>⏳</p>
+          <p style={{fontSize:14,color:C.textMid}}>Ninguém abriu ainda</p>
+        </div>
+      )}
+
+      {notViewed.length > 0 && (
+        <div>
+          <p style={{fontSize:12,fontWeight:700,color:C.textLight,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>
+            Aguardando ({notViewed.length})
+          </p>
+          {notViewed.map((c,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'8px 0',opacity:0.6}}>
+              <AvatarBubble src={c.avatar} emoji={c.name?.[0]||'?'} color={c.color} size={32}/>
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontSize:13,color:C.textMid}}>{c.name}</p>
+              </div>
+              <div style={{width:6,height:6,borderRadius:'50%',background:C.cardBorder,border:'1.5px solid '+C.textLight}}/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {viewed.length===0&&contacts.length===0&&(
+        <p style={{fontSize:13,color:C.textMid,textAlign:'center',padding:'16px 0'}}>
+          Nenhum contato no Meu Círculo ainda.
+        </p>
+      )}
+    </Modal>
+  );
 }

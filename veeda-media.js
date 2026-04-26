@@ -34,7 +34,7 @@ function DrawingCanvas({onSave,onClose}){
 
   return(
     <div style={{position:"fixed",inset:0,background:"#1a1025",zIndex:400,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto"}}>
-      <div style={{background:"#2a1d3d",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+      <div style={{background:"#2a1d3d",paddingTop:"calc(10px + env(safe-area-inset-top))",padding:"10px 14px",paddingTop:"calc(10px + env(safe-area-inset-top))",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
         <button onClick={onClose} style={{background:"rgba(255,255,255,.15)",border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",cursor:"pointer",fontSize:13}}>✕</button>
         <span style={{flex:1,color:"rgba(255,255,255,.6)",fontSize:13,fontWeight:600,textAlign:"center",fontFamily:PASSO}}>🎨 Arte Veeda</span>
         <button onClick={()=>onSave(canvasRef.current.toDataURL("image/png"))} style={{background:C.purple,border:"none",borderRadius:8,color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:700}}>Salvar ✓</button>
@@ -44,7 +44,7 @@ function DrawingCanvas({onSave,onClose}){
           onTouchStart={start} onTouchMove={move} onTouchEnd={end}
           onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}/>
       </div>
-      <div style={{background:"#2a1d3d",padding:"10px 12px 22px",flexShrink:0}}>
+      <div style={{background:"#2a1d3d",padding:"10px 12px",paddingBottom:"calc(22px + env(safe-area-inset-bottom))",flexShrink:0}}>
         <div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap",marginBottom:10}}>
           {COLORS.map(c=><button key={c} onClick={()=>{setTool("pen");setColor(c);}} style={{width:26,height:26,borderRadius:"50%",background:c,border:`3px solid ${color===c&&tool==="pen"?"#fff":"rgba(255,255,255,.15)"}`,cursor:"pointer",flexShrink:0}}/>)}
         </div>
@@ -225,14 +225,28 @@ function MomentCircle({m,isNew,onTap,size=52}){
 // ═══════════════════════════════════════════════════
 // MOMENT DETAIL
 // ═══════════════════════════════════════════════════
-function MomentDetail({m,onClose,onDelete}){
+function MomentDetail({m,onClose,onDelete,readOnly=false}){
   const [playing,setPlaying]=useState(false);
   const [saving,setSaving]=useState(false);
+  const [resolvedContent,setResolvedContent]=useState(null);
   const audioRef=useRef(null);
   const embed=m.type==="videolink"?getVideoEmbed(m.content):null;
   const allTags=[...DEFAULT_TAGS];
-  // Permitir salvar mesmo quando o conteúdo está no IndexedDB (prefixo "IDB:")
-  const canSave=(m.type==="foto"||m.type==="arte"||m.type==="video"||m.type==="voz")&&!!m.content;
+  const canSave=(m.type==="foto"||m.type==="arte"||m.type==="video"||m.type==="voz")&&!!m.content&&!readOnly;
+
+  // Resolve IDB references asynchronously
+  useEffect(()=>{
+    if(!m.content)return;
+    if(typeof m.content==="string"&&m.content.startsWith("IDB:")){
+      idbLoad(m.content.slice(4)).then(data=>{
+        if(data)setResolvedContent(data);
+      });
+    } else {
+      setResolvedContent(m.content);
+    }
+  },[m.content]);
+
+  const displayContent=resolvedContent||m.content;
 
   const saveToDevice=async()=>{
     if(!m.content)return;
@@ -264,8 +278,9 @@ function MomentDetail({m,onClose,onDelete}){
         <button onClick={onClose} style={{background:C.purpleLight,border:"none",borderRadius:"50%",width:30,height:30,color:C.purple,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
       </div>
 
-      {(m.type==="foto"||m.type==="arte")&&m.content&&<img src={m.content} alt="" style={{width:"100%",borderRadius:12,display:"block",marginBottom:12}}/>}
-      {m.type==="video"&&m.content&&<video src={m.content} controls style={{width:"100%",borderRadius:12,display:"block",maxHeight:320,marginBottom:12}}/>}
+      {(m.type==="foto"||m.type==="arte")&&displayContent&&<img src={displayContent} alt="" style={{width:"100%",borderRadius:12,display:"block",marginBottom:12}}/>}
+      {!displayContent&&(m.type==="foto"||m.type==="arte"||m.type==="video")&&<div style={{width:"100%",height:160,borderRadius:12,background:C.cardBorder,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}><Spinner size={28} color={C.purple}/></div>}
+      {m.type==="video"&&displayContent&&<video src={displayContent} controls style={{width:"100%",borderRadius:12,display:"block",maxHeight:320,marginBottom:12}}/>}
       {m.type==="videolink"&&embed&&<div style={{position:"relative",paddingBottom:"56.25%",height:0,borderRadius:12,overflow:"hidden",marginBottom:12}}><iframe src={embed} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}} allowFullScreen title="v"/></div>}
       {m.type==="link"&&<a href={m.content} target="_blank" rel="noopener noreferrer" style={{display:"block",color:C.blue,fontSize:14,wordBreak:"break-all",marginBottom:12,padding:"10px 14px",background:C.blueLight,borderRadius:10}}>{m.content}</a>}
       {m.type==="texto"&&<p style={{fontSize:15,color:C.text,lineHeight:1.75,marginBottom:12}}>{m.content}</p>}
@@ -274,7 +289,7 @@ function MomentDetail({m,onClose,onDelete}){
         <div style={{background:C.tealLight,borderRadius:14,padding:14,marginBottom:12,display:"flex",alignItems:"center",gap:12}}>
           <span style={{fontSize:28,flexShrink:0}}>🎙️</span>
           <div style={{flex:1}}>
-            <audio ref={audioRef} src={m.content} onEnded={()=>setPlaying(false)} style={{width:"100%"}} controls/>
+            <audio ref={audioRef} src={displayContent||m.content} onEnded={()=>setPlaying(false)} style={{width:"100%"}} controls/>
           </div>
         </div>
       )}
@@ -304,7 +319,10 @@ function MomentDetail({m,onClose,onDelete}){
       </div>}
 
       {canSave&&<Btn onClick={saveToDevice} disabled={saving} variant="outline" style={{marginBottom:8,fontSize:13,padding:"11px 0"}}>{saving?<><Spinner size={14} color={C.purple}/>Preparando…</>:"↓ Salvar no dispositivo"}</Btn>}
-      <Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>
+      {readOnly
+        ?<p style={{fontSize:12,color:C.textLight,textAlign:"center",marginTop:8,padding:"8px 12px",background:C.cardBorder+"44",borderRadius:8}}>📖 Momento compartilhado — somente leitura</p>
+        :<Btn onClick={()=>{onDelete();onClose();}} variant="ghost" style={{color:C.red,fontSize:13}}>Remover momento</Btn>
+      }
     </Modal>
   );
 }

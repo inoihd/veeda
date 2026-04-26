@@ -47,6 +47,9 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
   const [showAcceptSharedDay, setShowAcceptSharedDay] = useState(false);
   const [decryptionError, setDecryptionError] = useState(null);
   const [showDecryptionRecovery, setShowDecryptionRecovery] = useState(false);
+  const [showViewedBy, setShowViewedBy] = useState(false);
+  const [expandedReadOnly, setExpandedReadOnly] = useState(false);
+  const [refreshingHoje, setRefreshingHoje] = useState(false);
 
   const sessionKey = useRef(null);
   const sessionSalt = useRef(null);
@@ -126,11 +129,24 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
     for (const k of [`veeda_inbox_${myH}`, `veeda_inbox_${profile.id}`]) {
       const inbox = safeLS.get(k, []);
-      if (inbox.length > 0) {
-        const notif = inbox[0];
-        const isDuplicate = (data.received || []).find(r => 
-          r.date === notif.date && 
-          (r.author === notif.author || r.handle === notif.handle) && 
+      if (inbox.length === 0) continue;
+      const receipts = inbox.filter(x => x.type === 'read_receipt');
+      const shared = inbox.filter(x => x.type !== 'read_receipt');
+      // Process read receipts — save and clear from inbox
+      if (receipts.length > 0) {
+        const existing = data.readReceipts || [];
+        const newR = receipts.filter(r => !existing.find(x => x.fromHandle === r.fromHandle && x.date === r.date && Math.abs(x.ts - r.ts) < 5000));
+        if (newR.length > 0) {
+          save({...data, readReceipts: [...existing, ...newR]});
+        }
+        safeLS.set(k, shared);
+      }
+      // Process shared days
+      if (shared.length > 0) {
+        const notif = shared[0];
+        const isDuplicate = (data.received || []).find(r =>
+          r.date === notif.date &&
+          (r.author === notif.author || r.handle === notif.handle) &&
           Math.abs((r.importedAt || 0) - (notif.importedAt || 0)) < 1000
         );
         if (!isDuplicate) {
@@ -141,7 +157,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
         }
       }
     }
-  }, [data, profile]);
+  }, [data, profile, save]);
 
   useEffect(() => { if (data && !loading) checkInbox(); }, [data, loading]);
 
@@ -309,10 +325,27 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
     clearInbox(pendingNotif);
     await save({...data, received: [...(data.received || []), pendingNotif]});
     setPendingNotif(null); setUnreadCount(0);
-    setView('recebidos'); setViewRec(pendingNotif);
+    setView('recebidos'); openReceivedDay(pendingNotif);
   }, [pendingNotif, data, clearInbox, save]);
 
   const dismissNotif = useCallback(() => { if (!pendingNotif) return; clearInbox(pendingNotif); setPendingNotif(null); }, [pendingNotif, clearInbox]);
+
+  const openReceivedDay = useCallback((r, isReadOnly=false) => {
+    setViewRec(r);
+    setExpandedReadOnly(false);
+    // Send read receipt to sender
+    if (r.handle) {
+      const senderHandle = r.handle.replace(/^@/, '');
+      const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
+      const receipt = {type:'read_receipt', fromHandle:myH, date:r.date, ts:Date.now()};
+      const keys = [`veeda_inbox_${senderHandle}`, `veeda_inbox_${r.authorId||senderHandle}`];
+      keys.forEach(k => {
+        const inbox = safeLS.get(k, []);
+        const alreadySent = inbox.find(x => x.type==='read_receipt' && x.fromHandle===myH && x.date===r.date);
+        if (!alreadySent) safeLS.set(k, [...inbox, receipt]);
+      });
+    }
+  }, [profile]);
 
   const acceptConnection = useCallback((request) => {
     const myH = (profile.handle || nameToHandle(profile.name)).replace(/^@/, '');
@@ -368,6 +401,8 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
 
   const addMoment = useCallback((extra = {}) => {
     if (!data) return;
+    const todayMoments = (data.moments || {})[todayStr()] || [];
+    if (todayMoments.length >= 50) { addToast?.('Limite de 50 momentos por dia atingido.', 'warn'); return; }
     const isMedia = addType === 'foto' || addType === 'video';
     if (isMedia && !addMedia) return;
     if (addType === 'musica' && !extra.trackTitle && !addContent.trim()) return;
@@ -405,7 +440,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
       {showDecryptionRecovery && <Modal title="⚠️ Dados Corrompidos" onClose={() => { setShowDecryptionRecovery(false); setDecryptionError(null); }}><p style={{fontSize: 14, color: C.text, marginBottom: 16}}>Detectamos um problema ao descriptografar seus dados locais. Estamos usando um backup seguro de 30 dias atrás.</p><p style={{fontSize: 12, color: C.textMid, marginBottom: 20}}>Se você tiver dados mais recentes, considere fazer um novo backup agora.</p><Btn onClick={() => { setShowDecryptionRecovery(false); setDecryptionError(null); }}>Entendi</Btn></Modal>}
       {showAcceptSharedDay && pendingSharedDay && <AcceptSharedDayModal shared={pendingSharedDay} currentUserProfile={profile} onClose={() => { setShowAcceptSharedDay(false); setPendingSharedDay(null); }} onAccept={async () => { if (!data || !pendingSharedDay) return; const isDuplicate = (data.received || []).find(r => r.date === pendingSharedDay.date && (r.author === pendingSharedDay.author || r.handle === pendingSharedDay.handle) && Math.abs((r.importedAt || 0) - (pendingSharedDay.importedAt || 0)) < 1000); if (isDuplicate) { addToast?.('Este dia já foi recebido.', 'info'); setShowAcceptSharedDay(false); setPendingSharedDay(null); return; } await save({...data, received: [...(data.received || []), pendingSharedDay]}); setShowAcceptSharedDay(false); setPendingSharedDay(null); setView('recebidos'); setViewRec(pendingSharedDay); addToast?.('Dia recebido e salvo! 🌿', 'success'); }} onSaveComment={async (dayId, comment) => { const updated = {...data, comments: {...(data.comments || {}), [dayId]: [...((data.comments || {})[dayId] || []), comment]}}; await save(updated); addToast?.('Comentário adicionado! 💬', 'success'); }} />}
       {showDrawing && <DrawingCanvas onClose={() => setShowDrawing(false)} onSave={dataUrl => { setShowDrawing(false); const id = Date.now(); const m = {id, ts: id, type: 'arte', content: dataUrl, caption: addCaption.trim() || undefined, location: addLocation || undefined}; save({...data, moments: {...(data.moments || {}), [todayStr()]: [...((data.moments || {})[todayStr()] || []), m]}}); setLastId(id); setAddCaption(''); setAddLocation(null); }} />}
-      {expandedMoment && <MomentDetail m={expandedMoment} onClose={() => setExpandedMoment(null)} onDelete={() => { delMoment(curDay, expandedMoment.id); setExpandedMoment(null); }} />}
+      {expandedMoment && <MomentDetail m={expandedMoment} readOnly={expandedReadOnly} onClose={() => { setExpandedMoment(null); setExpandedReadOnly(false); }} onDelete={() => { delMoment(curDay, expandedMoment.id); setExpandedMoment(null); }} />}
 
       {pendingConnections.length > 0 && (
         <div style={{position: 'fixed', top: 80, left: '50%', transform: 'translateX(-50%)', width: 'calc(100% - 32px)', maxWidth: 440, zIndex: 500, animation: 'notifDrop .4s cubic-bezier(.22,1,.36,1)'}}>
@@ -516,7 +551,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
         {view === 'recebidos' && !viewRec && <div style={{padding: '20px 16px'}}>
           <p style={{fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16, fontFamily: PASSO}}>Dias recebidos</p>
           {(activeData.received || []).length === 0 ? <div style={{textAlign: 'center', padding: '2rem 0'}}><div style={{fontSize: 52, marginBottom: 12}}>💌</div><p style={{fontSize: 14, color: C.textLight}}>Nenhum Dia de Veeda recebido ainda.</p></div> : (activeData.received || []).slice().sort((a, b) => b.importedAt - a.importedAt).map((r, i) => (
-            <div key={i} onClick={() => setViewRec(r)} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12}}>
+            <div key={i} onClick={() => openReceivedDay(r)} style={{background: C.white, border: `1px solid ${C.cardBorder}`, borderRadius: 14, padding: '14px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12}}>
               <AvatarBubble src={r.avatarSrc} emoji={r.emoji || '🌿'} color={r.avatarColor || C.purpleLight} size={44} ring />
               <div style={{flex: 1}}>
                 <p
@@ -556,7 +591,7 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
               {(viewRec.moments || []).slice().sort((a, b) => a.ts - b.ts).map(m => (
                 <div key={m.id} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer', transition: 'transform 0.2s ease', _hover: {transform: 'scale(1.08)'}}}>
                   <div style={{transition: 'transform 0.2s ease'}} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
-                    <MomentCircle m={m} onTap={() => setExpandedMoment(m)} size={58} />
+                    <MomentCircle m={m} onTap={() => { setExpandedMoment(m); setExpandedReadOnly(true); }} size={58} />
                   </div>
                   <span style={{fontSize: 10, color: C.textLight, textAlign: 'center'}}>{fmt(m.ts)}</span>
                 </div>
@@ -567,20 +602,35 @@ function VeedaApp({profile, password, onLogout, onUpdateProfile}) {
       </div>
 
       {view === 'hoje' && moments.length > 0 && (
-        <div style={{position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, padding: '12px 28px 32px', background: `linear-gradient(to top,${dayColor.bg} 60%,transparent)`, pointerEvents: 'none'}}>
+        <div style={{position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, padding: '12px 28px calc(32px + env(safe-area-inset-bottom))', background: `linear-gradient(to top,${dayColor.bg} 60%,transparent)`, pointerEvents: 'none'}}>
           <div style={{display: 'flex', gap: 10}}>
             <button onClick={() => setShowModal(true)} style={{width: 52, height: 52, borderRadius: '50%', background: C.white, border: `1.5px solid ${C.cardBorder}`, fontSize: 22, cursor: 'pointer', pointerEvents: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,.1)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>+</button>
             <button onClick={() => setShowShare(true)} style={{flex: 1, height: 52, background: C.purple, color: '#fff', border: 'none', borderRadius: 50, fontWeight: 600, fontSize: 14, cursor: 'pointer', pointerEvents: 'auto', boxShadow: '0 6px 24px rgba(144,0,255,.32)', fontFamily: PASSO}}>Compartilhar meu Dia 🌿</button>
+            {(activeData.sharedLog || []).find(s => s.date === curDay) && (() => {
+              const sharedDay = (activeData.sharedLog || []).find(s => s.date === curDay);
+              const dayReceipts = (activeData.readReceipts || []).filter(r => r.date === curDay);
+              const hasReads = dayReceipts.length > 0;
+              return (
+                <button onClick={() => setShowViewedBy(true)} style={{position: 'relative', width: 52, height: 52, borderRadius: '50%', background: C.white, border: `1.5px solid ${C.cardBorder}`, fontSize: 20, cursor: 'pointer', pointerEvents: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,.1)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                  👁️
+                  {hasReads && <div style={{position: 'absolute', top: 5, right: 5, width: 10, height: 10, borderRadius: '50%', background: C.teal, border: '2px solid white'}} />}
+                </button>
+              );
+            })()}
           </div>
         </div>
       )}
       {view === 'hoje' && isToday && moments.length === 0 && (
-        <div style={{position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, padding: '12px 28px 32px', background: `linear-gradient(to top,${dayColor.bg} 60%,transparent)`, pointerEvents: 'none'}}>
+        <div style={{position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, padding: '12px 28px calc(32px + env(safe-area-inset-bottom))', background: `linear-gradient(to top,${dayColor.bg} 60%,transparent)`, pointerEvents: 'none'}}>
           <button onClick={() => setShowModal(true)} style={{width: '100%', padding: '16px 0', background: C.purple, color: '#fff', border: 'none', borderRadius: 50, fontWeight: 600, fontSize: 15, cursor: 'pointer', pointerEvents: 'auto', boxShadow: '0 6px 24px rgba(144,0,255,.32)', fontFamily: PASSO}}>+ Registrar primeiro momento</button>
         </div>
       )}
 
-      {showShare && <ShareDayModal profile={profile} data={activeData} curDay={curDay} onClose={() => setShowShare(false)} onShared={async log => { await save({...data, sharedLog: log}); }} addToast={addToast} />}
+      {showViewedBy && (() => {
+        const sharedDay = (activeData.sharedLog || []).find(s => s.date === curDay);
+        return sharedDay ? <ViewedByModal sharedDay={sharedDay} contacts={activeData.contacts || []} readReceipts={activeData.readReceipts || []} onClose={() => setShowViewedBy(false)} /> : null;
+      })()}
+      {showShare && <ShareDayModal profile={profile} data={data} curDay={curDay} onClose={() => setShowShare(false)} onShared={async log => { await save({...data, sharedLog: log}); }} addToast={addToast} />}
       {showEvents && <EventsModal data={activeData} profile={profile} onSave={events => save({...data, events})} onClose={() => setShowEvents(false)} />}
       {showReminders && <RemindersModal reminders={activeData.reminders || []} onSave={list => save({...data, reminders: list})} onClose={() => setShowReminders(false)} />}
       {showInviteApp && <InviteModal onClose={() => setShowInviteApp(false)} />}
