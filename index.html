@@ -867,6 +867,36 @@ const migrateData=(d)=>{
   return out;
 };
 
+// ── Config do admin (styles + layout) ─────────────────────
+// Busca style_overrides e layout_config do Supabase e aplica no app.
+// Roda silenciosamente; falhas não bloqueiam o app.
+const applyAdminConfig=async()=>{
+  try{
+    const url="https://rkinwvdbomllztixdtar.supabase.co";
+    const key="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+    const h={"apikey":key,"Authorization":"Bearer "+key};
+    const[sRes,lRes]=await Promise.all([
+      fetch(`${url}/rest/v1/style_overrides?select=css`,{headers:h}),
+      fetch(`${url}/rest/v1/layout_config?select=section_key,enabled`,{headers:h})
+    ]);
+    if(sRes.ok){
+      const styles=await sRes.json();
+      if(styles?.length){
+        let el=document.getElementById("admin-style-overrides");
+        if(!el){el=document.createElement("style");el.id="admin-style-overrides";document.head.appendChild(el);}
+        el.textContent=styles.map(s=>s.css||"").join("\n");
+      }
+    }
+    if(lRes.ok){
+      const layout=await lRes.json();
+      if(layout?.length){
+        window._adminLayout={};
+        layout.forEach(r=>{window._adminLayout[r.section_key]=r.enabled;});
+      }
+    }
+  }catch{}
+};
+
 // ── Migrações de boot ─────────────────────────────────────
 // Roda UMA VEZ por versão após o login. Garante que dados existentes
 // sejam copiados para novos destinos sem afetar o usuário.
@@ -3047,6 +3077,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
             sessionKey.current=key;sessionSalt.current=salt;
             setData(migrateData(d));
             runBootMigrations(profile.id,raw);
+            applyAdminConfig();
           }catch(decErr){
             const snap=await loadLatestSnapshot(profile.id,password);
             if(snap){
@@ -3854,7 +3885,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       {showModal&&(
         <Modal title="Registrar acontecimento" onClose={resetModal} fullHeight>
           <div style={{display:"flex",gap:5,marginBottom:16,flexWrap:"wrap"}}>
-            {[["texto","✏️","texto"],["foto","📷","foto"],["video","🎬","vídeo"],["link","🔗","link"],["musica","🎵","música"],["arte","🎨","arte"],["voz","🎙️","voz"]].map(([t,icon,label])=>{
+            {[["texto","✏️","texto",null],["foto","📷","foto","photos"],["video","🎬","vídeo","video"],["link","🔗","link",null],["musica","🎵","música","music"],["arte","🎨","arte","art"],["voz","🎙️","voz",null]].filter(([,,, sk])=>!sk||window._adminLayout==null||window._adminLayout[sk]!==false).map(([t,icon,label])=>{
               const meta=TYPE_META[t];
               return(
                 <button key={t} onClick={()=>{setAddType(t);setAddMedia(null);setAddContent("");}}
