@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.5";
+  var EMBEDDED_VERSION = "2.2.6";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.2.5";
+const APP_VERSION  = "2.2.6";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1367,6 +1367,15 @@ function DrawingCanvas({onSave,onClose}){
   const [tool,setTool]=useState("pen");
   const drawing=useRef(false);
   const last=useRef(null);
+  const history=useRef([]);
+
+  const saveSnap=()=>{history.current=[...history.current.slice(-4),canvasRef.current.toDataURL()];};
+  const undo=()=>{
+    if(!history.current.length)return;
+    const prev=history.current[history.current.length-1];
+    history.current=history.current.slice(0,-1);
+    const img=new Image();img.onload=()=>canvasRef.current.getContext("2d").drawImage(img,0,0);img.src=prev;
+  };
 
   useEffect(()=>{
     const c=canvasRef.current;c.width=1000;c.height=1000;
@@ -1378,7 +1387,7 @@ function DrawingCanvas({onSave,onClose}){
     const s=e.touches?e.touches[0]:e;
     return{x:(s.clientX-r.left)*(1000/r.width),y:(s.clientY-r.top)*(1000/r.height)};
   };
-  const start=e=>{e.preventDefault();drawing.current=true;const p=pos(e);last.current=p;const ctx=canvasRef.current.getContext("2d");ctx.beginPath();ctx.arc(p.x,p.y,(tool==="eraser"?sz*3:sz)/2,0,Math.PI*2);ctx.fillStyle=tool==="eraser"?"#fff":color;ctx.fill();};
+  const start=e=>{e.preventDefault();saveSnap();drawing.current=true;const p=pos(e);last.current=p;const ctx=canvasRef.current.getContext("2d");ctx.beginPath();ctx.arc(p.x,p.y,(tool==="eraser"?sz*3:sz)/2,0,Math.PI*2);ctx.fillStyle=tool==="eraser"?"#fff":color;ctx.fill();};
   const move=e=>{if(!drawing.current)return;e.preventDefault();const p=pos(e);const ctx=canvasRef.current.getContext("2d");ctx.beginPath();ctx.moveTo(last.current.x,last.current.y);ctx.lineTo(p.x,p.y);ctx.strokeStyle=tool==="eraser"?"#fff":color;ctx.lineWidth=tool==="eraser"?sz*3:sz;ctx.lineCap="round";ctx.lineJoin="round";ctx.stroke();last.current=p;};
   const end=()=>{drawing.current=false;last.current=null;};
 
@@ -1414,7 +1423,8 @@ function DrawingCanvas({onSave,onClose}){
           <label style={{padding:"5px 10px",background:"rgba(255,255,255,.1)",borderRadius:8,color:"#fff",cursor:"pointer",fontSize:12}}>
             🖼️<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)importImg(f);}}/>
           </label>
-          <button onClick={()=>{const c=canvasRef.current,ctx=c.getContext("2d");ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}} style={{padding:"5px 10px",background:"rgba(255,255,255,.1)",border:"none",borderRadius:8,color:"#fff",cursor:"pointer",fontSize:12}}>🗑️</button>
+          <button onClick={undo} style={{padding:"5px 10px",background:"rgba(255,255,255,.1)",border:"none",borderRadius:8,color:"#fff",cursor:"pointer",fontSize:12}}>↩️</button>
+          <button onClick={()=>{saveSnap();const c=canvasRef.current,ctx=c.getContext("2d");ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}} style={{padding:"5px 10px",background:"rgba(255,255,255,.1)",border:"none",borderRadius:8,color:"#fff",cursor:"pointer",fontSize:12}}>🗑️</button>
         </div>
       </div>
     </div>
