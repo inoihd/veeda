@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.6";
+  var EMBEDDED_VERSION = "2.2.7";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.2.6";
+const APP_VERSION  = "2.2.7";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1589,8 +1589,7 @@ function MomentCircle({m,isNew,onTap,size=52}){
 // ═══════════════════════════════════════════════════
 // MOMENT DETAIL
 // ═══════════════════════════════════════════════════
-function MomentDetail({m,onClose,onDelete}){
-  const [playing,setPlaying]=useState(false);
+function MomentDetail({m,onClose,onDelete,onPlay}){
   const [saving,setSaving]=useState(false);
   const [confirmDelete,setConfirmDelete]=useState(false);
   const audioRef=useRef(null);
@@ -1666,10 +1665,7 @@ function MomentDetail({m,onClose,onDelete}){
             </div>
           </div>
           {m.previewUrl&&(
-            <div style={{marginTop:10}}>
-              <audio ref={audioRef} src={m.previewUrl} onEnded={()=>setPlaying(false)}/>
-              <button onClick={()=>{playing?audioRef.current?.pause():audioRef.current?.play();setPlaying(p=>!p);}} style={{width:"100%",padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:14,cursor:"pointer"}}>{playing?"⏸ Pausar":"▶ Ouvir prévia (30s)"}</button>
-            </div>
+            <button onClick={()=>{onPlay?.({title:m.trackTitle||m.content,artist:m.trackArtist||"",art:m.albumArt,previewUrl:m.previewUrl});onClose();}} style={{width:"100%",marginTop:10,padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:14,cursor:"pointer"}}>▶ Ouvir prévia</button>
           )}
         </div>
       )}
@@ -1729,6 +1725,61 @@ function MusicPicker({onSelect,onClose}){
         ))}
       </div>
     </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// MINI PLAYER — flutuante, arrastável, persiste entre telas
+// ═══════════════════════════════════════════════════
+function MiniPlayer({track,onClose}){
+  const audioRef=useRef(null);
+  const [playing,setPlaying]=useState(false);
+  const [progress,setProgress]=useState(0);
+  const [dur,setDur]=useState(0);
+  const [offset,setOffset]=useState({x:0,y:0});
+  const drag=useRef(null);
+
+  useEffect(()=>{
+    if(!track?.previewUrl)return;
+    const a=audioRef.current;
+    a.src=track.previewUrl;
+    a.play().then(()=>setPlaying(true)).catch(()=>{});
+    setProgress(0);setDur(0);
+    return()=>{a.pause();};
+  },[track?.previewUrl]);
+
+  const toggle=()=>{const a=audioRef.current;if(!a)return;playing?(a.pause(),setPlaying(false)):(a.play(),setPlaying(true));};
+  const fmt=s=>isNaN(s)||!isFinite(s)?"0:00":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const startDrag=e=>{const t=e.touches?e.touches[0]:e;drag.current={sx:t.clientX-offset.x,sy:t.clientY-offset.y};};
+  const moveDrag=e=>{if(!drag.current)return;e.preventDefault();const t=e.touches?e.touches[0]:e;setOffset({x:t.clientX-drag.current.sx,y:t.clientY-drag.current.sy});};
+  const endDrag=()=>{drag.current=null;};
+
+  if(!track)return null;
+  return(
+    <div onMouseDown={startDrag} onMouseMove={moveDrag} onMouseUp={endDrag} onMouseLeave={endDrag}
+         onTouchStart={startDrag} onTouchMove={moveDrag} onTouchEnd={endDrag}
+         style={{position:"fixed",bottom:`calc(80px + env(safe-area-inset-bottom) + ${-offset.y}px)`,
+           left:`calc(12px + ${offset.x}px)`,right:`calc(12px - ${offset.x}px)`,
+           zIndex:600,background:"rgba(25,15,45,0.96)",backdropFilter:"blur(20px)",
+           borderRadius:18,padding:"10px 12px",boxShadow:"0 8px 32px rgba(0,0,0,.5)",
+           display:"flex",alignItems:"center",gap:10,cursor:"grab",userSelect:"none",touchAction:"none"}}>
+      <audio ref={audioRef} onTimeUpdate={e=>setProgress(e.target.currentTime)} onDurationChange={e=>setDur(e.target.duration)} onEnded={()=>setPlaying(false)}/>
+      {track.art&&<img src={track.art} alt="" style={{width:38,height:38,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
+      <div style={{flex:1,overflow:"hidden",minWidth:0}}>
+        <p style={{margin:0,fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.title}</p>
+        <p style={{margin:"1px 0 4px",fontSize:10,color:"rgba(255,255,255,.55)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.artist}</p>
+        <div style={{display:"flex",alignItems:"center",gap:5}}>
+          <span style={{fontSize:9,color:"rgba(255,255,255,.4)",flexShrink:0}}>{fmt(progress)}</span>
+          <div onClick={e=>{e.stopPropagation();if(!audioRef.current||!dur)return;const r=e.target.getBoundingClientRect();const pct=(e.clientX-r.left)/r.width;audioRef.current.currentTime=pct*dur;}}
+               style={{flex:1,height:3,background:"rgba(255,255,255,.18)",borderRadius:3,overflow:"hidden",cursor:"pointer"}}>
+            <div style={{width:`${dur?Math.min(100,progress/dur*100):0}%`,height:"100%",background:C.green,borderRadius:3,transition:"width .25s linear"}}/>
+          </div>
+          <span style={{fontSize:9,color:"rgba(255,255,255,.4)",flexShrink:0}}>{fmt(dur)}</span>
+        </div>
+      </div>
+      <button onClick={e=>{e.stopPropagation();toggle();}} style={{width:34,height:34,borderRadius:"50%",background:C.green,border:"none",color:"#fff",cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{playing?"⏸":"▶"}</button>
+      <button onClick={e=>{e.stopPropagation();audioRef.current?.pause();onClose();}} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,.12)",border:"none",color:"rgba(255,255,255,.7)",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
+    </div>
   );
 }
 
@@ -2935,6 +2986,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   const [viewRec,setViewRec]=useState(null);
   const [pendingNotif,setPendingNotif]=useState(null);
   const [expandedMoment,setExpandedMoment]=useState(null);
+  const [nowPlaying,setNowPlaying]=useState(null);
   // Estado separado para visualização read-only de REGISTROS de PESSOAS DO MEU CÍRCULO
   const [expandedRecMoment,setExpandedRecMoment]=useState(null);
   const [viewProfile,setViewProfile]=useState(null);
@@ -3415,9 +3467,10 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       {pendingNotif&&<ReceivedNotif notif={pendingNotif} onOpen={acceptNotif} onDismiss={dismissNotif}/>}
       {showAcceptSharedDay&&pendingSharedDay&&<AcceptSharedDayModal shared={pendingSharedDay} onClose={()=>{setShowAcceptSharedDay(false);setPendingSharedDay(null);}} onAccept={async()=>{const cur=dataRef.current;if(!cur||!pendingSharedDay)return;await save({...cur,received:[...(cur.received||[]),pendingSharedDay]});setShowAcceptSharedDay(false);setPendingSharedDay(null);setUnreadCount(c=>c+1);setView("recebidos");setViewRec(pendingSharedDay);addToast?.("Dia recebido e salvo! 🌿","success");}}/>}
       {showDrawing&&<DrawingCanvas onClose={()=>setShowDrawing(false)} onSave={dataUrl=>{setShowDrawing(false);const cur=dataRef.current;if(!cur)return;const id=Date.now();const m={id,ts:id,type:"arte",content:dataUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});setLastId(id);setAddCaption("");setAddLocation(null);}}/>}
-      {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}}/>}
+      {expandedMoment&&<MomentDetail m={expandedMoment} onClose={()=>setExpandedMoment(null)} onDelete={()=>{delMoment(curDay,expandedMoment.id);setExpandedMoment(null);}} onPlay={setNowPlaying}/>}
       {/* Visualização read-only de REGISTRO da PESSOA DO MEU CÍRCULO: sem onDelete */}
-      {expandedRecMoment&&<MomentDetail m={expandedRecMoment} onClose={()=>setExpandedRecMoment(null)}/>}
+      {expandedRecMoment&&<MomentDetail m={expandedRecMoment} onClose={()=>setExpandedRecMoment(null)} onPlay={setNowPlaying}/>}
+      <MiniPlayer track={nowPlaying} onClose={()=>setNowPlaying(null)}/>
 
       {/* ── Header ── */}
       <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,position:"sticky",top:0,zIndex:100,paddingTop:"env(safe-area-inset-top)"}}>
