@@ -316,7 +316,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.3.2";
+  var EMBEDDED_VERSION = "2.3.3";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -491,7 +491,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.3.2";
+const APP_VERSION  = "2.3.3";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1667,8 +1667,7 @@ function MomentDetail({m,onClose,onDelete,onPlay,onTogglePrivacy}){
             </div>
           </div>
           <div style={{display:"flex",gap:8,marginTop:10}}>
-            {m.previewUrl&&<button onClick={()=>{onPlay?.({title:m.trackTitle||m.content,artist:m.trackArtist||"",art:m.albumArt,previewUrl:m.previewUrl});onClose();}} style={{flex:1,padding:"9px 0",background:C.green,border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:13,cursor:"pointer"}}>▶ Prévia 30s</button>}
-            <button onClick={()=>window.open(`https://music.youtube.com/search?q=${encodeURIComponent((m.trackTitle||m.content)+" "+(m.trackArtist||""))}`,`_blank`)} style={{flex:1,padding:"9px 0",background:"#FF0000",border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:13,cursor:"pointer"}}>▶ YouTube Music</button>
+            {m.youtubeId&&<button onClick={()=>{onPlay?.({title:m.trackTitle||m.content,artist:m.trackArtist||"",art:m.albumArt,youtubeId:m.youtubeId});onClose();}} style={{flex:1,padding:"9px 0",background:"#FF0000",border:"none",borderRadius:10,color:"#fff",fontWeight:600,fontSize:13,cursor:"pointer"}}>▶ Ouvir</button>}
           </div>
         </div>
       )}
@@ -1702,28 +1701,36 @@ function MomentDetail({m,onClose,onDelete,onPlay,onTogglePrivacy}){
 }
 
 // ═══════════════════════════════════════════════════
-// MUSIC PICKER
+// MUSIC PICKER — busca via YouTube (Piped API, sem chave)
 // ═══════════════════════════════════════════════════
+const PIPED_HOSTS=["https://pipedapi.kavin.rocks","https://piped-api.garudalinux.org","https://api.piped.projectsegfau.lt"];
+async function searchYouTubeMusic(q){
+  for(const host of PIPED_HOSTS){
+    try{
+      const r=await fetch(`${host}/search?q=${encodeURIComponent(q)}&filter=music_songs`,{signal:AbortSignal.timeout(5000)});
+      if(!r.ok)continue;
+      const d=await r.json();
+      const items=(d.items||[]).filter(v=>v.url&&v.title);
+      if(items.length)return items.slice(0,10).map(v=>({
+        id:v.url.replace("/watch?v=",""),
+        title:v.title,
+        artist:v.uploaderName||"",
+        art:v.thumbnail,
+        youtubeId:v.url.replace("/watch?v=",""),
+        duration:v.duration
+      }));
+    }catch{}
+  }
+  return null;
+}
 function MusicPicker({onSelect,onClose}){
   const [q,setQ]=useState("");const [res,setRes]=useState([]);const [loading,setLoading]=useState(false);const [err,setErr]=useState("");
   const [manual,setManual]=useState(false);const [mTitle,setMTitle]=useState("");const [mArtist,setMArtist]=useState("");
 
   const search=async()=>{
-    if(!q.trim())return;
-    setLoading(true);setErr("");setRes([]);
-    try{
-      // Tenta direto; se CORS falhar, usa proxy
-      let d;
-      try{
-        const r=await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=10&country=BR`);
-        d=await r.json();
-      }catch{
-        const r=await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=10&country=BR`)}`);
-        d=await r.json();
-      }
-      if(!d.results?.length){setErr("Nenhum resultado. Tente outra busca ou adicione manualmente abaixo.");setRes([]);}
-      else setRes(d.results.map(r=>({id:r.trackId,title:r.trackName,artist:r.artistName,album:r.collectionName,art:r.artworkUrl100,preview:r.previewUrl,appleMusicUrl:r.trackViewUrl})));
-    }catch{setErr("Erro ao buscar. Verifique sua conexão ou adicione manualmente.");}
+    if(!q.trim())return;setLoading(true);setErr("");setRes([]);
+    const items=await searchYouTubeMusic(q);
+    if(items&&items.length){setRes(items);}else{setErr("Nenhum resultado. Tente outro termo.");}
     setLoading(false);
   };
 
@@ -1761,53 +1768,38 @@ function MusicPicker({onSelect,onClose}){
 // MINI PLAYER — flutuante, arrastável, persiste entre telas
 // ═══════════════════════════════════════════════════
 function MiniPlayer({track,onClose}){
-  const audioRef=useRef(null);
-  const [playing,setPlaying]=useState(false);
-  const [progress,setProgress]=useState(0);
-  const [dur,setDur]=useState(0);
   const [offset,setOffset]=useState({x:0,y:0});
+  const [expanded,setExpanded]=useState(false);
   const drag=useRef(null);
-
-  useEffect(()=>{
-    if(!track?.previewUrl)return;
-    const a=audioRef.current;
-    a.src=track.previewUrl;
-    a.play().then(()=>setPlaying(true)).catch(()=>{});
-    setProgress(0);setDur(0);
-    return()=>{a.pause();};
-  },[track?.previewUrl]);
-
-  const toggle=()=>{const a=audioRef.current;if(!a)return;playing?(a.pause(),setPlaying(false)):(a.play(),setPlaying(true));};
-  const fmt=s=>isNaN(s)||!isFinite(s)?"0:00":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
-  const startDrag=e=>{const t=e.touches?e.touches[0]:e;drag.current={sx:t.clientX-offset.x,sy:t.clientY-offset.y};};
-  const moveDrag=e=>{if(!drag.current)return;e.preventDefault();const t=e.touches?e.touches[0]:e;setOffset({x:t.clientX-drag.current.sx,y:t.clientY-drag.current.sy});};
+  const startDrag=e=>{const t=e.touches?e.touches[0]:e;drag.current={sx:t.clientX-offset.x,sy:t.clientY-offset.y,moved:false};};
+  const moveDrag=e=>{if(!drag.current)return;e.preventDefault();const t=e.touches?e.touches[0]:e;drag.current.moved=true;setOffset({x:t.clientX-drag.current.sx,y:t.clientY-drag.current.sy});};
   const endDrag=()=>{drag.current=null;};
-
   if(!track)return null;
+  const ytId=track.youtubeId;
   return(
     <div onMouseDown={startDrag} onMouseMove={moveDrag} onMouseUp={endDrag} onMouseLeave={endDrag}
          onTouchStart={startDrag} onTouchMove={moveDrag} onTouchEnd={endDrag}
          style={{position:"fixed",bottom:`calc(80px + env(safe-area-inset-bottom) + ${-offset.y}px)`,
            left:`calc(12px + ${offset.x}px)`,right:`calc(12px - ${offset.x}px)`,
            zIndex:600,background:"rgba(25,15,45,0.96)",backdropFilter:"blur(20px)",
-           borderRadius:18,padding:"10px 12px",boxShadow:"0 8px 32px rgba(0,0,0,.5)",
-           display:"flex",alignItems:"center",gap:10,cursor:"grab",userSelect:"none",touchAction:"none"}}>
-      <audio ref={audioRef} onTimeUpdate={e=>setProgress(e.target.currentTime)} onDurationChange={e=>setDur(e.target.duration)} onEnded={()=>setPlaying(false)}/>
-      {track.art&&<img src={track.art} alt="" style={{width:38,height:38,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
-      <div style={{flex:1,overflow:"hidden",minWidth:0}}>
-        <p style={{margin:0,fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.title}</p>
-        <p style={{margin:"1px 0 4px",fontSize:10,color:"rgba(255,255,255,.55)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.artist}</p>
-        <div style={{display:"flex",alignItems:"center",gap:5}}>
-          <span style={{fontSize:9,color:"rgba(255,255,255,.4)",flexShrink:0}}>{fmt(progress)}</span>
-          <div onClick={e=>{e.stopPropagation();if(!audioRef.current||!dur)return;const r=e.target.getBoundingClientRect();const pct=(e.clientX-r.left)/r.width;audioRef.current.currentTime=pct*dur;}}
-               style={{flex:1,height:3,background:"rgba(255,255,255,.18)",borderRadius:3,overflow:"hidden",cursor:"pointer"}}>
-            <div style={{width:`${dur?Math.min(100,progress/dur*100):0}%`,height:"100%",background:C.green,borderRadius:3,transition:"width .25s linear"}}/>
-          </div>
-          <span style={{fontSize:9,color:"rgba(255,255,255,.4)",flexShrink:0}}>{fmt(dur)}</span>
+           borderRadius:18,boxShadow:"0 8px 32px rgba(0,0,0,.5)",overflow:"hidden",
+           cursor:"grab",userSelect:"none",touchAction:"none"}}>
+      {expanded&&ytId&&(
+        <div style={{position:"relative",paddingTop:"56.25%",width:"100%"}}>
+          <iframe src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1`}
+            allow="autoplay; encrypted-media" allowFullScreen
+            style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}/>
         </div>
+      )}
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px"}}>
+        {track.art&&<img src={track.art} alt="" style={{width:38,height:38,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
+        <div style={{flex:1,overflow:"hidden",minWidth:0}} onClick={e=>{e.stopPropagation();if(!drag.current?.moved)setExpanded(x=>!x);}}>
+          <p style={{margin:0,fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.title}</p>
+          <p style={{margin:"1px 0 0",fontSize:10,color:"rgba(255,255,255,.55)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.artist}</p>
+        </div>
+        {ytId&&<button onClick={e=>{e.stopPropagation();setExpanded(x=>!x);}} style={{width:34,height:34,borderRadius:"50%",background:"#FF0000",border:"none",color:"#fff",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{expanded?"▼":"▶"}</button>}
+        <button onClick={e=>{e.stopPropagation();onClose();}} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,.12)",border:"none",color:"rgba(255,255,255,.7)",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
       </div>
-      <button onClick={e=>{e.stopPropagation();toggle();}} style={{width:34,height:34,borderRadius:"50%",background:C.green,border:"none",color:"#fff",cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{playing?"⏸":"▶"}</button>
-      <button onClick={e=>{e.stopPropagation();audioRef.current?.pause();onClose();}} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,.12)",border:"none",color:"rgba(255,255,255,.7)",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
     </div>
   );
 }
@@ -3863,7 +3855,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       {showReminders&&<RemindersModal reminders={activeData.reminders||[]} onSave={list=>{const cur=dataRef.current;if(cur)save({...cur,reminders:list});}} onClose={()=>setShowReminders(false)}/>}
       {showInviteApp&&<InviteModal onClose={()=>setShowInviteApp(false)}/>}
       {showSettings&&<SettingsModal profile={profile} data={activeData} password={password} onUpdateProfile={p=>{updateAv(p);onUpdateProfile(p);}} onSave={save} onLogout={onLogout} onClose={()=>setShowSettings(false)} addToast={addToast}/>}
-      {showMusicPicker&&<MusicPicker onClose={()=>setShowMusicPicker(false)} onSelect={r=>{setShowMusicPicker(false);const cur=dataRef.current;if(!cur)return;const id=Date.now();const m={id,ts:id,type:"musica",content:r.title,trackTitle:r.title,trackArtist:r.artist,trackAlbum:r.album,albumArt:r.art,previewUrl:r.preview,appleMusicUrl:r.appleMusicUrl,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});setLastId(id);resetModal();}}/>}
+      {showMusicPicker&&<MusicPicker onClose={()=>setShowMusicPicker(false)} onSelect={r=>{setShowMusicPicker(false);const cur=dataRef.current;if(!cur)return;const id=Date.now();const m={id,ts:id,type:"musica",content:r.title,trackTitle:r.title,trackArtist:r.artist,albumArt:r.art,youtubeId:r.youtubeId,caption:addCaption.trim()||undefined,location:addLocation||undefined};save({...cur,moments:{...(cur.moments||{}),[todayStr()]:[...((cur.moments||{})[todayStr()]||[]),m]}});setLastId(id);resetModal();}}/>}
 
       {/* ADD MOMENT MODAL */}
       {showModal&&(
