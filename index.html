@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.3";
+  var EMBEDDED_VERSION = "2.2.4";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.2.3";
+const APP_VERSION  = "2.2.4";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -870,6 +870,21 @@ const migrateData=(d)=>{
   if((d._v||1)<2&&out.groupName==="Família & Amigos")out.groupName="Meu Círculo";
   if((d._v||1)<3){out.notifications=[];out.settings={locationEnabled:false,notificationsEnabled:false,...(out.settings||{})};}
   return out;
+};
+
+// ── Migrações de boot ─────────────────────────────────────
+// Roda UMA VEZ por versão após o login. Garante que dados existentes
+// sejam copiados para novos destinos sem afetar o usuário.
+const runBootMigrations=async(profileId,encBlob)=>{
+  const migKey=`veeda_migrated_${profileId}`;
+  const done=(safeLS.get(migKey,{}));
+  // M1: empurrar blob cifrado ao Supabase (introduzido em 2.2.2)
+  if(!done.m1&&encBlob&&window.VeedaSupabase?.isReady()){
+    try{
+      await window.VeedaSupabase.data.push(profileId,encBlob);
+      safeLS.set(migKey,{...done,m1:true});
+    }catch(e){console.warn("[migration] m1 falhou",e);}
+  }
 };
 
 // ── Handle utils ───────────────────────────────────────────
@@ -2947,6 +2962,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
             const{key,salt,data:d}=await decryptObj(raw,password);
             sessionKey.current=key;sessionSalt.current=salt;
             setData(migrateData(d));
+            runBootMigrations(profile.id,raw);
           }catch(decErr){
             const snap=await loadLatestSnapshot(profile.id,password);
             if(snap){
