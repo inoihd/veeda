@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.1";
+  var EMBEDDED_VERSION = "2.2.2";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -1094,26 +1094,42 @@ const cloudSync={
   // E tiver pelo menos tantos registros quanto o local — nunca apaga histórico.
   async pullOnBoot(profileId,password,t){
     try{
-      const remote=await cloudData.load(profileId,t);
-      if(!remote)return{used:"local"};
       const localRaw=safeLS.raw(`veeda_data_${profileId}`);
+      // Coleta candidatos: Drive + Supabase
+      const[driveResult,sbRaw]=await Promise.allSettled([
+        t?cloudData.load(profileId,t):Promise.resolve(null),
+        window.VeedaSupabase?.data?.pull(profileId)||Promise.resolve(null)
+      ]);
+      const driveBlob=driveResult.status==="fulfilled"?driveResult.value?.content:null;
+      const sbBlob=sbRaw.status==="fulfilled"?sbRaw.value:null;
+      // Sem local e sem remoto
+      if(!localRaw&&!driveBlob&&!sbBlob)return{used:"local"};
+      // Sem local — usa o melhor remoto disponível
       if(!localRaw){
-        safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
-        return{used:"remote",reason:"no_local"};
+        const best=driveBlob||sbBlob;
+        safeLS.rawSet(`veeda_data_${profileId}`,best);
+        return{used:"remote",reason:"no_local",source:driveBlob?"drive":"supabase"};
       }
-      if(localRaw===remote.content)return{used:"equal"};
+      // Decifra todos os candidatos disponíveis para comparar lastSaved
+      const candidates=[[localRaw,"local"],[driveBlob,"drive"],[sbBlob,"supabase"]]
+        .filter(([b])=>b&&b!==localRaw);
+      if(!candidates.length)return{used:"local"};
+      const countM=d=>Object.values(d?.moments||{}).reduce((s,a)=>s+(a||[]).length,0);
+      const countC=d=>(d?.contacts||[]).length;
       try{
-        const[{data:dl},{data:dr}]=await Promise.all([decryptObj(localRaw,password),decryptObj(remote.content,password)]);
-        const ll=dl?.lastSaved||0,rr=dr?.lastSaved||0;
-        // Conta total de registros em cada versão
-        const countM=d=>Object.values(d?.moments||{}).reduce((s,a)=>s+(a||[]).length,0);
-        const countC=d=>(d?.contacts||[]).length;
-        const localCount=countM(dl),remoteCount=countM(dr);
-        const localContacts=countC(dl),remoteContacts=countC(dr);
-        // Usa remoto somente se for mais recente E não tiver menos registros nem contatos
-        if(rr>ll&&remoteCount>=localCount&&remoteContacts>=localContacts){
-          safeLS.rawSet(`veeda_data_${profileId}`,remote.content);
-          return{used:"remote",reason:"newer"};
+        const[{data:dl},...remotes]=await Promise.all([
+          decryptObj(localRaw,password),
+          ...candidates.map(([b])=>decryptObj(b,password))
+        ]);
+        const ll=dl?.lastSaved||0,lm=countM(dl),lc=countC(dl);
+        let bestBlob=localRaw,bestData=dl,bestTs=ll,bestSrc="local";
+        remotes.forEach(({data:dr},i)=>{
+          const rr=dr?.lastSaved||0;
+          if(rr>bestTs&&countM(dr)>=lm&&countC(dr)>=lc){bestTs=rr;bestBlob=candidates[i][0];bestData=dr;bestSrc=candidates[i][1];}
+        });
+        if(bestSrc!=="local"){
+          safeLS.rawSet(`veeda_data_${profileId}`,bestBlob);
+          return{used:"remote",reason:"newer",source:bestSrc};
         }
         return{used:"local",reason:"local_has_more_or_equal"};
       }catch(e){return{used:"local",reason:"decrypt_failed"};}
@@ -3211,6 +3227,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
     safeLS.rawSet(dataKey,enc);
     saveMonthlySnapshot(profile.id,enc);
     if(profile.cloud){cloudSync.queuePush(profile.id,enc);}
+    // Backup no Supabase — blob já cifrado, enviado de forma assíncrona sem bloquear UI
+    try{window.VeedaSupabase?.data?.push(profile.id,enc);}catch(_){}
   },[dataKey,password,profile.id,profile.cloud]);
 
   // Flush cloud push on tab hide / unload (caso o debounce ainda esteja pendente)

@@ -527,6 +527,29 @@ const VeedaSupabase = (() => {
       .subscribe();
   }
 
+  // ── Backup de dados criptografados ────────────────────────
+  // O blob chega sempre cifrado (AES-256-GCM). Supabase não lê o conteúdo.
+  async function pushUserData(userId, encBlob) {
+    if (!isReady() || !userId || !encBlob) return false;
+    const { error } = await sb()
+      .from('user_data')
+      .upsert({ user_id: userId, enc_blob: encBlob, updated_at: new Date().toISOString() },
+               { onConflict: 'user_id' });
+    if (error) console.warn('[VeedaSupabase] pushUserData:', error.message);
+    return !error;
+  }
+
+  async function pullUserData(userId) {
+    if (!isReady() || !userId) return null;
+    const { data, error } = await sb()
+      .from('user_data')
+      .select('enc_blob, updated_at')
+      .eq('user_id', userId)
+      .single();
+    if (error && error.code !== 'PGRST116') console.warn('[VeedaSupabase] pullUserData:', error.message);
+    return data ? data.enc_blob : null;
+  }
+
   function removeChannel(channel) {
     if (isReady() && channel) sb().removeChannel(channel);
   }
@@ -570,6 +593,10 @@ const VeedaSupabase = (() => {
       subscribeRequests:      subscribeToConnectionRequests,
       subscribeConfirmations: subscribeToConfirmations,
       removeChannel
+    },
+    data: {
+      push: pushUserData,
+      pull: pullUserData
     }
   };
 })();
