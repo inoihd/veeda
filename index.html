@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.8";
+  var EMBEDDED_VERSION = "2.2.9";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.2.8";
+const APP_VERSION  = "2.2.9";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -3481,7 +3481,7 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
       {/* ── Header ── */}
       <div style={{background:C.white,borderBottom:`1px solid ${C.headerBorder}`,position:"sticky",top:0,zIndex:100,paddingTop:"env(safe-area-inset-top)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 6px"}}>
-          <span style={{fontFamily:PASSO,fontSize:18,fontWeight:700,color:C.purple}}>🌿 Veeda</span>
+          <span onClick={()=>setView("home")} style={{fontFamily:PASSO,fontSize:18,fontWeight:700,color:C.purple,cursor:"pointer"}}>🌿 Veeda</span>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <button onClick={()=>setShowInviteApp(true)} style={{background:C.purpleLight,border:"none",borderRadius:20,padding:"5px 12px",fontSize:12,color:C.tabActive,fontWeight:600,cursor:"pointer"}}>+ Convidar</button>
             <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",fontSize:20,color:C.textLight,cursor:"pointer",lineHeight:1}}>⚙️</button>
@@ -3503,6 +3503,87 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 
       {/* ── Content ── */}
       <div style={{paddingBottom:120}}>
+        {/* HOME */}
+        {view==="home"&&(()=>{
+          const allMoments=Object.entries(activeData.moments||{}).flatMap(([d,ms])=>(ms||[]).map(m=>({...m,day:d})));
+          const totalDays=Object.keys(activeData.moments||{}).filter(d=>(activeData.moments[d]||[]).length>0).length;
+          const totalMoments=allMoments.length;
+          const byDay=Object.entries(activeData.moments||{}).map(([d,ms])=>({d,n:(ms||[]).length})).sort((a,b)=>b.n-a.n);
+          const topDays=byDay.slice(0,3);
+          const recent=allMoments.sort((a,b)=>b.ts-a.ts).slice(0,3);
+          const contacts=activeData.contacts||[];
+          return(
+            <div style={{padding:"20px 16px"}}>
+              {/* Cabeçalho */}
+              <div style={{marginBottom:20}}>
+                <p style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.text,fontFamily:PASSO}}>Olá, {profile.name.split(" ")[0]} 👋</p>
+                <p style={{margin:0,fontSize:13,color:C.textMid}}>Aqui está o resumo da sua jornada no Veeda.</p>
+              </div>
+
+              {/* Ação rápida */}
+              <div style={{display:"flex",gap:10,marginBottom:20}}>
+                <button onClick={()=>setView("hoje")} style={{flex:1,padding:"14px 0",background:C.purple,color:"#fff",border:"none",borderRadius:14,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:PASSO}}>✏️ Meu Dia</button>
+                <button onClick={()=>{setView("hoje");setTimeout(()=>document.getElementById("veeda-add-btn")?.click(),200);}} style={{flex:1,padding:"14px 0",background:C.purpleLight,color:C.purple,border:`1.5px solid ${C.purple}33`,borderRadius:14,fontWeight:700,fontSize:14,cursor:"pointer"}}>＋ Novo registro</button>
+              </div>
+
+              {/* Stats */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:20}}>
+                {[["📅",totalDays,"dias registrados"],["✍️",totalMoments,"registros totais"],["👥",contacts.length,"no círculo"]].map(([icon,val,label])=>(
+                  <div key={label} style={{background:C.white,borderRadius:14,padding:"14px 10px",textAlign:"center",border:`1px solid ${C.cardBorder}`}}>
+                    <div style={{fontSize:20}}>{icon}</div>
+                    <div style={{fontSize:22,fontWeight:800,color:C.purple,fontFamily:PASSO}}>{val}</div>
+                    <div style={{fontSize:10,color:C.textLight,lineHeight:1.3}}>{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Círculo */}
+              {contacts.length>0&&<div style={{background:C.white,borderRadius:16,padding:"14px 16px",marginBottom:16,border:`1px solid ${C.cardBorder}`}}>
+                <p style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:C.text}}>👥 Meu Círculo</p>
+                <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:4}}>
+                  {contacts.map((c,i)=>(
+                    <div key={i} onClick={()=>setView("grupo")} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",flexShrink:0}}>
+                      <AvatarBubble src={c.avatarSrc} emoji={c.emoji||"🌿"} color={c.avatarColor||C.purpleLight} size={48} ring/>
+                      <span style={{fontSize:10,color:C.textMid,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name.split(" ")[0]}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
+              {/* Dias mais ativos */}
+              {topDays.length>0&&<div style={{background:C.white,borderRadius:16,padding:"14px 16px",marginBottom:16,border:`1px solid ${C.cardBorder}`}}>
+                <p style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:C.text}}>🔥 Dias mais ativos</p>
+                {topDays.map(({d,n})=>(
+                  <div key={d} onClick={()=>{setDayOffset(Math.round((new Date()-new Date(d))/(86400000)));setView("hoje");}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.cardBorder}`,cursor:"pointer"}}>
+                    <span style={{fontSize:13,color:C.text}}>{fmtFull(d)}</span>
+                    <span style={{fontSize:12,color:C.purple,fontWeight:600}}>{n} registro{n!==1?"s":""}</span>
+                  </div>
+                ))}
+              </div>}
+
+              {/* Registros recentes */}
+              {recent.length>0&&<div style={{background:C.white,borderRadius:16,padding:"14px 16px",marginBottom:16,border:`1px solid ${C.cardBorder}`}}>
+                <p style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:C.text}}>📌 Registros recentes</p>
+                {recent.map(m=>{const meta=TYPE_META[m.type]||TYPE_META.texto;return(
+                  <div key={m.id} onClick={()=>setExpandedMoment(m)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.cardBorder}`,cursor:"pointer"}}>
+                    <div style={{width:36,height:36,borderRadius:"50%",background:meta.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{meta.icon}</div>
+                    <div style={{flex:1,overflow:"hidden"}}>
+                      <p style={{margin:0,fontSize:12,color:C.textLight}}>{fmtFull(m.day)}</p>
+                      <p style={{margin:0,fontSize:13,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.type==="texto"?m.content:m.type==="musica"?`🎵 ${m.trackTitle||m.content}`:m.type==="foto"?"📷 Foto":m.type==="arte"?"🎨 Arte":m.content||meta.icon}</p>
+                    </div>
+                  </div>
+                );})}
+              </div>}
+
+              {/* Etapa 2 — placeholder */}
+              <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.pinkLight})`,borderRadius:16,padding:"20px 16px",textAlign:"center",border:`1px dashed ${C.purple}44`}}>
+                <p style={{margin:"0 0 4px",fontSize:15,fontWeight:700,color:C.purple,fontFamily:PASSO}}>Em breve 🌟</p>
+                <p style={{margin:0,fontSize:12,color:C.textMid,lineHeight:1.6}}>Eventos na cidade, restaurantes, bares e cursos profissionalizantes — conteúdo criado pela comunidade Veeda.</p>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* HOJE */}
         {view==="hoje"&&(
           <div onTouchStart={e=>{touchX.current=e.touches[0].clientX;}} onTouchEnd={e=>{if(touchX.current==null)return;const dx=touchX.current-e.changedTouches[0].clientX;if(Math.abs(dx)>55){dx>0?setDayOffset(o=>o+1):setDayOffset(o=>Math.max(0,o-1));}touchX.current=null;}}>
