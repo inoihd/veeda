@@ -314,7 +314,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.2.4";
+  var EMBEDDED_VERSION = "2.2.5";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -489,7 +489,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.2.4";
+const APP_VERSION  = "2.2.5";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1387,7 +1387,7 @@ function DrawingCanvas({onSave,onClose}){
   const COLORS=["#000000","#3A3350","#9000FF","#E91E8C","#5B7FA6","#1D9E75","#D4860A","#C0392B","#FF9800","#ffffff","#FDF5F0","#EDE9F6"];
 
   return(
-    <div style={{position:"fixed",inset:0,background:"#1a1025",zIndex:400,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto"}}>
+    <div style={{position:"fixed",inset:0,background:"#1a1025",zIndex:400,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",paddingTop:"env(safe-area-inset-top)",paddingBottom:"env(safe-area-inset-bottom)"}}>
       <div style={{background:"#2a1d3d",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
         <button onClick={onClose} style={{background:"rgba(255,255,255,.15)",border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",cursor:"pointer",fontSize:13}}>✕</button>
         <span style={{flex:1,color:"rgba(255,255,255,.6)",fontSize:13,fontWeight:600,textAlign:"center",fontFamily:PASSO}}>🎨 Arte Veeda</span>
@@ -3179,6 +3179,8 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
   // garantir que saves concorrentes nunca percam momentos ou contatos.
   const save=useCallback(async(d,opts={})=>{
     if(!d)return;
+    // Atualiza UI imediatamente — persiste em background
+    setData({...d,lastSaved:Date.now()});
     // Produz versão "lightweight": mídia grande vai para IDB, mantém referência
     const lightweight={...d,moments:{},lastSaved:Date.now()};
     Object.keys(d.moments||{}).forEach(day=>{
