@@ -315,7 +315,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.4.1";
+  var EMBEDDED_VERSION = "2.4.2";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -513,7 +513,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.4.1";
+const APP_VERSION  = "2.4.2";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -4326,9 +4326,39 @@ function Veeda(){
             const u=await gdriveUserInfo(at);
             if(!u)throw new Error("Não foi possível obter informações da conta Google.");
             setGoogleUser(u);
-            const acc=await cloudAccount.load(at);
-            let redirectList=acc?.profiles||[];
-            // Fallback: índice cloud indisponível — usa perfis locais desta conta
+            // FONTE PRIMÁRIA: Supabase (funciona em qualquer dispositivo, PWA, reinstalação)
+            const _sbUrl2="https://rkinwvdbomllztixdtar.supabase.co";
+            const _sbKey2="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+            let redirectList=[];
+            if(u?.email){
+              try{
+                const _r2=await fetch(`${_sbUrl2}/rest/v1/profiles?email=eq.${encodeURIComponent(u.email)}&select=*&limit=5`,
+                  {headers:{"apikey":_sbKey2,"Authorization":"Bearer "+_sbKey2}});
+                if(_r2.ok){
+                  const _d2=await _r2.json();
+                  if(_d2&&_d2.length>0){
+                    redirectList=_d2.map(p=>({
+                      ...p,
+                      handle:p.handle.startsWith('@')?p.handle:'@'+p.handle,
+                      avatarColor:p.avatar_color,avatarSrc:p.avatar_src,
+                      passwordHash:p.password_hash,googleSub:p.google_sub,
+                      cloud:true
+                    }));
+                    const ps2=loadProfiles();
+                    redirectList.forEach(p=>{if(!ps2.find(x=>x.id===p.id)){ps2.push(p);}});
+                    saveProfiles(ps2);redirectList.forEach(p=>registryAdd(p));
+                  }
+                }
+              }catch(e){console.warn("[Veeda] Supabase redirect lookup falhou:",e);}
+            }
+            // FALLBACK 1: Google Drive
+            if(redirectList.length===0){
+              try{
+                const acc=await cloudAccount.load(at);
+                if(acc?.profiles?.length>0)redirectList=acc.profiles;
+              }catch(e){console.warn("[Veeda] Drive redirect lookup falhou:",e);}
+            }
+            // FALLBACK 2: perfis locais
             if(redirectList.length===0&&u?.sub){
               const localCloud=loadProfiles().filter(p=>p.cloud&&(p.googleSub===u.sub||p.email===u.email));
               if(localCloud.length>0)redirectList=localCloud;
