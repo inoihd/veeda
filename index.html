@@ -280,9 +280,9 @@ button:active:before {
 /* Safe area para dispositivos modernos */
 @supports (padding: max(0px)) {
   body {
-    padding-bottom: max(var(--spacing-md), env(safe-area-inset-bottom));
-    padding-left: max(var(--spacing-md), env(safe-area-inset-left));
-    padding-right: max(var(--spacing-md), env(safe-area-inset-right));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
 }
 
@@ -315,7 +315,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.4.2";
+  var EMBEDDED_VERSION = "2.4.3";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -513,7 +513,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.4.2";
+const APP_VERSION  = "2.4.3";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -1768,8 +1768,10 @@ function MomentDetail({m,onClose,onDelete,onPlay,onTogglePrivacy}){
 // ═══════════════════════════════════════════════════
 // MUSIC PICKER — busca via YouTube (Piped API, sem chave)
 // ═══════════════════════════════════════════════════
-const PIPED_HOSTS=["https://pipedapi.kavin.rocks","https://piped-api.garudalinux.org","https://api.piped.projectsegfau.lt"];
+const PIPED_HOSTS=["https://pipedapi.kavin.rocks","https://piped-api.garudalinux.org","https://api.piped.projectsegfau.lt","https://pipedapi.reallyaweso.me","https://piped-api.privacy.com.de"];
+const INVIDIOUS_HOSTS=["https://invidious.snopyta.org","https://yewtu.be","https://invidious.tiekoetter.com"];
 async function searchYouTubeMusic(q){
+  // Tenta Piped primeiro
   for(const host of PIPED_HOSTS){
     try{
       const r=await fetch(`${host}/search?q=${encodeURIComponent(q)}&filter=music_songs`,{signal:AbortSignal.timeout(5000)});
@@ -1783,6 +1785,22 @@ async function searchYouTubeMusic(q){
         art:v.thumbnail,
         youtubeId:v.url.replace("/watch?v=",""),
         duration:v.duration
+      }));
+    }catch{}
+  }
+  // Fallback: Invidious
+  for(const host of INVIDIOUS_HOSTS){
+    try{
+      const r=await fetch(`${host}/api/v1/search?q=${encodeURIComponent(q)}&type=video&fields=videoId,title,author,videoThumbnails,lengthSeconds`,{signal:AbortSignal.timeout(5000)});
+      if(!r.ok)continue;
+      const d=await r.json();
+      if(Array.isArray(d)&&d.length)return d.slice(0,10).map(v=>({
+        id:v.videoId,
+        title:v.title,
+        artist:v.author||"",
+        art:v.videoThumbnails?.[0]?.url||null,
+        youtubeId:v.videoId,
+        duration:v.lengthSeconds
       }));
     }catch{}
   }
@@ -3112,6 +3130,7 @@ function ScreenCreate({onDone,onBack,googleUser}){
   const [emoji,setEmoji]=useState("🌿");const [avatarColor,setAvatarColor]=useState(C.purpleLight);
   const [avatarSrc,setAvatarSrc]=useState(googleUser?.picture||null);
   const [pw,setPw]=useState("");const [pw2,setPw2]=useState("");
+  const [bio,setBio]=useState("");
   const [code]=useState(genCode);const [confirmed,setConfirmed]=useState(false);const [copied,setCopied]=useState(false);
   const [loading,setLoading]=useState(false);const [err,setErr]=useState("");
   const photoRef=useRef();const galleryRef=useRef();
@@ -3144,6 +3163,7 @@ function ScreenCreate({onDone,onBack,googleUser}){
       const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString();
       const profile={
         id,name,
+        bio:bio.trim()||null,
         email:gEmail,
         googleSub:googleUser?.sub||null,
         handle:h,emoji,avatarColor,avatarSrc,
@@ -3190,6 +3210,8 @@ function ScreenCreate({onDone,onBack,googleUser}){
         </div>
         {handleErr&&<p style={{fontSize:12,color:C.red,margin:"-16px 0 12px",fontWeight:500}}>{handleErr}</p>}
         {handle&&!handleErr&&<p style={{fontSize:12,color:C.green,margin:"-14px 0 14px"}}>✓ @{handle}</p>}
+        <label style={{fontSize:13,color:C.textMid,display:"block",marginBottom:6}}>Bio <span style={{fontWeight:400,color:C.textLight}}>(opcional)</span></label>
+        <textarea value={bio} onChange={e=>setBio(e.target.value)} placeholder="Uma frase sobre você…" style={{marginBottom:20,minHeight:72,resize:"none"}}/>
         <Btn onClick={()=>{
           if(!name.trim()){setErr("Informe seu nome.");return;}
           const h=handle||sanitizeHandle(name);
