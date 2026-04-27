@@ -354,12 +354,18 @@ const VeedaSupabase = (() => {
       });
       if (error) { console.warn('[VeedaSupabase] uploadMedia:', error.message); return null; }
 
-      const { data: urlData } = sb().storage.from('media').getPublicUrl(path);
-      return urlData?.publicUrl || null;
+      // Retorna só o path — URLs assinadas são geradas no momento da leitura
+      return path;
     } catch (e) {
       console.warn('[VeedaSupabase] uploadMedia error:', e);
       return null;
     }
+  }
+
+  async function signMediaPath(path) {
+    const { data, error } = await sb().storage.from('media').createSignedUrl(path, 3600);
+    if (error) { console.warn('[VeedaSupabase] signMedia:', error.message); return null; }
+    return data?.signedUrl || null;
   }
 
   // ── SHARED DAYS ────────────────────────────────────────────
@@ -386,7 +392,8 @@ const VeedaSupabase = (() => {
           id: m.id, ts: m.ts, type: m.type,
           content: (m.type === 'texto' || m.type === 'link' || m.type === 'videolink')
             ? clamp(stripHtml(m.content || ''), MAX.MOMENT_CONTENT) : null,
-          media_url: mediaUrl,
+          media_path: mediaUrl, // path no Storage; URL assinada gerada na leitura
+          media_url: null,
           caption: clamp(m.caption || '', MAX.MOMENT_CAPTION),
           tags: Array.isArray(m.tags) ? m.tags.slice(0, 10) : undefined,
           _hasMedia: !['texto','link','videolink','musica'].includes(m.type)
@@ -427,24 +434,35 @@ const VeedaSupabase = (() => {
       .eq('consumed', false)
       .order('shared_at', { ascending: false });
     if (error) console.warn('[VeedaSupabase] getSharedDays:', error.message);
-    // Mapeia para o formato local (igual ao payload do doShare)
-    return (data || []).map(r => ({
-      _sbId:       r.id,
-      date:        r.date,
-      author:      r.from_name,
-      handle:      r.from_handle,
-      emoji:       r.from_emoji,
-      avatarColor: r.from_avatar_color,
-      avatarSrc:   r.from_avatar_src,
-      authorId:    r.from_id,
-      moments:     r.moments || [],
-      feeling:     r.feeling,
-      message:     r.message,
-      importedAt:  Date.now(),
-      sharedAt:    new Date(r.shared_at).getTime(),
-      _hasMedia:   r.has_media,
-      _fromSupabase: true
+    // Gera signed URLs (1h) para mídias com media_path — só o destinatário autenticado pode gerar
+    const rows = data || [];
+    const signed = await Promise.all(rows.map(async r => {
+      const moments = await Promise.all((r.moments || []).map(async m => {
+        if (m.media_path) {
+          const url = await signMediaPath(m.media_path);
+          return { ...m, media_url: url };
+        }
+        return m;
+      }));
+      return {
+        _sbId:       r.id,
+        date:        r.date,
+        author:      r.from_name,
+        handle:      r.from_handle,
+        emoji:       r.from_emoji,
+        avatarColor: r.from_avatar_color,
+        avatarSrc:   r.from_avatar_src,
+        authorId:    r.from_id,
+        moments,
+        feeling:     r.feeling,
+        message:     r.message,
+        importedAt:  Date.now(),
+        sharedAt:    new Date(r.shared_at).getTime(),
+        _hasMedia:   r.has_media,
+        _fromSupabase: true
+      };
     }));
+    return signed;
   }
 
   async function markSharedDayConsumed(sbId, importedAt) {
