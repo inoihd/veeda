@@ -147,6 +147,8 @@ const VeedaSupabase = (() => {
       emoji:        sp.emoji,
       avatar_color: sp.avatarColor,
       avatar_src:   sp.avatarSrc,
+      email:        profile.email || null,
+      google_sub:   profile.googleSub || null,
       last_active:  new Date().toISOString()
     }, { onConflict: 'id' });
 
