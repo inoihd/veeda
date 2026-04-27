@@ -360,15 +360,38 @@ button:active:before {
     }, 600);
   }
 
-  // Roda em background — não bloqueia o boot. Se app já carregou antes da
-  // resposta chegar, recarrega só se houver mismatch real.
+  // Verifica versão em background e exibe banner se houver atualização
   if ("fetch" in window) {
     fetch("version.json?_=" + Date.now(), { cache: "no-store" })
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){
         if (!j || !j.version) return;
         if (j.version !== EMBEDDED_VERSION) {
-          clearEverythingAndReload("server="+j.version+" embedded="+EMBEDDED_VERSION);
+          // Mostra banner de atualização em vez de recarregar silenciosamente
+          var banner = document.createElement("div");
+          banner.id = "veeda-update-banner";
+          banner.style.cssText = [
+            "position:fixed","top:0","left:0","right:0","z-index:99999",
+            "background:linear-gradient(135deg,#7c3aed,#4f46e5)",
+            "color:#fff","padding:14px 16px",
+            "display:flex","align-items:center","justify-content:space-between",
+            "gap:12px","font-family:Inter,sans-serif","font-size:14px",
+            "box-shadow:0 4px 20px rgba(124,58,237,.4)",
+            "animation:slideDown .3s cubic-bezier(.22,1,.36,1)"
+          ].join(";");
+          banner.innerHTML = [
+            "<style>@keyframes slideDown{from{transform:translateY(-100%)}to{transform:translateY(0)}}</style>",
+            "<span>🌿 Nova versão disponível — <strong>v" + j.version + "</strong></span>",
+            "<button onclick=\"(function(){",
+              "var b=document.getElementById('veeda-update-banner');if(b)b.remove();",
+              "clearEverythingAndReload('user-tap');",
+            "})()\" style=\"",
+              "background:#fff;color:#7c3aed;border:none;border-radius:20px;",
+              "padding:8px 18px;font-weight:700;cursor:pointer;font-size:13px;",
+              "white-space:nowrap;flex-shrink:0",
+            "\">Atualizar agora</button>"
+          ].join("");
+          document.body.appendChild(banner);
         } else {
           console.log("[Veeda] versão atual:", EMBEDDED_VERSION);
         }
