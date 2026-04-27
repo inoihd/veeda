@@ -2889,6 +2889,15 @@ function ScreenCreate({onDone,onBack,googleUser}){
     // if(!confirmed){setErr("Confirme que salvou o código.");return;} // Temporarily disabled for testing
     setLoading(true);
     try{
+      // Beta invite check
+      const _betaUrl="https://rkinwvdbomllztixdtar.supabase.co";
+      const _betaKey="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+      const _inviteEmail=gEmail||"";
+      if(_inviteEmail){
+        const _invRes=await fetch(`${_betaUrl}/rest/v1/beta_invites?email=eq.${encodeURIComponent(_inviteEmail)}&revoked=eq.false&select=id,used`,{headers:{"apikey":_betaKey,"Authorization":"Bearer "+_betaKey}}).catch(()=>null);
+        const _invData=_invRes?.ok?await _invRes.json().catch(()=>[]):[];
+        if(!_invData||_invData.length===0){setErr("Acesso restrito ao Beta. Você precisa de um convite.");setLoading(false);return;}
+      }
       const h="@"+(handle||sanitizeHandle(name)||sanitizeHandle(gEmail.split("@")[0]));
       if(!isHandleAvailable(h,null)){setErr("Este @handle já está em uso. Escolha outro.");setLoading(false);return;}
       const passwordHash=await hashPw(pw),recoveryHash=await hashPw(code),id=Date.now().toString();
@@ -2907,6 +2916,11 @@ function ScreenCreate({onDone,onBack,googleUser}){
       safeLS.rawSet(`veeda_data_${id}`,enc);
       saveMonthlySnapshot(id,enc);
       onDone(profile,pw);
+      // Mark beta invite as used
+      if(_inviteEmail){
+        const _invUpd=await fetch(`${_betaUrl}/rest/v1/beta_invites?email=eq.${encodeURIComponent(_inviteEmail)}&revoked=eq.false`,{method:"PATCH",headers:{"apikey":_betaKey,"Authorization":"Bearer "+_betaKey,"Content-Type":"application/json","Prefer":"return=minimal"},body:JSON.stringify({used:true})}).catch(()=>null);
+        if(_invUpd?.ok)console.log("[Veeda beta] invite marcado como usado");
+      }
       if(window.VeedaSupabase?.isReady()){
         VeedaSupabase.auth.signUp(profile.handle,passwordHash)
           .then(async(r)=>{
