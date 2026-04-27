@@ -315,7 +315,7 @@ button:active:before {
 <script>
 (function(){
   // Versão embutida nesta cópia do index.html. Deve casar com version.json.
-  var EMBEDDED_VERSION = "2.4.0";
+  var EMBEDDED_VERSION = "2.4.1";
   var KEY_LAST_RELOAD = "veeda_last_force_reload";
 
   function showOverlay(msg){
@@ -513,7 +513,7 @@ window.addEventListener("load",()=>{
 const {useState,useEffect,useRef,useCallback,useMemo} = React;
 
 // ── App metadata ───────────────────────────────────────────
-const APP_VERSION  = "2.3.3";
+const APP_VERSION  = "2.4.1";
 const DATA_VERSION = 3; // bump quando o schema mudar (aciona migração)
 
 // ── LocalStorage keys ──────────────────────────────────────
@@ -2931,6 +2931,7 @@ function SplashScreen({onGoogle,onRecover,onGuide,loading,hasLocal,error}){
         <div style={{display:"flex",justifyContent:"center",alignItems:"center",marginTop:6}}>
           <button onClick={onGuide} style={{background:"none",border:"none",color:"#381653",fontSize:13,cursor:"pointer",fontFamily:PASSO}}>📱 Como instalar</button>
         </div>
+        <p style={{textAlign:"center",margin:"10px 0 0",fontSize:12,color:"#38165388",fontFamily:SANS}}>v{APP_VERSION}</p>
       </div>
     </div>
   );
