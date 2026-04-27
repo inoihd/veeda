@@ -4434,11 +4434,31 @@ function Veeda(){
       setGoogleUser(u);
       const acc=await cloudAccount.load(t);
       let list=acc?.profiles||[];
-      // Fallback: se o índice cloud não carregou (falha de rede, arquivo não existe),
-      // usa perfis locais que já foram sincronizados com esta conta Google
+      // Fallback 1: perfis locais já sincronizados com este Google
       if(list.length===0&&u?.sub){
         const localCloud=loadProfiles().filter(p=>p.cloud&&(p.googleSub===u.sub||p.email===u.email));
         if(localCloud.length>0)list=localCloud;
+      }
+      // Fallback 2: Supabase — recupera perfil pelo e-mail Google
+      // (dispositivo novo, cache limpo, Google Drive vazio)
+      if(list.length===0&&u?.email){
+        try{
+          const _sbUrl="https://rkinwvdbomllztixdtar.supabase.co";
+          const _sbKey="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+          const _r=await fetch(`${_sbUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(u.email)}&select=*&limit=1`,
+            {headers:{"apikey":_sbKey,"Authorization":"Bearer "+_sbKey}});
+          if(_r.ok){
+            const _data=await _r.json();
+            if(_data&&_data.length>0){
+              const _p={..._data[0],cloud:true,googleSub:u.sub||_data[0].googleSub};
+              list=[_p];
+              // Persiste localmente para próximos acessos
+              const ps=loadProfiles();
+              if(!ps.find(x=>x.id===_p.id)){ps.push(_p);saveProfiles(ps);registryAdd(_p);}
+              console.log("[Veeda] perfil recuperado do Supabase por e-mail Google");
+            }
+          }
+        }catch(e){console.warn("[Veeda] fallback Supabase falhou:",e);}
       }
       setCloudProfiles(list);
       const session=loadSession();
