@@ -637,6 +637,7 @@ const VeedaSupabase = (() => {
       getInbox:    getSharedDays,
       markConsumed: markSharedDayConsumed
     },
+    media: { upload: uploadMediaForSharing },
     presence: {
       update:     updateOnlineStatus,
       getStatuses: getOnlineStatuses
