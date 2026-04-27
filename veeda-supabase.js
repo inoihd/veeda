@@ -335,22 +335,60 @@ const VeedaSupabase = (() => {
   }
 
 
+  // ── MEDIA UPLOAD ───────────────────────────────────────────
+
+  async function uploadMediaForSharing(fromHandle, momentId, dataUrl) {
+    if (!isReady()) return null;
+    try {
+      const [header, b64] = dataUrl.split(',');
+      const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+      const ext = mime.split('/')[1]?.split('+')[0] || 'jpg';
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+
+      const path = `shared/${fromHandle.replace(/^@/,'')}/${momentId}.${ext}`;
+      const { error } = await sb().storage.from('media').upload(path, blob, {
+        contentType: mime, upsert: true
+      });
+      if (error) { console.warn('[VeedaSupabase] uploadMedia:', error.message); return null; }
+
+      const { data: urlData } = sb().storage.from('media').getPublicUrl(path);
+      return urlData?.publicUrl || null;
+    } catch (e) {
+      console.warn('[VeedaSupabase] uploadMedia error:', e);
+      return null;
+    }
+  }
+
   // ── SHARED DAYS ────────────────────────────────────────────
 
   async function shareDay(fromProfile, toHandles, dayPayload) {
     if (!rateLimit('shareDay', 5)) return false;
     if (!isReady() || !toHandles.length) return false;
     const sp = safeProfile(fromProfile);
-    // Sanitize moments: strip media content, enforce limits
-    const safeMoments = (dayPayload.moments || [])
+    // Sanitize moments: upload media to storage, enforce limits
+    const safeMoments = await Promise.all((dayPayload.moments || [])
       .slice(0, MAX.MOMENTS_PER_DAY)
-      .map(m => ({
-        id: m.id, ts: m.ts, type: m.type,
-        content: (m.type === 'texto' || m.type === 'link' || m.type === 'videolink')
-          ? clamp(stripHtml(m.content || ''), MAX.MOMENT_CONTENT) : null,
-        caption: clamp(m.caption || '', MAX.MOMENT_CAPTION),
-        tags: Array.isArray(m.tags) ? m.tags.slice(0, 10) : undefined,
-        _hasMedia: !['texto','link','videolink','musica'].includes(m.type)
+      .map(async m => {
+        let mediaUrl = null;
+        if (!['texto','link','videolink','musica'].includes(m.type) && m.content) {
+          if (m.content.startsWith('data:')) {
+            mediaUrl = await uploadMediaForSharing(fromProfile.handle || '', m.id || Date.now().toString(), m.content);
+          } else if (m.content.startsWith('http')) {
+            mediaUrl = m.content;
+          }
+        }
+        return {
+          id: m.id, ts: m.ts, type: m.type,
+          content: (m.type === 'texto' || m.type === 'link' || m.type === 'videolink')
+            ? clamp(stripHtml(m.content || ''), MAX.MOMENT_CONTENT) : null,
+          media_url: mediaUrl,
+          caption: clamp(m.caption || '', MAX.MOMENT_CAPTION),
+          tags: Array.isArray(m.tags) ? m.tags.slice(0, 10) : undefined,
+          _hasMedia: !['texto','link','videolink','musica'].includes(m.type)
+        };
       }));
 
     const rows = toHandles.slice(0, 5).map(h => ({  // max 5 recipients per call
