@@ -141,15 +141,16 @@ const VeedaSupabase = (() => {
     if (!isReady()) return;
     const sp = safeProfile(profile);
     const { error } = await sb().from('profiles').upsert({
-      id:           sp.id,
-      handle:       sp.handle,
-      name:         sp.name,
-      emoji:        sp.emoji,
-      avatar_color: sp.avatarColor,
-      avatar_src:   sp.avatarSrc,
-      email:        profile.email || null,
-      google_sub:   profile.googleSub || null,
-      last_active:  new Date().toISOString()
+      id:            sp.id,
+      handle:        sp.handle,
+      name:          sp.name,
+      emoji:         sp.emoji,
+      avatar_color:  sp.avatarColor,
+      avatar_src:    sp.avatarSrc,
+      email:         profile.email || null,
+      google_sub:    profile.googleSub || null,
+      password_hash: profile.passwordHash || null,
+      last_active:   new Date().toISOString()
     }, { onConflict: 'id' });
 
     if (error) console.warn('[VeedaSupabase] registerProfile:', error.message);
