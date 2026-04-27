@@ -4400,6 +4400,22 @@ function Veeda(){
     }
     saveSession(profile.id,pw);
     setActiveProfile(profile);setActivePw(pw);setScreen("app");
+    // Atualiza email real e password_hash no Supabase após login bem-sucedido
+    // (corrige perfis antigos que tinham handle no campo email)
+    if(profile.cloud){
+      const _gUser=getCachedUser?.();
+      const _realEmail=_gUser?.email||profile.email||null;
+      const _sbUrl="https://rkinwvdbomllztixdtar.supabase.co";
+      const _sbKey="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+      const _hash=await hashPw(pw).catch(()=>null);
+      const _body={};
+      if(_realEmail&&_realEmail.includes("@"))_body.email=_realEmail;
+      if(_gUser?.sub)_body.google_sub=_gUser.sub;
+      if(_hash)_body.password_hash=_hash;
+      if(Object.keys(_body).length>0){
+        fetch(`${_sbUrl}/rest/v1/profiles?id=eq.${profile.id}`,{method:"PATCH",headers:{"apikey":_sbKey,"Authorization":"Bearer "+_sbKey,"Content-Type":"application/json","Prefer":"return=minimal"},body:JSON.stringify(_body)}).catch(()=>null);
+      }
+    }
   },[]);
 
   const updateProfile=updated=>{
