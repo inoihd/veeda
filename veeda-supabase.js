@@ -43,9 +43,23 @@ const VeedaSupabase = (() => {
   function sb() { return _client; }
   function isReady() { return _client !== null; }
 
+  // ── Rate limiting ──────────────────────────────────────────
+  const _rl = {}; // { key: [timestamps] }
+  function rateLimit(key, maxPerMinute = 10) {
+    const now = Date.now();
+    _rl[key] = (_rl[key] || []).filter(t => now - t < 60000);
+    if (_rl[key].length >= maxPerMinute) return false;
+    _rl[key].push(now);
+    return true;
+  }
+
   // ── Input sanitization ─────────────────────────────────────
   // Hard limits on fields sent to Supabase — prevent storage abuse and
   // oversized payloads from reaching the database.
+  function stripHtml(s) {
+    return typeof s === 'string' ? s.replace(/<[^>]*>/g, '').trim() : s;
+  }
+
   const MAX = {
     NAME:      80,
     HANDLE:    20,
@@ -59,8 +73,8 @@ const VeedaSupabase = (() => {
   const clamp = (v, max) => (typeof v === 'string' ? v.slice(0, max) : v);
   const safeProfile = p => ({
     id:           p.id,
-    handle:       clamp((p.handle || '').replace(/^@/, ''), MAX.HANDLE),
-    name:         clamp(p.name || '', MAX.NAME),
+    handle:       clamp(stripHtml((p.handle || '').replace(/^@/, '')), MAX.HANDLE),
+    name:         clamp(stripHtml(p.name || ''), MAX.NAME),
     emoji:        clamp(p.emoji || '🌿', MAX.EMOJI),
     avatarColor:  clamp(p.avatarColor || '#7B6FA0', 20),
     // Never store full data-URL avatars in Supabase — only small thumbnails
@@ -324,6 +338,7 @@ const VeedaSupabase = (() => {
   // ── SHARED DAYS ────────────────────────────────────────────
 
   async function shareDay(fromProfile, toHandles, dayPayload) {
+    if (!rateLimit('shareDay', 5)) return false;
     if (!isReady() || !toHandles.length) return false;
     const sp = safeProfile(fromProfile);
     // Sanitize moments: strip media content, enforce limits
@@ -332,7 +347,7 @@ const VeedaSupabase = (() => {
       .map(m => ({
         id: m.id, ts: m.ts, type: m.type,
         content: (m.type === 'texto' || m.type === 'link' || m.type === 'videolink')
-          ? clamp(m.content || '', MAX.MOMENT_CONTENT) : null,
+          ? clamp(stripHtml(m.content || ''), MAX.MOMENT_CONTENT) : null,
         caption: clamp(m.caption || '', MAX.MOMENT_CAPTION),
         tags: Array.isArray(m.tags) ? m.tags.slice(0, 10) : undefined,
         _hasMedia: !['texto','link','videolink','musica'].includes(m.type)
@@ -348,7 +363,7 @@ const VeedaSupabase = (() => {
       to_handle:         clamp(h.replace(/^@/, ''), MAX.HANDLE),
       date:              dayPayload.date,
       feeling:           dayPayload.feeling || null,
-      message:           clamp(dayPayload.message || '', MAX.MESSAGE) || null,
+      message:           clamp(stripHtml(dayPayload.message || ''), MAX.MESSAGE) || null,
       moments:           safeMoments,
       has_media:         safeMoments.some(m => m._hasMedia),
       shared_at:         new Date().toISOString()
@@ -597,6 +612,25 @@ const VeedaSupabase = (() => {
     data: {
       push: pushUserData,
       pull: pullUserData
+    },
+    fields: {
+      getForHandle: async (handle) => {
+        const r = await sb().from("profile_fields").select("*").eq("handle", handle).order("field_key");
+        if (r.error) throw r.error;
+        return r.data || [];
+      },
+      save: async (handle, field) => {
+        const key = (field.label || "").toLowerCase().replace(/\s+/g, "_");
+        const payload = { handle, field_key: key, label: field.label, value: field.value, visibility: field.visibility || "public" };
+        const r = await sb().from("profile_fields").upsert(payload, { onConflict: "handle,field_key" }).select();
+        if (r.error) throw r.error;
+        return r.data;
+      },
+      remove: async (id) => {
+        const r = await sb().from("profile_fields").delete().eq("id", id);
+        if (r.error) throw r.error;
+        return true;
+      }
     }
   };
 })();

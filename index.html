@@ -2362,7 +2362,7 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
 
         {/* Tab nav */}
         <div style={{display:"flex",gap:6,marginBottom:20,overflowX:"auto",paddingBottom:4}}>
-          {[["conta","Conta"],["dados","Meus Dados"],["notif","Notif."],["sobre","Sobre"]].map(([k,l])=>(
+          {[["conta","Conta"],["dados","Meus Dados"],["notif","Notif."],["campos","Campos"],["sobre","Sobre"]].map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)} style={{padding:"7px 14px",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:20,fontWeight:600,cursor:"pointer",fontSize:12,flexShrink:0}}>{l}</button>
           ))}
         </div>
@@ -2455,6 +2455,129 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
           <Btn onClick={()=>{onSave({...data,reminders:[]});addToast?.("Lembretes limpos.","info");}} variant="outline">Limpar lembretes</Btn>
         </div>}
 
+        {tab==="campos"&&(()=>{
+          const ANON_KEY="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+          const SB_URL="https://rkinwvdbomllztixdtar.supabase.co";
+          const hdrs={"apikey":ANON_KEY,"Authorization":"Bearer "+ANON_KEY,"Content-Type":"application/json","Prefer":"return=representation"};
+          const handle=(profile.handle||nameToHandle(profile.name)).replace(/^@/,"");
+
+          const [fields,setFields]=useState(null);
+          const [showAdd,setShowAdd]=useState(false);
+          const [editId,setEditId]=useState(null);
+          const [fLabel,setFLabel]=useState("");
+          const [fValue,setFValue]=useState("");
+          const [fVis,setFVis]=useState("public");
+          const [kgSugg,setKgSugg]=useState([]);
+          const [kgTimer,setKgTimer]=useState(null);
+          const [saving,setSaving]=useState(false);
+
+          useEffect(()=>{
+            fetch(`${SB_URL}/rest/v1/profile_fields?handle=eq.${encodeURIComponent(handle)}&order=field_key`,{headers:hdrs})
+              .then(r=>r.json()).then(d=>setFields(Array.isArray(d)?d:[])).catch(()=>setFields([]));
+          },[]);
+
+          const resetForm=()=>{setShowAdd(false);setEditId(null);setFLabel("");setFValue("");setFVis("public");setKgSugg([]);};
+
+          const handleValueChange=(v)=>{
+            setFValue(v);
+            if(kgTimer)clearTimeout(kgTimer);
+            if(v.length>=3&&window._GOOGLE_KG_KEY){
+              const t=setTimeout(()=>{
+                fetch(`https://kgsearch.googleapis.com/v1/entities:search?query=${encodeURIComponent(v)}&key=${window._GOOGLE_KG_KEY}&limit=5&indent=True`)
+                  .then(r=>r.json()).then(d=>{
+                    const names=(d.itemListElement||[]).map(e=>e.result&&e.result.name).filter(Boolean);
+                    setKgSugg(names);
+                  }).catch(()=>setKgSugg([]));
+              },400);
+              setKgTimer(t);
+            } else {
+              setKgSugg([]);
+            }
+          };
+
+          const saveField=async()=>{
+            if(!fLabel.trim()||!fValue.trim())return;
+            setSaving(true);
+            try{
+              if(editId){
+                await fetch(`${SB_URL}/rest/v1/profile_fields?id=eq.${editId}`,{method:"PATCH",headers:hdrs,body:JSON.stringify({value:fValue,visibility:fVis})});
+                setFields(f=>f.map(x=>x.id===editId?{...x,value:fValue,visibility:fVis}:x));
+              } else {
+                const key=fLabel.toLowerCase().replace(/\s+/g,"_");
+                const res=await fetch(`${SB_URL}/rest/v1/profile_fields`,{method:"POST",headers:hdrs,body:JSON.stringify({handle,field_key:key,label:fLabel,value:fValue,visibility:fVis,user_id:profile.id})});
+                const data=await res.json();
+                setFields(f=>[...( f||[]),...(Array.isArray(data)?data:[data])]);
+              }
+              resetForm();
+              addToast?.("Campo salvo!","success");
+            }catch(e){addToast?.("Erro ao salvar campo.","error");}
+            setSaving(false);
+          };
+
+          const deleteField=async(id)=>{
+            await fetch(`${SB_URL}/rest/v1/profile_fields?id=eq.${id}`,{method:"DELETE",headers:hdrs});
+            setFields(f=>f.filter(x=>x.id!==id));
+            addToast?.("Campo removido.","info");
+          };
+
+          const visLabel=(v)=>v==="public"?"🌐 Público":v==="contacts"?"👥 Contatos":"🔒 Só eu";
+          const visBg=(v)=>v==="public"?C.purpleLight:v==="contacts"?C.greenLight:"#f3f3f3";
+          const visCol=(v)=>v==="public"?C.purple:v==="contacts"?C.green:C.textMid;
+
+          return(
+            <div>
+              <p style={{fontSize:13,color:C.textMid,marginBottom:16,lineHeight:1.6}}>Adicione campos ao seu perfil (cidade, profissão, hobby…) visíveis para quem você escolher.</p>
+              {fields===null&&<p style={{fontSize:13,color:C.textMid}}>Carregando…</p>}
+              {fields!==null&&fields.length===0&&!showAdd&&<p style={{fontSize:13,color:C.textMid,marginBottom:12}}>Nenhum campo ainda.</p>}
+              {(fields||[]).map(f=>(
+                <div key={f.id} style={{background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:"12px 14px",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:11,color:C.textMid,marginBottom:2,fontWeight:600,textTransform:"uppercase",letterSpacing:".3px"}}>{f.label}</div>
+                    <div style={{fontSize:14,color:C.text,fontWeight:500,wordBreak:"break-word"}}>{f.value}</div>
+                    <span style={{display:"inline-block",marginTop:4,padding:"2px 8px",background:visBg(f.visibility),color:visCol(f.visibility),borderRadius:20,fontSize:10,fontWeight:600}}>{visLabel(f.visibility)}</span>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <button onClick={()=>{setEditId(f.id);setFLabel(f.label);setFValue(f.value);setFVis(f.visibility);setShowAdd(true);setKgSugg([]);}} style={{padding:"5px 10px",background:C.purpleLight,color:C.purple,border:"none",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Editar</button>
+                    <button onClick={()=>deleteField(f.id)} style={{padding:"5px 10px",background:"#fff0f0",color:"#c0392b",border:"none",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>Excluir</button>
+                  </div>
+                </div>
+              ))}
+              {showAdd?(
+                <div style={{background:C.white,border:`1px solid ${C.purple}44`,borderRadius:14,padding:16,marginTop:8}}>
+                  <p style={{margin:"0 0 12px",fontSize:14,fontWeight:700,color:C.text}}>{editId?"Editar campo":"Novo campo"}</p>
+                  <label style={{fontSize:12,color:C.textMid,display:"block",marginBottom:4}}>Rótulo (ex.: Cidade, Profissão)</label>
+                  <input value={fLabel} onChange={e=>setFLabel(e.target.value)} disabled={!!editId} placeholder="Cidade" style={{width:"100%",marginBottom:12,padding:"9px 12px",borderRadius:10,border:`1px solid ${C.cardBorder}`,fontSize:14,boxSizing:"border-box",opacity:editId?.6:1}}/>
+                  <label style={{fontSize:12,color:C.textMid,display:"block",marginBottom:4}}>Valor</label>
+                  <div style={{position:"relative",marginBottom:12}}>
+                    <input value={fValue} onChange={e=>handleValueChange(e.target.value)} placeholder="São Paulo…" style={{width:"100%",padding:"9px 12px",borderRadius:10,border:`1px solid ${C.cardBorder}`,fontSize:14,boxSizing:"border-box"}}/>
+                    {kgSugg.length>0&&(
+                      <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:10,zIndex:99,boxShadow:"0 4px 16px #0002",overflow:"hidden"}}>
+                        {kgSugg.map((s,i)=>(
+                          <div key={i} onClick={()=>{setFValue(s);setKgSugg([]);}} style={{padding:"9px 12px",cursor:"pointer",fontSize:13,color:C.text,borderBottom:i<kgSugg.length-1?`1px solid ${C.cardBorder}`:"none"}}
+                            onMouseEnter={e=>e.currentTarget.style.background=C.purpleLight}
+                            onMouseLeave={e=>e.currentTarget.style.background=""}>{s}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <label style={{fontSize:12,color:C.textMid,display:"block",marginBottom:4}}>Visibilidade</label>
+                  <select value={fVis} onChange={e=>setFVis(e.target.value)} style={{width:"100%",marginBottom:16,padding:"9px 12px",borderRadius:10,border:`1px solid ${C.cardBorder}`,fontSize:14,background:C.white,boxSizing:"border-box"}}>
+                    <option value="public">🌐 Público</option>
+                    <option value="contacts">👥 Contatos</option>
+                    <option value="only_me">🔒 Só eu</option>
+                  </select>
+                  <div style={{display:"flex",gap:8}}>
+                    <Btn onClick={saveField} style={{flex:1}} disabled={saving}>{saving?"Salvando…":"Salvar"}</Btn>
+                    <Btn onClick={resetForm} variant="ghost" style={{flex:1}}>Cancelar</Btn>
+                  </div>
+                </div>
+              ):(
+                <button onClick={()=>{resetForm();setShowAdd(true);}} style={{width:"100%",padding:"11px 0",marginTop:8,background:C.purpleLight,color:C.purple,border:`1px dashed ${C.purple}66`,borderRadius:12,cursor:"pointer",fontSize:13,fontWeight:600}}>+ Adicionar campo</button>
+              )}
+            </div>
+          );
+        })()}
+
         {tab==="sobre"&&<div>
           <div style={{background:`linear-gradient(135deg,${C.purpleLight},${C.blueLight})`,borderRadius:14,padding:20,textAlign:"center",marginBottom:16}}>
             <p style={{fontFamily:PASSO,fontSize:32,fontWeight:700,color:C.purple,margin:"0 0 4px"}}>Veeda</p>
@@ -2468,6 +2591,16 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
 }
 
 function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays, onClose, addToast}) {
+  const [profileFields,setProfileFields]=useState(null);
+  const _pfHandle=(viewedProfile.handle||"").replace(/^@/,"");
+  useEffect(()=>{
+    if(!_pfHandle)return;
+    const ANON_KEY="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+    const SB_URL="https://rkinwvdbomllztixdtar.supabase.co";
+    fetch(`${SB_URL}/rest/v1/profile_fields?handle=eq.${encodeURIComponent(_pfHandle)}&order=field_key`,{headers:{"apikey":ANON_KEY,"Authorization":"Bearer "+ANON_KEY}})
+      .then(r=>r.json()).then(d=>setProfileFields(Array.isArray(d)?d:[])).catch(()=>setProfileFields([]));
+  },[_pfHandle]);
+
   // Verificar se o perfil visualizado está no círculo de contatos
   const isInCircle = contacts.some(c => c.handle === viewedProfile.handle || c.id === viewedProfile.id);
 
@@ -2537,6 +2670,32 @@ function ProfileModal({profile: viewedProfile, myProfile, contacts, receivedDays
             @{viewedProfile.handle || nameToHandle(viewedProfile.name)}
           </p>
         </div>
+
+        {/* Campos do perfil */}
+        {profileFields&&profileFields.filter(f=>{
+          if(f.visibility==="only_me") return viewedProfile.id===myProfile?.id;
+          if(f.visibility==="contacts") return isInCircle||viewedProfile.id===myProfile?.id;
+          return true;
+        }).length>0&&(
+          <div style={{marginBottom:24}}>
+            <h3 style={{margin:"0 0 12px",fontSize:16,fontWeight:600,color:C.text,fontFamily:PASSO}}>Campos do perfil</h3>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {profileFields.filter(f=>{
+                if(f.visibility==="only_me") return viewedProfile.id===myProfile?.id;
+                if(f.visibility==="contacts") return isInCircle||viewedProfile.id===myProfile?.id;
+                return true;
+              }).map(f=>(
+                <div key={f.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:C.white,border:`1px solid ${C.cardBorder}`,borderRadius:10}}>
+                  <span style={{fontSize:13,color:C.textMid,fontWeight:600}}>{f.label}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:14,color:C.text}}>{f.value}</span>
+                    <span style={{fontSize:11,opacity:.6}}>{f.visibility==="public"?"🌐":f.visibility==="contacts"?"👥":"🔒"}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Estatísticas */}
         <div style={{marginBottom: '24px'}}>
