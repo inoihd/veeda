@@ -4462,6 +4462,7 @@ function Veeda(){
             if(_data&&_data.length>0){
               list=_data.map(p=>({
                 ...p,
+                handle: p.handle.startsWith('@')?p.handle:'@'+p.handle,
                 avatarColor:p.avatar_color,avatarSrc:p.avatar_src,
                 passwordHash:p.password_hash,googleSub:p.google_sub,
                 cloud:true
