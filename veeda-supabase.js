@@ -43,9 +43,23 @@ const VeedaSupabase = (() => {
   function sb() { return _client; }
   function isReady() { return _client !== null; }
 
+  // ── Rate limiting ──────────────────────────────────────────
+  const _rl = {}; // { key: [timestamps] }
+  function rateLimit(key, maxPerMinute = 10) {
+    const now = Date.now();
+    _rl[key] = (_rl[key] || []).filter(t => now - t < 60000);
+    if (_rl[key].length >= maxPerMinute) return false;
+    _rl[key].push(now);
+    return true;
+  }
+
   // ── Input sanitization ─────────────────────────────────────
   // Hard limits on fields sent to Supabase — prevent storage abuse and
   // oversized payloads from reaching the database.
+  function stripHtml(s) {
+    return typeof s === 'string' ? s.replace(/<[^>]*>/g, '').trim() : s;
+  }
+
   const MAX = {
     NAME:      80,
     HANDLE:    20,
@@ -59,8 +73,8 @@ const VeedaSupabase = (() => {
   const clamp = (v, max) => (typeof v === 'string' ? v.slice(0, max) : v);
   const safeProfile = p => ({
     id:           p.id,
-    handle:       clamp((p.handle || '').replace(/^@/, ''), MAX.HANDLE),
-    name:         clamp(p.name || '', MAX.NAME),
+    handle:       clamp(stripHtml((p.handle || '').replace(/^@/, '')), MAX.HANDLE),
+    name:         clamp(stripHtml(p.name || ''), MAX.NAME),
     emoji:        clamp(p.emoji || '🌿', MAX.EMOJI),
     avatarColor:  clamp(p.avatarColor || '#7B6FA0', 20),
     // Never store full data-URL avatars in Supabase — only small thumbnails
@@ -321,21 +335,69 @@ const VeedaSupabase = (() => {
   }
 
 
+  // ── MEDIA UPLOAD ───────────────────────────────────────────
+
+  async function uploadMediaForSharing(fromHandle, momentId, dataUrl) {
+    if (!isReady()) return null;
+    try {
+      const [header, b64] = dataUrl.split(',');
+      const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+      const ext = mime.split('/')[1]?.split('+')[0] || 'jpg';
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+
+      const path = `shared/${fromHandle.replace(/^@/,'')}/${momentId}.${ext}`;
+      const { error } = await sb().storage.from('media').upload(path, blob, {
+        contentType: mime, upsert: true
+      });
+      if (error) { console.warn('[VeedaSupabase] uploadMedia:', error.message); return null; }
+
+      // Retorna só o path — URLs assinadas são geradas no momento da leitura
+      return path;
+    } catch (e) {
+      console.warn('[VeedaSupabase] uploadMedia error:', e);
+      return null;
+    }
+  }
+
+  async function signMediaPath(path) {
+    const { data, error } = await sb().storage.from('media').createSignedUrl(path, 86400);
+    if (error) { console.warn('[VeedaSupabase] signMedia:', error.message); return null; }
+    return data?.signedUrl || null;
+  }
+
   // ── SHARED DAYS ────────────────────────────────────────────
 
   async function shareDay(fromProfile, toHandles, dayPayload) {
+    if (!rateLimit('shareDay', 5)) return false;
     if (!isReady() || !toHandles.length) return false;
+    // Garante sessão autenticada para upload de mídia no Storage
+    await ensureAuth(fromProfile.handle, fromProfile.passwordHash).catch(() => null);
     const sp = safeProfile(fromProfile);
-    // Sanitize moments: strip media content, enforce limits
-    const safeMoments = (dayPayload.moments || [])
+    // Sanitize moments: upload media to storage, enforce limits
+    const safeMoments = await Promise.all((dayPayload.moments || [])
       .slice(0, MAX.MOMENTS_PER_DAY)
-      .map(m => ({
-        id: m.id, ts: m.ts, type: m.type,
-        content: (m.type === 'texto' || m.type === 'link' || m.type === 'videolink')
-          ? clamp(m.content || '', MAX.MOMENT_CONTENT) : null,
-        caption: clamp(m.caption || '', MAX.MOMENT_CAPTION),
-        tags: Array.isArray(m.tags) ? m.tags.slice(0, 10) : undefined,
-        _hasMedia: !['texto','link','videolink','musica'].includes(m.type)
+      .map(async m => {
+        let mediaUrl = null;
+        if (!['texto','link','videolink','musica'].includes(m.type) && m.content) {
+          if (m.content.startsWith('data:')) {
+            mediaUrl = await uploadMediaForSharing(fromProfile.handle || '', m.id || Date.now().toString(), m.content);
+          } else if (m.content.startsWith('http')) {
+            mediaUrl = m.content;
+          }
+        }
+        return {
+          id: m.id, ts: m.ts, type: m.type,
+          content: (m.type === 'texto' || m.type === 'link' || m.type === 'videolink')
+            ? clamp(stripHtml(m.content || ''), MAX.MOMENT_CONTENT) : null,
+          media_path: mediaUrl, // path no Storage; URL assinada gerada na leitura
+          media_url: null,
+          caption: clamp(m.caption || '', MAX.MOMENT_CAPTION),
+          tags: Array.isArray(m.tags) ? m.tags.slice(0, 10) : undefined,
+          _hasMedia: !['texto','link','videolink','musica'].includes(m.type)
+        };
       }));
 
     const rows = toHandles.slice(0, 5).map(h => ({  // max 5 recipients per call
@@ -348,7 +410,7 @@ const VeedaSupabase = (() => {
       to_handle:         clamp(h.replace(/^@/, ''), MAX.HANDLE),
       date:              dayPayload.date,
       feeling:           dayPayload.feeling || null,
-      message:           clamp(dayPayload.message || '', MAX.MESSAGE) || null,
+      message:           clamp(stripHtml(dayPayload.message || ''), MAX.MESSAGE) || null,
       moments:           safeMoments,
       has_media:         safeMoments.some(m => m._hasMedia),
       shared_at:         new Date().toISOString()
@@ -372,24 +434,35 @@ const VeedaSupabase = (() => {
       .eq('consumed', false)
       .order('shared_at', { ascending: false });
     if (error) console.warn('[VeedaSupabase] getSharedDays:', error.message);
-    // Mapeia para o formato local (igual ao payload do doShare)
-    return (data || []).map(r => ({
-      _sbId:       r.id,
-      date:        r.date,
-      author:      r.from_name,
-      handle:      r.from_handle,
-      emoji:       r.from_emoji,
-      avatarColor: r.from_avatar_color,
-      avatarSrc:   r.from_avatar_src,
-      authorId:    r.from_id,
-      moments:     r.moments || [],
-      feeling:     r.feeling,
-      message:     r.message,
-      importedAt:  Date.now(),
-      sharedAt:    new Date(r.shared_at).getTime(),
-      _hasMedia:   r.has_media,
-      _fromSupabase: true
+    // Gera signed URLs (1h) para mídias com media_path — só o destinatário autenticado pode gerar
+    const rows = data || [];
+    const signed = await Promise.all(rows.map(async r => {
+      const moments = await Promise.all((r.moments || []).map(async m => {
+        if (m.media_path) {
+          const url = await signMediaPath(m.media_path);
+          return { ...m, media_url: url };
+        }
+        return m;
+      }));
+      return {
+        _sbId:       r.id,
+        date:        r.date,
+        author:      r.from_name,
+        handle:      r.from_handle,
+        emoji:       r.from_emoji,
+        avatarColor: r.from_avatar_color,
+        avatarSrc:   r.from_avatar_src,
+        authorId:    r.from_id,
+        moments,
+        feeling:     r.feeling,
+        message:     r.message,
+        importedAt:  Date.now(),
+        sharedAt:    new Date(r.shared_at).getTime(),
+        _hasMedia:   r.has_media,
+        _fromSupabase: true
+      };
     }));
+    return signed;
   }
 
   async function markSharedDayConsumed(sbId, importedAt) {
@@ -584,6 +657,7 @@ const VeedaSupabase = (() => {
       getInbox:    getSharedDays,
       markConsumed: markSharedDayConsumed
     },
+    media: { upload: uploadMediaForSharing },
     presence: {
       update:     updateOnlineStatus,
       getStatuses: getOnlineStatuses
@@ -597,6 +671,25 @@ const VeedaSupabase = (() => {
     data: {
       push: pushUserData,
       pull: pullUserData
+    },
+    fields: {
+      getForHandle: async (handle) => {
+        const r = await sb().from("profile_fields").select("*").eq("handle", handle).order("field_key");
+        if (r.error) throw r.error;
+        return r.data || [];
+      },
+      save: async (handle, field) => {
+        const key = (field.label || "").toLowerCase().replace(/\s+/g, "_");
+        const payload = { handle, field_key: key, label: field.label, value: field.value, visibility: field.visibility || "public" };
+        const r = await sb().from("profile_fields").upsert(payload, { onConflict: "handle,field_key" }).select();
+        if (r.error) throw r.error;
+        return r.data;
+      },
+      remove: async (id) => {
+        const r = await sb().from("profile_fields").delete().eq("id", id);
+        if (r.error) throw r.error;
+        return true;
+      }
     }
   };
 })();
