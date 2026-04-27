@@ -4013,12 +4013,13 @@ function VeedaApp({profile,password,onLogout,onUpdateProfile}){
 // ROOT COMPONENT — v1.4: Google é o caminho principal
 // ═══════════════════════════════════════════════════
 function Veeda(){
-  const [screen,setScreen]=useState("loading");
+  const [screen,setScreen]=useState(window._ADMIN_PREVIEW?"app":"loading");
   const [profiles,setProfiles]=useState([]);        // perfis locais
   const [cloudProfiles,setCloudProfiles]=useState([]); // perfis do Drive (lista índice)
   const [selProfile,setSelProfile]=useState(null);
-  const [activeProfile,setActiveProfile]=useState(null);
-  const [activePw,setActivePw]=useState(null);
+  const _prev=window._ADMIN_PREVIEW;
+  const [activeProfile,setActiveProfile]=useState(_prev?{id:"preview",name:"Dhioni Schneider",handle:"dhionischneider",emoji:"🌿",passwordHash:"preview",avatarSrc:null}:null);
+  const [activePw,setActivePw]=useState(_prev?"preview":null);
   const [forgotProfile,setForgotProfile]=useState(null);
   const [showGuide,setShowGuide]=useState(false);
   const [googleUser,setGoogleUser]=useState(null);
