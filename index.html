@@ -2388,7 +2388,7 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
 
         {/* Tab nav */}
         <div style={{display:"flex",gap:6,marginBottom:20,overflowX:"auto",paddingBottom:4}}>
-          {[["conta","Conta"],["dados","Meus Dados"],["notif","Notif."],["campos","Campos"],["sobre","Sobre"]].map(([k,l])=>(
+          {[["conta","Conta"],["dados","Meus Dados"],["notif","Notif."],["campos","Campos"],["seguranca","Segurança"],["sobre","Sobre"]].map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)} style={{padding:"7px 14px",background:tab===k?C.purple:C.purpleLight,color:tab===k?C.white:C.purple,border:"none",borderRadius:20,fontWeight:600,cursor:"pointer",fontSize:12,flexShrink:0}}>{l}</button>
           ))}
         </div>
@@ -2600,6 +2600,55 @@ function SettingsModal({profile,data,password,onUpdateProfile,onSave,onLogout,on
               ):(
                 <button onClick={()=>{resetForm();setShowAdd(true);}} style={{width:"100%",padding:"11px 0",marginTop:8,background:C.purpleLight,color:C.purple,border:`1px dashed ${C.purple}66`,borderRadius:12,cursor:"pointer",fontSize:13,fontWeight:600}}>+ Adicionar campo</button>
               )}
+            </div>
+          );
+        })()}
+
+        {tab==="seguranca"&&(()=>{
+          const SB_URL="https://rkinwvdbomllztixdtar.supabase.co";
+          const SB_KEY="sb_publishable_eG_eU0eEuya4dOY2Y2OK6w_riRnPpD3";
+          const [cpf,setCpf]=React.useState("");
+          const [phone,setPhone]=React.useState("");
+          const [saving,setSaving]=React.useState(false);
+          const [saved,setSaved]=React.useState(false);
+          const [secErr,setSecErr]=React.useState("");
+          const hashField=async(v)=>{const b=new TextEncoder().encode(v.replace(/\D/g,""));const h=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,"0")).join("");};
+          const handleSave=async()=>{
+            if(!cpf.trim()&&!phone.trim()){setSecErr("Preencha ao menos um campo.");return;}
+            setSaving(true);setSecErr("");
+            try{
+              const body={};
+              if(cpf.trim())body.cpf_hash=await hashField(cpf);
+              if(phone.trim())body.phone_hash=await hashField(phone);
+              const r=await fetch(`${SB_URL}/rest/v1/profiles?id=eq.${profile.id}`,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json","Prefer":"return=minimal"},body:JSON.stringify(body)});
+              if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.message||r.status);}
+              setSaved(true);setCpf("");setPhone("");
+              addToast?.("Dados de segurança salvos!","success");
+            }catch(e){
+              const msg=e.message||"";
+              if(msg.includes("CPF_ALREADY"))setSecErr("Este CPF já está vinculado a outra conta.");
+              else if(msg.includes("PHONE_ALREADY"))setSecErr("Este telefone já está vinculado a outra conta.");
+              else setSecErr("Erro ao salvar. Tente novamente.");
+            }
+            setSaving(false);
+          };
+          return(
+            <div>
+              <div style={{background:C.amberLight,borderRadius:12,padding:"12px 14px",marginBottom:20,border:`1px solid #F59E0B33`}}>
+                <p style={{margin:"0 0 4px",fontSize:12,fontWeight:700,color:"#7A5800"}}>🔒 Verificação extra (opcional)</p>
+                <p style={{margin:0,fontSize:12,color:"#7A5800",lineHeight:1.6}}>CPF e telefone são convertidos em códigos irreversíveis (hash) antes de serem salvos. Nunca armazenamos o dado original. Usados apenas para impedir múltiplas contas pela mesma pessoa.</p>
+              </div>
+              {saved&&<div style={{background:C.greenLight,borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:13,color:C.green,fontWeight:600}}>✓ Dados salvos com sucesso.</div>}
+              {secErr&&<p style={{fontSize:13,color:C.red,marginBottom:12,fontWeight:500}}>{secErr}</p>}
+              <div style={{marginBottom:14}}>
+                <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:6}}>CPF</label>
+                <input value={cpf} onChange={e=>{setCpf(e.target.value);setSaved(false);setSecErr("");}} placeholder="000.000.000-00" style={{width:"100%",padding:"10px 14px",borderRadius:12,border:`1.5px solid ${C.cardBorder}`,fontSize:14,background:C.white,color:C.text,boxSizing:"border-box"}}/>
+              </div>
+              <div style={{marginBottom:20}}>
+                <label style={{fontSize:13,fontWeight:600,color:C.text,display:"block",marginBottom:6}}>Telefone</label>
+                <input value={phone} onChange={e=>{setPhone(e.target.value);setSaved(false);setSecErr("");}} placeholder="+55 11 99999-9999" style={{width:"100%",padding:"10px 14px",borderRadius:12,border:`1.5px solid ${C.cardBorder}`,fontSize:14,background:C.white,color:C.text,boxSizing:"border-box"}}/>
+              </div>
+              <Btn onClick={handleSave} disabled={saving}>{saving?"Salvando…":"Salvar dados de verificação"}</Btn>
             </div>
           );
         })()}
@@ -3082,6 +3131,12 @@ function ScreenCreate({onDone,onBack,googleUser}){
         const _invRes=await fetch(`${_betaUrl}/rest/v1/beta_invites?email=eq.${encodeURIComponent(_inviteEmail)}&revoked=eq.false&select=id,used`,{headers:{"apikey":_betaKey,"Authorization":"Bearer "+_betaKey}}).catch(()=>null);
         const _invData=_invRes?.ok?await _invRes.json().catch(()=>[]):[];
         if(!_invData||_invData.length===0){setErr("Acesso restrito ao Beta. Você precisa de um convite.");setLoading(false);return;}
+      }
+      // Verifica e-mail duplicado no Supabase antes de criar conta
+      if(gEmail){
+        const _dupRes=await fetch(`${_betaUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(gEmail)}&select=id`,{headers:{"apikey":_betaKey,"Authorization":"Bearer "+_betaKey}}).catch(()=>null);
+        const _dupData=_dupRes?.ok?await _dupRes.json().catch(()=>[]):[];
+        if(_dupData&&_dupData.length>0){setErr("Este e-mail já possui uma conta. Faça login com o Google.");setLoading(false);return;}
       }
       const h="@"+(handle||sanitizeHandle(name)||sanitizeHandle(gEmail.split("@")[0]));
       if(!isHandleAvailable(h,null)){setErr("Este @handle já está em uso. Escolha outro.");setLoading(false);return;}
