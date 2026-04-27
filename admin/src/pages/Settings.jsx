@@ -75,6 +75,138 @@ function SortableFaqRow({ item, onEdit, onDelete }) {
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
+// ─── Beta Invites ────────────────────────────────────────────────────────────
+
+function BetaInvites() {
+  const [invites, setInvites] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [newEmail, setNewEmail] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [confirmRevoke, setConfirmRevoke] = useState(null)
+
+  useEffect(() => { loadInvites() }, [])
+
+  async function loadInvites() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('beta_invites')
+      .select('*')
+      .order('created_at', { ascending: false })
+    setInvites(data ?? [])
+    setLoading(false)
+  }
+
+  async function handleAdd() {
+    if (!newEmail.trim()) { toast.error('Informe um e-mail'); return }
+    setAdding(true)
+    try {
+      const { error } = await supabase.from('beta_invites').insert({
+        email: newEmail.trim().toLowerCase(),
+        invited_by: 'admin',
+        used: false,
+        revoked: false,
+      })
+      if (error) throw error
+      await logAction('add_beta_invite', { email: newEmail.trim() })
+      toast.success('Convite adicionado')
+      setNewEmail('')
+      loadInvites()
+    } catch (err) {
+      toast.error('Erro: ' + err.message)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function handleRevoke(invite) {
+    await supabase.from('beta_invites').update({ revoked: true }).eq('id', invite.id)
+    await logAction('revoke_beta_invite', { email: invite.email })
+    toast.success('Convite revogado')
+    setConfirmRevoke(null)
+    loadInvites()
+  }
+
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold text-gray-900">Convites Beta</h2>
+        <span className="text-xs text-gray-400">{invites.filter(i => !i.revoked && !i.used).length} ativos</span>
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          value={newEmail}
+          onChange={e => setNewEmail(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAdd()}
+          placeholder="email@exemplo.com"
+          className="input flex-1 text-sm"
+        />
+        <button onClick={handleAdd} disabled={adding} className="btn-primary text-sm whitespace-nowrap">
+          {adding ? 'Adicionando...' : '+ Convidar'}
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-400 text-center py-4">Carregando...</p>
+      ) : invites.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-4">Nenhum convite criado.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-xs text-gray-400 uppercase">
+                <th className="text-left py-2 pr-3 font-medium">E-mail</th>
+                <th className="text-left py-2 pr-3 font-medium">Convidado por</th>
+                <th className="text-left py-2 pr-3 font-medium">Status</th>
+                <th className="text-left py-2 pr-3 font-medium">Data</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {invites.map(inv => (
+                <tr key={inv.id}>
+                  <td className="py-2 pr-3 text-gray-800 font-mono text-xs">{inv.email}</td>
+                  <td className="py-2 pr-3 text-gray-500 text-xs">{inv.invited_by}</td>
+                  <td className="py-2 pr-3">
+                    {inv.revoked
+                      ? <span className="text-xs text-red-500 font-medium">Revogado</span>
+                      : inv.used
+                        ? <span className="text-xs text-green-600 font-medium">Usado</span>
+                        : <span className="text-xs text-blue-600 font-medium">Pendente</span>}
+                  </td>
+                  <td className="py-2 pr-3 text-gray-400 text-xs whitespace-nowrap">
+                    {inv.created_at ? new Date(inv.created_at).toLocaleDateString('pt-BR') : '—'}
+                  </td>
+                  <td className="py-2 text-right">
+                    {!inv.revoked && (
+                      <button
+                        onClick={() => setConfirmRevoke(inv)}
+                        className="text-xs text-red-500 hover:text-red-700 px-2"
+                      >
+                        Revogar
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!confirmRevoke}
+        title="Revogar convite"
+        message={`Revogar convite de "${confirmRevoke?.email}"? O usuário não poderá mais criar conta com este e-mail.`}
+        confirmLabel="Revogar"
+        danger
+        onConfirm={() => handleRevoke(confirmRevoke)}
+        onCancel={() => setConfirmRevoke(null)}
+      />
+    </div>
+  )
+}
+
 export default function Settings() {
   const [maintenance, setMaintenance] = useState(false)
   const [termsText, setTermsText] = useState('')
@@ -280,6 +412,9 @@ export default function Settings() {
           <p className="text-sm text-gray-400 text-center py-4">Nenhum FAQ criado.</p>
         )}
       </div>
+
+      {/* Beta Invites */}
+      <BetaInvites />
 
       {/* Backup */}
       <div className="card space-y-4">
