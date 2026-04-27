@@ -363,7 +363,7 @@ const VeedaSupabase = (() => {
   }
 
   async function signMediaPath(path) {
-    const { data, error } = await sb().storage.from('media').createSignedUrl(path, 3600);
+    const { data, error } = await sb().storage.from('media').createSignedUrl(path, 86400);
     if (error) { console.warn('[VeedaSupabase] signMedia:', error.message); return null; }
     return data?.signedUrl || null;
   }
