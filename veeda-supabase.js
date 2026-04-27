@@ -367,6 +367,8 @@ const VeedaSupabase = (() => {
   async function shareDay(fromProfile, toHandles, dayPayload) {
     if (!rateLimit('shareDay', 5)) return false;
     if (!isReady() || !toHandles.length) return false;
+    // Garante sessão autenticada para upload de mídia no Storage
+    await ensureAuth(fromProfile.handle, fromProfile.passwordHash).catch(() => null);
     const sp = safeProfile(fromProfile);
     // Sanitize moments: upload media to storage, enforce limits
     const safeMoments = await Promise.all((dayPayload.moments || [])
